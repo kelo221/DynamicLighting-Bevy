@@ -172,6 +172,7 @@ Henry's runtime keys everything on `SV_PrimitiveID`, which is WGSL `@builtin(pri
   - bevyout already proved this works in Bevy 0.19 with `MeshTag` + `primitive_index` + `uv_b`.
 - **Availability:** desktop Vulkan, DX12 and Metal.
 - **Fallback (done in M9):** for adapters without the feature (WebGPU, some mobile), a "triangle-ID attribute" mode.
+  - Browsers always take it: wgpu 30's WebGPU backend doesn't map the `primitive-index` feature, even where the browser's adapter offers it (Edge 155).
   - Baked meshes are de-indexed once their `ResolvedBakeId` is known, and get a flat `u32` triangle-ID vertex attribute (`baked_lighting::triangle_ids`).
   - `DynLitMaterial::specialize` keeps its own vertex shader (`dynlit_vertex.wesl`) only for meshes with the attribute; every other mesh gets Bevy's.
   - The mesh content hash covers triangle corners in draw order, not the index buffer, so a de-indexed mesh still matches its bake.
@@ -298,7 +299,7 @@ These flags are scene-level settings, so changing them re-specializes pipelines.
 **Orchestration.**
 
 - A `BakeRequest` message snapshots the ECS and runs on `AsyncComputeTaskPool`, with progress and cancel.
-- Output goes to `assets/<scene>.dynlight`, and asset hot reload applies it.
+- Output is always an in-memory `DynLightBake` asset returned as `BakeReport::handle`; `BakeRequest::output = Some(path)` additionally writes `assets/<scene>.dynlight` on native. `None` avoids the filesystem and supports browsers. Saved assets can still be loaded/hot-reloaded.
 - Presets: Preview (no bounce) and Full, with a resolution choice like Henry's menu.
 - A `--bake` flag on the examples bakes at startup and applies the result; with `--frames` the example then exits, so CI can bake headlessly once runners have a GPU.
 
@@ -407,6 +408,7 @@ Per frame, in `PostUpdate` after transform propagation:
   - methods `vertex_shader`, `fragment_shader`, `specialize`, `enable_prepass`, `enable_shadows`, `prepass_fragment_shader`
   - shaders are `.wesl`; the material bind group is `@group(constants::MATERIAL_BIND_GROUP)`
 - **`ShaderBuffer`** (`bevy::render::storage`, formerly `ShaderStorageBuffer`): raw bytemuck bytes, `clear`/`extend`, resizes without rebuilding materials.
+- **Material bind groups** are prepared once per material asset and don't follow the images they bind: replacing an `Image` under the same handle needs the materials marked modified (`surface::shared_arrays`).
 - **`MeshTag` / `mesh_functions::get_tag(instance_index)`**, and `GpuComponentArrayBuffer` + its plugin.
 - **Render passes** are systems in `Core3d` (`Core3dSystems::{Prepass, MainPass, PostProcess}`) using `ViewQuery`, `RenderContext`, `FullscreenShader`, and `ViewTarget::post_process_write`.
 - **WESL module paths:** `bevy_pbr::render::{mesh_functions, forward_io, view_transformations, mesh_view_bindings}`, and `@if(...)`. `octahedral_*` moved to `bevy_render::utils`.
@@ -455,6 +457,14 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - `stress_lights`: 1000 baked lights 1.43 ms per frame; 100 realtime 1.5 ms; 1000 realtime 6.0 ms (RTX 4080 SUPER, dev profile, 1280×720). The bake of that scene takes 0.7 s.
   - `gpu_check`: GPU readback against `light::mirror` at 1024 pixels; the largest difference is 0.001.
   - Debug views (the M3 item): `DynamicLightingSettings::debug_view` = `Lighting` (white surfaces) or `LightCount` (heat map of the lights reaching each fragment), passed as light-buffer flags. `lighting_test --debug-view …` or the V key.
+
+- **WebGPU publishing, 2026-10-15:**
+  - Replaced the fork's Unity package in a normal fast-forward commit, keeping Henry's history and MIT notice; the default branch stays `master`.
+  - Bakes run in the browser: `BakeRequest::output` is optional and `BakeReport::handle` is the in-memory `DynLightBake`; bake timing uses `bevy::platform::time::Instant`. The occluder BVH is built from `obvhs`'s PLOC, reinsertion and CWBVH steps directly, because its `build_cwbvh_from_tris` helper times itself with `std::time::Instant`, which panics on `wasm32-unknown-unknown`. The steps and the output are the same as before. Rayon runs its parallel iterators on the calling thread there.
+  - Lit materials are marked modified whenever the shadow cubemap or cookie array is replaced (`surface::shared_arrays`): Bevy prepares a material's bind group once and doesn't track its images. In the browser the materials were prepared before the first shadow cubemap and kept sampling the zeroed 1×1 placeholder, so every realtime-shadowed light was black.
+  - Examples share `examples/support/` for the page canvas, status line and arguments; in a browser, the query string stands for the command line (`?debug-view=light-count`). `lighting_test` and `inspector` bake a Preview at startup in the browser (lower texel density, no bounce); `stress_lights` defaults to 256 realtime lights there and writes its frame time into the page.
+  - `web/build.sh` builds each demo with the `wasm-release` profile, runs `wasm-bindgen` (version checked against `Cargo.lock`) and Binaryen's `wasm-opt -Oz`, and writes `dist/` with the landing page and native-screenshot thumbnails from `web/thumbnails/`. `.github/workflows/pages.yml` deploys it on pushes to `master`.
+  - Checked in headless Edge 155 with WebGPU on an RTX 4080 SUPER, with the published build: all four demos run. `lighting_test` bakes its Preview in 91 ms (103,188 texels, 19,277 rays) and the inspector in 4–8 ms. B, V, the inspector's sliders, buttons and checkboxes, and the query-string options work. After `wasm-opt`, each demo is 21.8 MB (6.9 MB gzipped); the inspector, with Bevy UI, is 31.9 MB (9.9 MB).
 
 ## 15. Testing
 

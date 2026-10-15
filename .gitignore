@@ -1,4 +1,5 @@
 /target
+/dist/
 
 # Baked output is reproducible and can be large. Small synthetic fixtures live
 # under tests/fixtures/ and are re-allowed explicitly.

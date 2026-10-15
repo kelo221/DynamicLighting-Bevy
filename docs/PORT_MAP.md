@@ -86,6 +86,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/surface/alpha_mask.rs` | `S/Generators/PhotonCubeTransparent.cginc:55-71` (0.5 alpha cutoff) | none | New; derives `BakeAlphaMask` from `DynLitMaterial`; `Mask(c)` materials bake with their own cutoff |
 | `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false` |
 | `src/surface/shader_tests.rs` | none | none | New |
+| `src/surface/shared_arrays.rs` | none | none | New; re-prepares lit materials when the shadow cubemap or cookie array is replaced |
 | `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide) |
 | `src/surface/shaders/brdf.wesl` | none (Henry's `S/Internal/Common.cginc:291-342` is LearnOpenGL code, CC BY-NC) | none | Replaced; GGX / Smith / Schlick rewritten from the published papers |
 | `src/surface/shaders/dynlit.wesl` | fragment bodies `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260`; lighting-only mode `S/DynamicLightingDiffuse.shader:141` | none | Ported; `TRIANGLE_ID` / `PRIMITIVE_INDEX` paths; Unity fog and lightmaps dropped |
@@ -118,14 +119,14 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/mesh_bake.rs` | `C/Core/DynamicLightingTracer.cs:354-717` (`Raytrace`, `RaycastTriangle`) | none | Ported; rayon over triangles instead of `RaycastCommand` batches; −0.1 NdotL and 0.001 offset kept |
 | `src/bake/mesh_builder.rs` | `C/Utilities/MeshBuilder.cs:1-148`; rects `C/Core/DynamicTrianglesBuilder.cs:75-99`, `C/Core/DynamicLightingTracer.cs:940-958,1008-1026`, `C/Utilities/PixelTriangleRect.cs:36-60` | none | Ported; trace and optimize rects derived from texel centers (Henry scales UVs by `size − 1` there) |
 | `src/bake/mirror.rs` | `S/DynamicLighting.cginc:384-392,608-962` | none | Ported (test-only CPU mirror of `triangles.wesl` and the cube fetch) |
-| `src/bake/occluder.rs` | Unity physics: `C/Core/DynamicLightingTracer.Jobs.cs`, `C/Core/Acceleration/Raycast*.cs`; transparency `C/Utilities/PhotonCube.cs:367-457`, `S/Generators/PhotonCubeTransparent.cginc:55-71` | none | Replaced; `obvhs` CWBVH, two-sided, `t ≤ max`; transparency alpha-tested during traversal instead of photon cubes (no 5×5 alpha filter) |
+| `src/bake/occluder.rs` | Unity physics: `C/Core/DynamicLightingTracer.Jobs.cs`, `C/Core/Acceleration/Raycast*.cs`; transparency `C/Utilities/PhotonCube.cs:367-457`, `S/Generators/PhotonCubeTransparent.cginc:55-71` | none | Replaced; `obvhs` CWBVH (built from its PLOC, reinsertion and CWBVH steps, untimed for wasm), two-sided, `t ≤ max`; transparency alpha-tested during traversal instead of photon cubes (no 5×5 alpha filter) |
 | `src/bake/progress.rs` | (Unity progress bar, `C/Core/DynamicLightingTracer.cs:215-275,374-420`) | none | Replaced; lock-free counters and a cancel flag |
 | `src/bake/random.rs` | (`UnityEngine.Random.onUnitSphere`, `C/Core/DynamicLightingTracer.cs:719-724`; `Random.Range`, `C/Core/DynamicTrianglesBuilder.cs:450-575`) | none | Replaced; stateless keyed seeds into our PCG32 |
 | `src/bake/seams.rs` | `C/Core/DynamicLightingTracer.SeamsPaddingStep.cs:1-168`; `DilateShadowBits` `C/Core/DynamicLightingTracer.cs:1080-1148` | none | Ported; the row wrap at x = 0 is fixed (PLAN §12) |
 | `src/bake/settings.rs` | `C/Core/DynamicLightManager.cs:255-263` (pixel density); max size `:1581`; `C/Lighting/DynamicBounceLightingDefaultCompressionMode.cs` | `BO/core/config.rs` | Lifted; `BakeStatic` replaces Henry's static flag + shadow casting check |
 | `src/bake/shadows.rs` | `C/Core/DynamicLightingTracer.cs:931-1078` (`OptimizeTriangle`, `BuildShadows`) | none | Ported; parallel per triangle |
 | `src/bake/snapshot.rs` | `C/Core/DynamicLightingTracer.TemporaryScene.cs:43-118`; `C/Core/DynamicLightManager.cs:522-548` | none | Replaced; ECS query (`BakeStatic` meshes, non-realtime lights) |
-| `src/bake/systems.rs` | `E/EditorMenus.cs:9-67` (bake menus); `C/Core/DynamicLightManager.cs:1581-1621` | none | Replaced; `BakeRequest` message on the async compute pool, Preview / Full presets |
+| `src/bake/systems.rs` | `E/EditorMenus.cs:9-67` (bake menus); `C/Core/DynamicLightManager.cs:1581-1621` | none | Replaced; `BakeRequest` message on the async compute pool, Preview / Full presets; in-memory result, optional file |
 | `src/bake/texels.rs` | `C/Core/DynamicLightingTracer.TriangleUvToFull3dStep.cs:1-225`; `C/Utilities/MathEx.cs:185-273` | none | Ported; explicit "outside" result and renormalized normals (PLAN §12) |
 | `src/bake/triangle_words.rs` | `C/Core/DynamicTrianglesBuilder.cs:75-99,198-366` | none (the `BO/baker.rs` serializer is not reused) | Ported; same word layout |
 | `src/bake/tests/mod.rs` | none | none | New; synthetic floor, cuboid and light fixtures |
@@ -221,7 +222,9 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `examples/lighting_test/bake.rs` | `E/EditorMenus.cs:9-67` (bake and preview menus) | none | New; `--bake`, B key, `--preview`, `--triangle-ids` |
 | `examples/lighting_test/debug.rs` | `E/Interface/DrawModes/SceneViewDrawModeLighting.cs:1-34` (the lighting view's counterpart) | none | New; `--debug-view lighting\|light-count` and the V key cycle `DynamicLightingSettings::debug_view` |
 | `examples/realtime_shadows.rs` | none | none | New |
-| `examples/stress_lights.rs` | none | none | New; 1000-light benchmark (PLAN §14, M9) |
+| `examples/stress_lights.rs` | none | none | New; 1000-light benchmark (PLAN §14, M9); 256 realtime lights in a browser |
+| `examples/support/mod.rs` | none | none | New; page canvas, status line and query-string arguments for the web demos |
+| `examples/support/baking.rs` | none | none | New; in-memory bakes, queued until the browser has painted the status |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
 | `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` example and check `lighting_test` screenshots |

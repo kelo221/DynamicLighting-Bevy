@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d14">
+  <meta name="description" content="Explore DynLight: baked shadow detail, live lighting and realtime shadows for Bevy. Four interactive WebGPU demos.">
+  <title>DynLight — light, live.</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="site-header">
+      <a class="wordmark" href="./" aria-label="DynLight home"><span class="brand-mark" aria-hidden="true"></span>DynLight<span class="wordmark-suffix">/ Bevy</span></a>
+      <nav aria-label="Project links">
+        <a href="https://github.com/kelo221/DynamicLighting-Bevy/blob/master/README.md">Read the docs</a>
+        <a class="nav-repo" href="https://github.com/kelo221/DynamicLighting-Bevy">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> A lighting toolkit for Bevy</p>
+        <h1 id="hero-title">Baked detail.<br><span>Living light.</span></h1>
+        <p class="hero-copy">Bake the shadows. Keep the light alive. Explore per-texel shadow detail, animated light effects and realtime shadows — running in your browser.</p>
+        <div class="hero-tags" aria-label="Technology"><span>Rust + Bevy</span><span>WebGPU</span><span>Custom lighting pipeline</span></div>
+        <div class="hero-orbit" aria-hidden="true"><span></span></div>
+      </section>
+
+      <section class="gallery" aria-labelledby="gallery-title">
+        <div class="section-heading"><h2 id="gallery-title">Step into the light</h2><p>Four scenes. No installation.</p></div>
+        <div class="card-grid">
+          <a class="demo-card violet" href="./lighting_test/">
+            <div class="card-image"><img src="./thumbnails/lighting_test.png" alt="Lighting laboratory preview" width="640" height="360" fetchpriority="high"><span class="image-label">01 / Explore</span><span class="card-arrow" aria-hidden="true">↗</span></div>
+            <div class="card-copy"><p class="card-kicker">The full spectrum</p><h3>Lighting laboratory</h3><p>Light types, animated effects, cookies, metallic surfaces and volumetric atmosphere.</p><div class="card-footer"><span><kbd>B</kbd> Rebake <span class="separator">/</span> <kbd>V</kbd> Debug views</span><span>Open demo <span aria-hidden="true">→</span></span></div></div>
+          </a>
+          <a class="demo-card amber" href="./realtime_shadows/">
+            <div class="card-image"><img src="./thumbnails/realtime_shadows.png" alt="Realtime shadows scene preview" width="640" height="360" loading="lazy"><span class="image-label">02 / In motion</span><span class="card-arrow" aria-hidden="true">↗</span></div>
+            <div class="card-copy"><p class="card-kicker">Nothing stands still</p><h3>Shadows in motion</h3><p>Moving lights and spinning geometry, connected by realtime variance shadow cubemaps.</p><div class="card-footer"><span>No bake required</span><span>Open demo <span aria-hidden="true">→</span></span></div></div>
+          </a>
+          <a class="demo-card mint" href="./inspector/">
+            <div class="card-image"><img src="./thumbnails/inspector.png" alt="Interactive light inspector preview" width="640" height="360" loading="lazy"><span class="image-label">03 / Hands on</span><span class="card-arrow" aria-hidden="true">↗</span></div>
+            <div class="card-copy"><p class="card-kicker">Make it your own</p><h3>Light inspector</h3><p>Dial in color, intensity and falloff. Change effects, then bake with the in-scene controls.</p><div class="card-footer"><span>Live sliders + preview bake</span><span>Open demo <span aria-hidden="true">→</span></span></div></div>
+          </a>
+          <a class="demo-card rose" href="./stress_lights/">
+            <div class="card-image"><img src="./thumbnails/stress_lights.png" alt="Many-light stress scene preview" width="640" height="360" loading="lazy"><span class="image-label">04 / Under load</span><span class="card-arrow" aria-hidden="true">↗</span></div>
+            <div class="card-copy"><p class="card-kicker">A little more light</p><h3>256 lights. Your GPU.</h3><p>A browser-sized stress scene with engine-reported frame time. See how your hardware handles it.</p><div class="card-footer"><span>256 lights + frame timing</span><span>Open demo <span aria-hidden="true">→</span></span></div></div>
+          </a>
+        </div>
+      </section>
+
+      <aside class="compatibility" aria-labelledby="compatibility-title">
+        <div><h2 id="compatibility-title">Rendered here. On your GPU.</h2><p>These demos require WebGPU and a compatible GPU, driver and browser configuration. Availability and performance vary; there is no WebGL fallback. The first load downloads WebAssembly and compiles shaders.</p><p class="browser-note">This demo needs WebGPU: Chrome or Edge 113+, Safari 26+, or Firefox 141+ on Windows</p></div>
+        <span class="technology-label" aria-hidden="true">WebGPU / WASM</span>
+      </aside>
+    </main>
+
+    <footer class="site-footer"><p>A Bevy port of <a href="https://github.com/Henry00IS/DynamicLighting">Henry de Jongh’s Dynamic Lighting</a>.</p><div><a href="https://github.com/kelo221/DynamicLighting-Bevy">Source</a><a href="https://github.com/kelo221/DynamicLighting-Bevy/blob/master/README.md">README</a></div></footer>
+  </div>
+</body>
+</html>
