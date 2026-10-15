@@ -8,6 +8,7 @@ mod alpha_mask;
 mod material;
 #[cfg(test)]
 mod shader_tests;
+mod shared_arrays;
 
 use bevy::asset::{AssetPlugin, embedded_asset};
 use bevy::pbr::MaterialPlugin;
@@ -39,7 +40,13 @@ impl Plugin for SurfacePlugin {
             && world.contains_resource::<Assets<Image>>()
         {
             // Before the bake snapshots the scene in `PostUpdate`.
-            app.add_systems(Update, alpha_mask::sync_alpha_masks);
+            app.add_systems(
+                Update,
+                (
+                    alpha_mask::sync_alpha_masks,
+                    shared_arrays::rebind_shared_arrays,
+                ),
+            );
         }
         if shaders_available(app) {
             load_shader_library!(app, "shaders/bindings.wesl");

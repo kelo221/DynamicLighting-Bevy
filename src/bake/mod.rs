@@ -2,7 +2,8 @@
 //! cubes, written to a `.dynlight` asset.
 //!
 //! [`bake`] is the pure entry point; [`BakeRequest`] runs it from the ECS on the async compute
-//! pool and writes the file. Baked meshes must keep their main-world data
+//! pool and returns an in-memory asset, optionally also writing a file. Baked meshes must keep
+//! their main-world data
 //! (`RenderAssetUsages::MAIN_WORLD`) so the bake can read their vertices.
 
 mod asset;
@@ -69,6 +70,9 @@ impl Plugin for BakePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BakeSettings>()
             .init_resource::<BakeStatus>()
+            // Apps that update before `finish` still need it; with an asset server,
+            // `asset::register` replaces it with a registered one.
+            .init_resource::<Assets<DynLightBake>>()
             .add_message::<BakeRequest>()
             .add_message::<BakeFinished>()
             .add_systems(

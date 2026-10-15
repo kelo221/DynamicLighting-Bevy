@@ -1,5 +1,5 @@
-//! A `BakeRequest` in a headless app: snapshot, bake on the async compute pool, write the
-//! `.dynlight` file, then load it back through the asset server.
+//! A `BakeRequest` in a headless app: snapshot, bake on the async compute pool, return an
+//! in-memory asset and optionally write a loadable `.dynlight` file.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -10,7 +10,7 @@ use bevy::transform::TransformPlugin;
 use dynlight::bake::mirror::TriangleView;
 use dynlight::bake::{
     BakeFailure, BakeFinished, BakePreset, BakeRequest, BakeStatus, BakedScene, DynLightBake,
-    SnapshotError, decode,
+    SnapshotError, decode, encode,
 };
 use dynlight::baked_lighting::{ActiveBake, AppliedBake, has_triangle_ids};
 use dynlight::light::{BakedLightSlots, PackedLights};
@@ -123,11 +123,16 @@ fn bake_request_writes_a_loadable_file() {
 
     let output = dir.join("scene.dynlight");
     app.world_mut().write_message(BakeRequest {
-        output: output.clone(),
+        output: Some(output.clone()),
         preset: BakePreset::Preview,
     });
+    app.update();
+    assert_eq!(
+        app.world().resource::<BakeStatus>().output(),
+        Some(output.as_path())
+    );
     let finished = run_until_finished(&mut app, 1).remove(0);
-    assert_eq!(finished.output, output);
+    assert_eq!(finished.output.as_ref(), Some(&output));
     let report = finished.result.expect("bake succeeds");
     assert_eq!(report.stats.meshes, 2);
     assert!(report.stats.texels > 0 && report.stats.rays > 0);
@@ -136,6 +141,17 @@ fn bake_request_writes_a_loadable_file() {
     let bytes = std::fs::read(&output).unwrap();
     assert_eq!(report.bytes, bytes.len() as u64);
     let scene = decode(&bytes).unwrap();
+    let baked = app
+        .world()
+        .resource::<Assets<DynLightBake>>()
+        .get(&report.handle)
+        .expect("successful bake returns an asset");
+    assert_eq!(baked.scene, scene);
+    assert_eq!(
+        encode(&baked.scene),
+        bytes,
+        "asset and file are byte-identical"
+    );
     assert_eq!(scene.lights.len(), 1, "realtime lights aren't baked");
     assert_eq!(scene.lights[0].id, BakeId(42));
     assert_eq!(scene.lights[0].origin, Vec3::new(FLOOR_X, 3.0, 0.0));
@@ -187,6 +203,72 @@ fn bake_request_writes_a_loadable_file() {
         assert!(has_triangle_ids(mesh) && mesh.indices().is_none());
     }
     assert_bake_applied(&mut app, &scene);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn bake_request_without_output_returns_an_applicable_asset_and_writes_nothing() {
+    let dir = scratch_dir("bake-ecs-memory");
+    let mut app = app(&dir);
+    spawn_scene(&mut app);
+    app.update();
+    app.world_mut().write_message(BakeRequest {
+        output: None,
+        preset: BakePreset::Preview,
+    });
+    app.update();
+    let status = app.world().resource::<BakeStatus>();
+    assert!(status.is_running());
+    assert_eq!(status.output(), None, "running in-memory bake has no path");
+
+    let finished = run_until_finished(&mut app, 1).remove(0);
+    assert_eq!(finished.output, None);
+    let report = finished.result.expect("in-memory bake succeeds");
+    let scene = app
+        .world()
+        .resource::<Assets<DynLightBake>>()
+        .get(&report.handle)
+        .expect("asset is available when completion is reported")
+        .scene
+        .clone();
+    assert_eq!(report.stats, scene.stats);
+    assert_eq!(report.stats.meshes, 2);
+    assert!(report.stats.texels > 0 && report.stats.rays > 0);
+    assert_eq!(report.bytes, encode(&scene).len() as u64);
+    assert!(!app.world().resource::<BakeStatus>().is_running());
+    assert_eq!(app.world().resource::<BakeStatus>().output(), None);
+    assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+
+    app.insert_resource(ActiveBake(Some(report.handle)));
+    app.update();
+    assert_bake_applied(&mut app, &scene);
+    assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn file_write_failure_does_not_report_a_successful_asset() {
+    let dir = scratch_dir("bake-ecs-write-error");
+    let mut app = app(&dir);
+    spawn_scene(&mut app);
+    app.update();
+    let parent = dir.join("not-a-directory");
+    std::fs::write(&parent, b"occupied").unwrap();
+    let output = parent.join("scene.dynlight");
+    app.world_mut().write_message(BakeRequest {
+        output: Some(output.clone()),
+        preset: BakePreset::Preview,
+    });
+    let finished = run_until_finished(&mut app, 1).remove(0);
+    assert_eq!(finished.output.as_ref(), Some(&output));
+    let Err(BakeFailure::Write(error)) = finished.result else {
+        panic!("expected a write error, got {:?}", finished.result);
+    };
+    assert!(error.contains("scene.dynlight"), "{error}");
+    assert!(app.world().resource::<Assets<DynLightBake>>().is_empty());
+    assert!(!app.world().resource::<BakeStatus>().is_running());
+    assert!(!output.exists());
+    assert_eq!(std::fs::read(&parent).unwrap(), b"occupied");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -243,7 +325,7 @@ fn render_world_only_meshes_are_reported() {
 
     let output = dir.join("never.dynlight");
     app.world_mut().write_message(BakeRequest {
-        output: output.clone(),
+        output: Some(output.clone()),
         preset: BakePreset::Full,
     });
     let finished = run_until_finished(&mut app, 1).remove(0);
@@ -265,14 +347,14 @@ fn second_request_while_running_is_busy() {
     app.update();
     for name in ["a.dynlight", "b.dynlight"] {
         app.world_mut().write_message(BakeRequest {
-            output: dir.join(name),
+            output: Some(dir.join(name)),
             preset: BakePreset::Preview,
         });
     }
     let finished = run_until_finished(&mut app, 2);
-    assert_eq!(finished[0].output, dir.join("b.dynlight"));
+    assert_eq!(finished[0].output, Some(dir.join("b.dynlight")));
     assert_eq!(finished[0].result, Err(BakeFailure::Busy));
-    assert_eq!(finished[1].output, dir.join("a.dynlight"));
+    assert_eq!(finished[1].output, Some(dir.join("a.dynlight")));
     assert!(finished[1].result.is_ok());
     std::fs::remove_dir_all(&dir).ok();
 }

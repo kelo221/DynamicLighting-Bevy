@@ -4,12 +4,12 @@
 //!
 //! Transparent shadows alpha-test hits against the mesh's base color alpha during traversal.
 
-use std::time::Duration;
-
 use bevy::math::{Vec2, Vec3, Vec3A};
 use obvhs::BvhBuildParams;
+use obvhs::bvh2::reinsertion::ReinsertionOptimizer;
 use obvhs::cwbvh::CwBvh;
-use obvhs::cwbvh::builder::build_cwbvh_from_tris;
+use obvhs::cwbvh::bvh2_to_cwbvh::bvh2_to_cwbvh;
+use obvhs::ploc::PlocBuilder;
 use obvhs::ray::{Ray, RayHit};
 use obvhs::triangle::Triangle;
 
@@ -58,6 +58,21 @@ pub struct Occluders<'a> {
     bvh: Option<CwBvh>,
 }
 
+/// `obvhs::cwbvh::builder::build_cwbvh_from_tris` with `medium_build()` (no pre-splits), minus
+/// its build timer: `std::time::Instant` panics on `wasm32-unknown-unknown`.
+fn build_cwbvh(tris: &[Triangle]) -> CwBvh {
+    let config = BvhBuildParams::medium_build();
+    let mut bvh2 = PlocBuilder::with_capacity(tris.len()).build(
+        config.ploc_search_distance,
+        tris,
+        (0..tris.len() as u32).collect(),
+        config.sort_precision,
+        config.search_depth_threshold,
+    );
+    ReinsertionOptimizer::default().run(&mut bvh2, config.reinsertion_batch_ratio, None);
+    bvh2_to_cwbvh(&bvh2, config.max_prims_per_leaf.clamp(1, 3), true, false)
+}
+
 impl<'a> Occluders<'a> {
     /// Collects every non-degenerate triangle of `meshes` (sorted bake order) and builds the BVH.
     /// The build is single-threaded and depends only on the input order, so it is deterministic.
@@ -85,11 +100,7 @@ impl<'a> Occluders<'a> {
                     v2: t.vertices[2],
                 })
                 .collect();
-            build_cwbvh_from_tris(
-                &tris,
-                BvhBuildParams::medium_build(),
-                &mut Duration::default(),
-            )
+            build_cwbvh(&tris)
         });
         Self {
             triangles,

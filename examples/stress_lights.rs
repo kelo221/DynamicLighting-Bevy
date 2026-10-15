@@ -11,14 +11,23 @@
 //!   `--screenshot path.png` also saves the last frame.
 //!
 //! VSync is off so the frame time is the real cost.
+//!
+//! In a browser it defaults to 256 realtime lights (nothing to bake) and shows the frame time on
+//! the page; browsers cap the frame rate at the display's refresh rate.
 
-use std::path::PathBuf;
+#[path = "support/baking.rs"]
+mod baking;
+#[path = "support/mod.rs"]
+mod support;
+
+use baking::PendingBake;
+use support::{argument, flag};
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::PresentMode;
-use dynlight::bake::{BakeFinished, BakePreset, BakeRequest};
+use dynlight::bake::{BakeFinished, BakePreset};
 use dynlight::baked_lighting::ActiveBake;
 use dynlight::prelude::*;
 
@@ -27,6 +36,8 @@ const FLOOR_SIZE: f32 = 80.0;
 const LIGHT_RADIUS: f32 = 3.5;
 /// Real time before measuring starts: pipelines compile and the bake loads first.
 const WARM_UP_SECONDS: f32 = 3.0;
+/// The browser default: enough to stress the realtime loop without a long shader warm-up.
+const WEB_LIGHTS: u32 = 256;
 
 #[derive(Resource)]
 struct Options {
@@ -44,24 +55,25 @@ struct Measurement {
 }
 
 fn main() -> AppExit {
+    let web = cfg!(target_arch = "wasm32");
     let options = Options {
         lights: argument("--lights")
             .and_then(|value| value.parse().ok())
-            .unwrap_or(1000),
-        realtime: flag("--realtime"),
+            .unwrap_or(if web { WEB_LIGHTS } else { 1000 }),
+        realtime: flag("--realtime") || (web && !flag("--bake")),
         frames: argument("--frames").and_then(|value| value.parse().ok()),
         screenshot: argument("--screenshot"),
     };
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
-            title: "DynLight stress test".into(),
             present_mode: PresentMode::AutoNoVsync,
-            ..default()
+            ..support::window("DynLight stress test")
         }),
         ..default()
     }))
     .add_plugins((DynamicLightingPlugin, FrameTimeDiagnosticsPlugin::default()))
+    .add_plugins(baking::plugin)
     .insert_resource(ClearColor(Color::srgb(0.01, 0.01, 0.015)))
     .insert_resource(BakeSettings {
         pixel_density: 16.0,
@@ -77,20 +89,6 @@ fn main() -> AppExit {
     .add_systems(Update, (apply_finished_bake, report))
     .insert_resource(options);
     app.run()
-}
-
-fn argument(name: &str) -> Option<String> {
-    let mut args = std::env::args().skip_while(|arg| arg != name);
-    args.next()?;
-    args.next()
-}
-
-fn flag(name: &str) -> bool {
-    std::env::args().any(|arg| arg == name)
-}
-
-fn bake_path() -> PathBuf {
-    PathBuf::from("assets").join(BAKE_ASSET)
 }
 
 /// A small deterministic generator, so every run (and the bake) places the same scene.
@@ -178,31 +176,25 @@ fn load_or_bake(
     options: Res<Options>,
     server: Res<AssetServer>,
     mut active: ResMut<ActiveBake>,
-    mut requests: MessageWriter<BakeRequest>,
+    mut pending: ResMut<PendingBake>,
 ) {
     if options.realtime {
+        support::status(&format!("{} realtime lights", options.lights));
         return;
     }
     if flag("--bake") {
-        info!(
-            "baking {} lights into {}",
-            options.lights,
-            bake_path().display()
-        );
-        requests.write(BakeRequest {
-            output: bake_path(),
-            preset: BakePreset::Preview,
-        });
-    } else if bake_path().exists() {
-        active.0 = Some(server.load(BAKE_ASSET));
-    } else {
+        pending.queue(BAKE_ASSET, BakePreset::Preview);
+        return;
+    }
+    baking::load_existing(BAKE_ASSET, &server, &mut active);
+    if active.0.is_none() {
         warn!("no bake yet: run with --bake; until then only the nearest lights render");
     }
+    support::status(&format!("{} baked lights", options.lights));
 }
 
 fn apply_finished_bake(
     mut finished: MessageReader<BakeFinished>,
-    server: Res<AssetServer>,
     mut active: ResMut<ActiveBake>,
     mut measurement: ResMut<Measurement>,
 ) {
@@ -217,7 +209,7 @@ fn apply_finished_bake(
                     report.milliseconds,
                     report.bytes
                 );
-                active.0 = Some(server.load(BAKE_ASSET));
+                active.0 = Some(report.handle.clone());
                 // Measure the baked scene, not the frames before it.
                 *measurement = Measurement::default();
             }
@@ -242,13 +234,17 @@ fn report(
     }
     measurement.frames += 1;
     measurement.seconds += time.delta_secs_f64();
-    if now - *last_log > 2.0 {
+    if now - *last_log > 1.0 {
         *last_log = now;
-        if let Some(fps) = diagnostics
+        if let Some(milliseconds) = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
             .and_then(|frame_time| frame_time.smoothed())
         {
-            info!("{} lights: {fps:.2} ms per frame", options.lights);
+            info!("{} lights: {milliseconds:.2} ms per frame", options.lights);
+            support::page_text(
+                "frame-time",
+                &format!("{milliseconds:.2} ms ({:.0} fps)", 1000.0 / milliseconds),
+            );
         }
     }
     let Some(frames) = options.frames else {

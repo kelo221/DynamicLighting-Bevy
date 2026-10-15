@@ -5,16 +5,21 @@
 //! which the `inspector` feature enables for this example only. `--bake` bakes at startup,
 //! `--frames N` exits after N frames and `--screenshot path.png` saves the last one.
 
+#[path = "../support/baking.rs"]
+mod baking;
 mod panel;
+#[path = "../support/mod.rs"]
+mod support;
 
-use std::path::PathBuf;
+use baking::PendingBake;
+use support::argument;
 
 use bevy::feathers::FeathersPlugins;
 use bevy::feathers::dark_theme::create_dark_theme;
 use bevy::feathers::theme::UiTheme;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use dynlight::bake::{BakeFinished, BakePreset, BakeRequest};
+use dynlight::bake::{BakeFinished, BakePreset};
 use dynlight::baked_lighting::ActiveBake;
 use dynlight::prelude::*;
 
@@ -30,10 +35,7 @@ fn main() -> AppExit {
     let mut app = App::new();
     app.add_plugins((
         DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "DynLight inspector".into(),
-                ..default()
-            }),
+            primary_window: Some(support::window("DynLight inspector")),
             ..default()
         }),
         FeathersPlugins,
@@ -42,10 +44,19 @@ fn main() -> AppExit {
     .insert_resource(UiTheme(create_dark_theme()))
     .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
     .insert_resource(BakeSettings {
-        pixel_density: 32.0,
+        pixel_density: if cfg!(target_arch = "wasm32") {
+            8.0
+        } else {
+            32.0
+        },
+        max_lightmap_size: if cfg!(target_arch = "wasm32") {
+            256
+        } else {
+            2048
+        },
         ..default()
     })
-    .add_plugins(panel::plugin)
+    .add_plugins((baking::plugin, panel::plugin))
     .add_systems(Startup, (spawn_room, load_bake))
     .add_systems(Update, apply_finished_bake);
     if let Some(frames) = argument("--frames").and_then(|value| value.parse::<u32>().ok()) {
@@ -73,16 +84,6 @@ fn main() -> AppExit {
         );
     }
     app.run()
-}
-
-fn argument(name: &str) -> Option<String> {
-    let mut args = std::env::args().skip_while(|arg| arg != name);
-    args.next()?;
-    args.next()
-}
-
-fn bake_path() -> PathBuf {
-    PathBuf::from("assets").join(BAKE_ASSET)
 }
 
 fn spawn_room(
@@ -148,37 +149,28 @@ fn spawn_room(
 fn load_bake(
     server: Res<AssetServer>,
     mut active: ResMut<ActiveBake>,
-    mut requests: MessageWriter<BakeRequest>,
+    mut pending: ResMut<PendingBake>,
 ) {
-    if std::env::args().any(|arg| arg == "--bake") {
-        request_bake(&mut requests);
-    } else if bake_path().exists() {
-        active.0 = Some(server.load(BAKE_ASSET));
+    // Browsers have no saved bake to load, so they start with a quick one.
+    if cfg!(target_arch = "wasm32") || support::flag("--bake") {
+        request_bake(&mut pending);
+    } else {
+        baking::load_existing(BAKE_ASSET, &server, &mut active);
+        support::status("Ready: edit the light, then Bake (Preview skips bounce)");
     }
 }
 
-fn request_bake(requests: &mut MessageWriter<BakeRequest>) {
-    info!("baking into {}", bake_path().display());
-    requests.write(BakeRequest {
-        output: bake_path(),
-        preset: BakePreset::Preview,
-    });
+fn request_bake(pending: &mut PendingBake) {
+    // Queue rather than send here: the browser must paint the status before the bake blocks.
+    pending.queue(BAKE_ASSET, BakePreset::Preview);
 }
 
-fn apply_finished_bake(
-    mut finished: MessageReader<BakeFinished>,
-    server: Res<AssetServer>,
-    mut active: ResMut<ActiveBake>,
-) {
+fn apply_finished_bake(mut finished: MessageReader<BakeFinished>, mut active: ResMut<ActiveBake>) {
     for bake in finished.read() {
         match &bake.result {
             Ok(report) => {
                 info!("baked in {} ms", report.milliseconds);
-                if active.0.is_some() {
-                    server.reload(BAKE_ASSET);
-                } else {
-                    active.0 = Some(server.load(BAKE_ASSET));
-                }
+                active.0 = Some(report.handle.clone());
             }
             Err(error) => error!("bake failed: {error}"),
         }

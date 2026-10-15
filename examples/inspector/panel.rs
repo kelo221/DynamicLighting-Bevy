@@ -7,10 +7,10 @@ use bevy::feathers::tokens;
 use bevy::prelude::*;
 use bevy::ui::Checked;
 use bevy::ui_widgets::{Activate, SliderPrecision, SliderValue, ValueChange};
-use dynlight::bake::{BakeRequest, BakeStatus};
+use dynlight::bake::BakeStatus;
 use dynlight::prelude::*;
 
-use crate::{Inspected, request_bake};
+use crate::{Inspected, PendingBake, request_bake};
 
 /// Shows the light type on the cycling button.
 #[derive(Component, Clone, Default)]
@@ -151,9 +151,9 @@ fn panel() -> impl Scene {
             })
             --
             @FeathersButton
-            on(|_: On<Activate>, status: Res<BakeStatus>, mut requests: MessageWriter<BakeRequest>| {
+            on(|_: On<Activate>, status: Res<BakeStatus>, mut pending: ResMut<PendingBake>| {
                 if !status.is_running() {
-                    request_bake(&mut requests);
+                    request_bake(&mut pending);
                 }
             })
             Children [ @caption("Bake") BakeCaption ]
@@ -167,6 +167,7 @@ type AnyCaption = Or<(With<TypeCaption>, With<EffectCaption>, With<BakeCaption>)
 fn update_captions(
     light: Single<(&DynamicLight, Option<&LightEffect>), With<Inspected>>,
     status: Res<BakeStatus>,
+    pending: Res<PendingBake>,
     mut captions: Query<Caption, AnyCaption>,
 ) {
     let (light, effect) = *light;
@@ -176,7 +177,7 @@ fn update_captions(
             format!("Type: {:?}", light.light_type)
         } else if is_effect {
             format!("Effect: {effect:?}")
-        } else if status.is_running() {
+        } else if status.is_running() || pending.is_pending() {
             "Baking...".to_owned()
         } else {
             "Bake (preview)".to_owned()

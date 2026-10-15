@@ -8,7 +8,13 @@
 //! debug views (`--debug-view lighting|light-count` starts in one).
 
 mod bake;
+#[path = "../support/baking.rs"]
+mod baking;
 mod debug;
+#[path = "../support/mod.rs"]
+mod support;
+
+use support::argument;
 
 use core::f32::consts::{FRAC_PI_2, TAU};
 
@@ -40,15 +46,12 @@ struct ExitAfterFrames {
 fn main() -> AppExit {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "DynLight lighting test".into(),
-            ..default()
-        }),
+        primary_window: Some(support::window("DynLight lighting test")),
         ..default()
     }))
     .add_plugins(DynamicLightingPlugin)
     .insert_resource(LightGizmos {
-        enabled: std::env::args().any(|arg| arg == "--gizmos"),
+        enabled: support::args().any(|arg| arg == "--gizmos"),
     })
     .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
     .insert_resource(WarmUp {
@@ -57,6 +60,13 @@ fn main() -> AppExit {
     .add_plugins((bake::plugin, debug::plugin))
     .add_systems(Startup, spawn_scene)
     .add_systems(Update, orbit_camera);
+    // Browser bakes stay small and in memory; Preview skips bounce, preserving the scene.
+    #[cfg(target_arch = "wasm32")]
+    app.insert_resource(BakeSettings {
+        pixel_density: 8.0,
+        max_lightmap_size: 256,
+        ..default()
+    });
     if let Some(frames) = argument("--frames").and_then(|value| value.parse().ok()) {
         app.insert_resource(ExitAfterFrames {
             frames,
@@ -65,12 +75,6 @@ fn main() -> AppExit {
         .add_systems(Last, exit_after_frames);
     }
     app.run()
-}
-
-fn argument(name: &str) -> Option<String> {
-    let mut args = std::env::args().skip_while(|arg| arg != name);
-    args.next()?;
-    args.next()
 }
 
 fn spawn_scene(

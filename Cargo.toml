@@ -63,6 +63,10 @@ bevy = { version = "0.20.0", default-features = false, features = [
 naga = { version = "30.0.1", features = ["wgsl-in"] }
 wesl = "0.6.0"
 
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+bevy = { version = "0.20.0", default-features = false, features = ["web", "webgpu"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Location"] }
+
 [[example]]
 name = "lighting_test"
 
@@ -80,3 +84,9 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1

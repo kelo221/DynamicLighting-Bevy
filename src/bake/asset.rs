@@ -67,11 +67,14 @@ impl AssetLoader for DynLightBakeLoader {
     }
 }
 
-/// Registers the asset and loader when the app has an asset server; headless apps without
-/// `AssetPlugin` skip it and can still bake and [`decode`] files directly.
+/// Registers the loader with an asset server, or just the in-memory asset collection for
+/// headless apps without `AssetPlugin`.
 pub(super) fn register(app: &mut App) {
     if app.is_plugin_added::<AssetPlugin>() {
         app.init_asset::<DynLightBake>()
             .register_asset_loader(DynLightBakeLoader);
+    } else {
+        app.init_resource::<Assets<DynLightBake>>()
+            .add_message::<AssetEvent<DynLightBake>>();
     }
 }

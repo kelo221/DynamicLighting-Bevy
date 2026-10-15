@@ -1,5 +1,5 @@
-//! ECS orchestration: a [`BakeRequest`] snapshots the scene, bakes it on the
-//! [`AsyncComputeTaskPool`] and writes the `.dynlight` file; [`BakeFinished`] reports the result.
+//! ECS orchestration: a [`BakeRequest`] snapshots the scene and bakes it on the
+//! [`AsyncComputeTaskPool`]; [`BakeFinished`] reports the asset and optional file output.
 //!
 //! Without Bevy's `multi_threaded` feature the async compute pool runs on the main thread, so
 //! the bake blocks that frame until it is done.
@@ -7,14 +7,15 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
 
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 
 use crate::shared::DynamicLightingSettings;
 
-use super::format::{BakeStats, encode};
+use super::asset::DynLightBake;
+use super::format::{BakeStats, BakedScene, encode};
 use super::input::{BakeError, BakeInput, BakeOptions};
 use super::progress::BakeProgress;
 use super::settings::BakeSettings;
@@ -31,31 +32,35 @@ pub enum BakePreset {
     Full,
 }
 
-/// Bakes the current scene into `output` (e.g. `assets/level.dynlight`).
+/// Bakes the current scene into an asset, optionally writing a `.dynlight` file.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct BakeRequest {
-    pub output: PathBuf,
+    /// `None` keeps the bake in memory without filesystem access, including in browsers.
+    /// `Some` writes a file (e.g. `assets/level.dynlight`); unsupported on wasm.
+    pub output: Option<PathBuf>,
     pub preset: BakePreset,
 }
 
 /// Sent once per [`BakeRequest`] when its bake ends.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub struct BakeFinished {
-    pub output: PathBuf,
+    pub output: Option<PathBuf>,
     pub result: Result<BakeReport, BakeFailure>,
 }
 
 /// A successful bake.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BakeReport {
+    /// The in-memory bake, ready to use with [`ActiveBake`](crate::baked_lighting::ActiveBake).
+    pub handle: Handle<DynLightBake>,
     pub stats: BakeStats,
-    /// Wall-clock time of the bake and the file write.
+    /// Wall-clock time of baking, encoding and any file write.
     pub milliseconds: u64,
-    /// Size of the written file.
+    /// Size of the encoded `.dynlight` data, even when no file was requested.
     pub bytes: u64,
 }
 
-/// Why a bake didn't produce a file.
+/// Why a bake didn't produce an asset.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BakeFailure {
     /// Another bake is still running; only one runs at a time.
@@ -86,9 +91,15 @@ pub struct BakeStatus {
 }
 
 struct RunningBake {
-    output: PathBuf,
+    output: Option<PathBuf>,
     progress: Arc<BakeProgress>,
-    task: Task<Result<BakeReport, BakeFailure>>,
+    task: Task<Result<BakeOutput, BakeFailure>>,
+}
+
+struct BakeOutput {
+    scene: BakedScene,
+    milliseconds: u64,
+    bytes: u64,
 }
 
 impl BakeStatus {
@@ -101,9 +112,11 @@ impl BakeStatus {
         self.running.as_ref().map(|bake| &*bake.progress)
     }
 
-    /// Where the running bake will be written.
+    /// Where the running bake will be written; `None` for in-memory bakes or when idle.
     pub fn output(&self) -> Option<&Path> {
-        self.running.as_ref().map(|bake| bake.output.as_path())
+        self.running
+            .as_ref()
+            .and_then(|bake| bake.output.as_deref())
     }
 
     /// Asks the running bake to stop; it finishes with [`BakeError::Cancelled`] and writes
@@ -135,10 +148,7 @@ pub(super) fn start_bakes(
 ) {
     for request in requests.read() {
         let fail = |failure: BakeFailure| {
-            error!(
-                "dynlight bake: {} failed: {failure}",
-                request.output.display()
-            );
+            error!("dynlight bake: {:?} failed: {failure}", request.output);
             BakeFinished {
                 output: request.output.clone(),
                 result: Err(failure),
@@ -158,17 +168,17 @@ pub(super) fn start_bakes(
         let scene_settings = lighting.as_deref().cloned().unwrap_or_default();
         let options = bake_options(request.preset, &settings, &scene_settings);
         info!(
-            "dynlight bake: started {:?}, meshes {}, lights {}, output {}",
+            "dynlight bake: started {:?}, meshes {}, lights {}, output {:?}",
             request.preset,
             input.meshes.len(),
             input.lights.len(),
-            request.output.display()
+            request.output
         );
         let progress = Arc::new(BakeProgress::new());
         let task = {
             let (progress, output) = (progress.clone(), request.output.clone());
             AsyncComputeTaskPool::get()
-                .spawn(async move { bake_to_file(&input, &options, &progress, &output) })
+                .spawn(async move { bake_output(&input, &options, &progress, output.as_deref()) })
         };
         status.running = Some(RunningBake {
             output: request.output.clone(),
@@ -180,6 +190,7 @@ pub(super) fn start_bakes(
 
 pub(super) fn finish_bakes(
     mut status: ResMut<BakeStatus>,
+    mut assets: ResMut<Assets<DynLightBake>>,
     mut finished: MessageWriter<BakeFinished>,
 ) {
     if !status
@@ -193,13 +204,20 @@ pub(super) fn finish_bakes(
         return;
     };
     // The task is finished, so this returns immediately.
-    let result = block_on(bake.task);
+    let result = block_on(bake.task).map(|output| BakeReport {
+        stats: output.scene.stats,
+        handle: assets.add(DynLightBake {
+            scene: output.scene,
+        }),
+        milliseconds: output.milliseconds,
+        bytes: output.bytes,
+    });
     match &result {
         Ok(report) => info!(
             "dynlight bake: meshes {}, texels {}, rays {}, ms {}",
             report.stats.meshes, report.stats.texels, report.stats.rays, report.milliseconds
         ),
-        Err(failure) => error!("dynlight bake: {} failed: {failure}", bake.output.display()),
+        Err(failure) => error!("dynlight bake: {:?} failed: {failure}", bake.output),
     }
     finished.write(BakeFinished {
         output: bake.output,
@@ -207,17 +225,28 @@ pub(super) fn finish_bakes(
     });
 }
 
-/// Bakes and writes the file through a temporary sibling, so asset hot reload never sees a
-/// partial file.
-fn bake_to_file(
+fn bake_output(
     input: &BakeInput,
     options: &BakeOptions,
     progress: &BakeProgress,
-    output: &Path,
-) -> Result<BakeReport, BakeFailure> {
+    output: Option<&Path>,
+) -> Result<BakeOutput, BakeFailure> {
     let start = Instant::now();
     let scene = super::bake(input, options, progress).map_err(BakeFailure::Bake)?;
     let bytes = encode(&scene);
+    if let Some(output) = output {
+        write_output(output, &bytes)?;
+    }
+    Ok(BakeOutput {
+        scene,
+        milliseconds: start.elapsed().as_millis() as u64,
+        bytes: bytes.len() as u64,
+    })
+}
+
+/// Writes through a temporary sibling so asset hot reload never sees a partial file.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_output(output: &Path, bytes: &[u8]) -> Result<(), BakeFailure> {
     let write_error =
         |error: std::io::Error| BakeFailure::Write(format!("{}: {error}", output.display()));
     if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -225,11 +254,15 @@ fn bake_to_file(
     }
     let mut temporary = output.as_os_str().to_owned();
     temporary.push(".partial");
-    std::fs::write(&temporary, &bytes).map_err(write_error)?;
+    std::fs::write(&temporary, bytes).map_err(write_error)?;
     std::fs::rename(&temporary, output).map_err(write_error)?;
-    Ok(BakeReport {
-        stats: scene.stats,
-        milliseconds: start.elapsed().as_millis() as u64,
-        bytes: bytes.len() as u64,
-    })
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_output(output: &Path, _bytes: &[u8]) -> Result<(), BakeFailure> {
+    Err(BakeFailure::Write(format!(
+        "{}: filesystem output is unsupported on wasm; use BakeRequest.output = None",
+        output.display()
+    )))
 }

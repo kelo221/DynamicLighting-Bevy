@@ -4,11 +4,15 @@
 //! `cargo run --example realtime_shadows -- --frames 60 --screenshot screenshots/shadows.png`
 //! exits after 60 frames and saves the last ones as an image.
 
+#[path = "support/mod.rs"]
+mod support;
+
 use core::f32::consts::TAU;
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use dynlight::prelude::*;
+use support::argument;
 
 /// Real time before `--frames` starts counting, so pipelines have compiled.
 const WARM_UP_SECONDS: f32 = 2.0;
@@ -26,11 +30,14 @@ struct Spin;
 
 fn main() -> AppExit {
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins)
-        .add_plugins(DynamicLightingPlugin)
-        .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
-        .add_systems(Startup, spawn_scene)
-        .add_systems(Update, (orbit, spin));
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(support::window("DynLight realtime shadows")),
+        ..default()
+    }))
+    .add_plugins(DynamicLightingPlugin)
+    .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
+    .add_systems(Startup, spawn_scene)
+    .add_systems(Update, (orbit, spin));
     if let Some(frames) = argument("--frames").and_then(|value| value.parse::<u32>().ok()) {
         let screenshot = argument("--screenshot");
         app.add_systems(
@@ -57,12 +64,6 @@ fn main() -> AppExit {
         );
     }
     app.run()
-}
-
-fn argument(name: &str) -> Option<String> {
-    let mut args = std::env::args().skip_while(|arg| arg != name);
-    args.next()?;
-    args.next()
 }
 
 fn spawn_scene(
@@ -140,6 +141,7 @@ fn spawn_scene(
         },
         Transform::from_xyz(-6.0, 6.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    support::status("Two realtime lights with shadow cubemaps; nothing is baked");
 }
 
 fn orbit(time: Res<Time>, mut movers: Query<(&mut Transform, &Orbit)>) {
