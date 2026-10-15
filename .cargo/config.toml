@@ -1,0 +1,7 @@
+# Development aliases: link Bevy dynamically for faster iteration.
+# Release builds and CI use the plain commands without the `dev` feature.
+[alias]
+check-dev = "check --all-targets --features dev"
+test-dev = "test --features dev"
+run-dev = "run --features dev"
+clippy-dev = "clippy --all-targets --features dev -- -D warnings"

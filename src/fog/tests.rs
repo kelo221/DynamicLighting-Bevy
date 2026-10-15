@@ -1,0 +1,211 @@
+use bevy::math::{Quat, Vec3};
+
+use super::mirror::{FogVolume, compose, opacity};
+use super::*;
+use crate::light::{DynamicLight, LightType};
+
+fn volume(shape: VolumetricShape) -> FogVolume {
+    FogVolume {
+        shape,
+        center: Vec3::ZERO,
+        axis: Vec3::NEG_Y,
+        scale: Vec3::ONE,
+        radius: 1.0,
+        thickness: 1.0,
+        intensity: 0.75,
+        inverse_visibility: 0.5,
+        cone_term: cone_term(30.0),
+    }
+}
+
+fn placement() -> Placement {
+    Placement {
+        position: Vec3::new(1.0, 2.0, 3.0),
+        rotation: Quat::from_rotation_x(0.5),
+        scale: Vec3::new(1.0, 2.0, 3.0),
+    }
+}
+
+#[test]
+fn defaults_match_henrys_light() {
+    let fog = VolumetricLight::default();
+    assert_eq!((fog.radius, fog.thickness), (4.0, 1.0));
+    assert_eq!((fog.intensity, fog.visibility), (0.75, 2.0));
+    assert_eq!(VolumetricShape::ConeY as u32, 4);
+}
+
+#[test]
+fn inactive_volumes_are_skipped() {
+    let light = DynamicLight::default();
+    let fog = VolumetricLight::default();
+    assert!(is_active(&light, &fog, 1.0));
+    assert!(!is_active(&light, &fog, 0.0));
+    assert!(!is_active(
+        &light,
+        &VolumetricLight { radius: 0.0, ..fog },
+        1.0
+    ));
+    assert!(!is_active(
+        &light,
+        &VolumetricLight {
+            intensity: 0.0,
+            ..fog
+        },
+        1.0
+    ));
+    let broken_spot = DynamicLight {
+        light_type: LightType::Spot,
+        outer_cutoff: 10.0,
+        ..Default::default()
+    };
+    assert!(!is_active(&broken_spot, &fog, 1.0));
+}
+
+#[test]
+fn packing_reuses_the_light_record() {
+    let light = DynamicLight::default();
+    let fog = VolumetricLight {
+        shape: VolumetricShape::Box,
+        ..Default::default()
+    };
+    let record = pack(&light, &fog, 0.5, placement());
+    assert_eq!(record.channel, 2);
+    assert_eq!(record.radius_sqr, 4.0);
+    assert_eq!(record.gp1, 1.0);
+    assert_eq!(
+        (record.gp2, record.gp3, record.shimmer_scale),
+        (1.0, 2.0, 3.0)
+    );
+    assert_eq!(record.intensity, 1.0);
+    assert_eq!(record.volumetric_intensity, 0.375);
+    assert_eq!(record.volumetric_visibility, 0.5);
+    assert_eq!(record.position, [1.0, 2.0, 3.0]);
+
+    let invisible = VolumetricLight {
+        visibility: 0.0,
+        ..fog
+    };
+    assert!(pack(&light, &invisible, 1.0, placement()).volumetric_visibility > 1.0e4);
+}
+
+#[test]
+fn cones_point_along_forward_or_up() {
+    let light = DynamicLight::default();
+    let rotation = placement().rotation;
+    let cone_z = VolumetricLight {
+        shape: VolumetricShape::ConeZ,
+        ..Default::default()
+    };
+    let record = pack(&light, &cone_z, 1.0, placement());
+    assert!(Vec3::from(record.forward).abs_diff_eq(rotation * Vec3::NEG_Z, 1e-6));
+    assert_eq!(record.gp2, cone_term(30.0));
+
+    let cone_y = VolumetricLight {
+        shape: VolumetricShape::ConeY,
+        ..cone_z
+    };
+    let record = pack(&light, &cone_y, 1.0, placement());
+    assert!(Vec3::from(record.forward).abs_diff_eq(rotation * Vec3::Y, 1e-6));
+}
+
+#[test]
+fn cone_term_widens_up_to_ninety_degrees() {
+    for cutoff in [-30.0_f32, 0.0, 30.0, 90.0, 120.0] {
+        let widen = 1.0 + 0.3 * (cutoff / 90.0).clamp(0.0, 1.0);
+        let expected = (core::f32::consts::FRAC_PI_2 + cutoff.to_radians()).cos() * widen;
+        assert!((cone_term(cutoff) - expected).abs() < 1e-6, "{cutoff}");
+    }
+}
+
+#[test]
+fn bounding_radius_contains_each_shape() {
+    let fog = VolumetricLight::default();
+    assert_eq!(bounding_radius(&fog, Vec3::splat(9.0), 30.0), 4.0);
+    let fog_box = VolumetricLight {
+        shape: VolumetricShape::Box,
+        ..fog
+    };
+    let radius = bounding_radius(&fog_box, Vec3::new(1.0, -2.0, 3.0), 30.0);
+    assert!((radius - 224.0_f32.sqrt()).abs() < 1e-5);
+    let cone = VolumetricLight {
+        shape: VolumetricShape::ConeZ,
+        ..fog
+    };
+    let radius = bounding_radius(&cone, Vec3::ONE, 30.0);
+    assert!((radius - 4.0 / 30.0_f32.to_radians().cos()).abs() < 1e-5);
+    let wide = bounding_radius(&cone, Vec3::ONE, 147.5);
+    assert!((wide - 4.0 / 37.5_f32.to_radians().cos()).abs() < 1e-5);
+}
+
+#[test]
+fn a_ray_through_the_sphere_center_is_fully_covered() {
+    let sphere = volume(VolumetricShape::Sphere);
+    let through = opacity(&sphere, Vec3::new(-5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0));
+    assert!((through - 0.75).abs() < 1e-6);
+    let miss = opacity(&sphere, Vec3::new(-5.0, 2.0, 0.0), Vec3::new(5.0, 2.0, 0.0));
+    assert_eq!(miss, 0.0);
+    let grazing = opacity(&sphere, Vec3::new(-5.0, 0.5, 0.0), Vec3::new(5.0, 0.5, 0.0));
+    assert!(grazing > 0.0 && grazing < through);
+}
+
+#[test]
+fn nearby_surfaces_stay_visible_inside_fog() {
+    let sphere = volume(VolumetricShape::Sphere);
+    let near = opacity(&sphere, Vec3::ZERO, Vec3::new(0.2, 0.0, 0.0));
+    assert!((near - 0.2 * 0.5 * 0.75).abs() < 1e-6);
+}
+
+#[test]
+fn box_coverage_is_the_path_length_over_the_diagonal() {
+    let fog_box = FogVolume {
+        thickness: 10.0,
+        inverse_visibility: 10.0,
+        ..volume(VolumetricShape::Box)
+    };
+    let through = opacity(
+        &fog_box,
+        Vec3::new(-5.0, 0.0, 0.0),
+        Vec3::new(5.0, 0.0, 0.0),
+    );
+    assert!(
+        (through - 0.75).abs() < 1e-6,
+        "thick box saturates: {through}"
+    );
+    let thin = FogVolume {
+        thickness: 1.0,
+        ..fog_box
+    };
+    let coverage = 2.0 / 12.0_f32.sqrt();
+    let expected = coverage * coverage * (3.0 - 2.0 * coverage) * 0.75;
+    let actual = opacity(&thin, Vec3::new(-5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0));
+    assert!((actual - expected).abs() < 1e-5);
+    assert_eq!(
+        opacity(&thin, Vec3::new(-5.0, 3.0, 0.0), Vec3::new(5.0, 3.0, 0.0)),
+        0.0
+    );
+}
+
+#[test]
+fn cone_fog_lies_along_its_axis() {
+    let cone = FogVolume {
+        radius: 4.0,
+        ..volume(VolumetricShape::ConeY)
+    };
+    let across = opacity(&cone, Vec3::new(-5.0, -3.0, 0.0), Vec3::new(5.0, -3.0, 0.0));
+    assert!(across > 0.0);
+    let above = opacity(&cone, Vec3::new(-5.0, 3.0, 0.0), Vec3::new(5.0, 3.0, 0.0));
+    assert_eq!(above, 0.0);
+}
+
+#[test]
+fn compose_blends_towards_opaque_fog() {
+    let scene = Vec3::new(0.2, 0.4, 0.6);
+    assert!(compose(scene, &[]).abs_diff_eq(scene, 1e-6));
+    let solid = compose(scene, &[(Vec3::new(1.0, 0.0, 0.0), 1.0)]);
+    assert!(solid.abs_diff_eq(Vec3::new(1.0, 0.0, 0.0), 1e-6));
+    // screen(0.25, s) lerped towards 0.25 by 0.25 is 0.25 + 0.5625·s: light fog lifts dark
+    // pixels and slightly dims bright ones, as in Henry's post-process.
+    let light_fog = compose(scene, &[(Vec3::ONE, 0.25)]);
+    assert!(light_fog.abs_diff_eq(Vec3::splat(0.25) + scene * 0.5625, 1e-6));
+    assert!(light_fog.x > scene.x && light_fog.z < scene.z);
+}

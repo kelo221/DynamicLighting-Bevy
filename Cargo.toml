@@ -1,0 +1,82 @@
+[package]
+name = "dynlight"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT OR Apache-2.0"
+description = "Baked per-texel shadow bits with live light evaluation for Bevy: a port of Henry de Jongh's Dynamic Lighting, independent of Bevy's lights"
+readme = "README.md"
+repository = "https://github.com/kelo221/DynamicLighting-Bevy"
+homepage = "https://kelo221.github.io/DynamicLighting-Bevy/"
+keywords = ["bevy", "lighting", "shadows", "baking", "gamedev"]
+categories = ["game-development", "rendering"]
+publish = false
+
+[features]
+# Development only: links Bevy dynamically for faster rebuilds. Used by the
+# `*-dev` aliases in `.cargo/config.toml`; never enable it for release builds.
+dev = ["bevy/dynamic_linking"]
+# The `inspector` example's UI: Bevy's Feathers widgets. Off by default so other builds don't
+# compile Bevy's UI.
+inspector = [
+    "bevy/bevy_feathers",
+    "bevy/ui_bevy_render",
+    "bevy/ui_picking",
+    "bevy/scene",
+    # Feathers uses custom cursors, which `bevy_winit` must be built with too.
+    "bevy/custom_cursor",
+]
+
+[dependencies]
+bevy = { version = "0.20.0", default-features = false, features = [
+    "std",
+    "default_app",
+    "3d_bevy_render",
+] }
+bytemuck = { version = "1.25", features = ["derive"] }
+serde_json = "1.0"
+# Baker: parallel tracing, the occluder BVH, `.dynlight` compression and f16 distance cubes.
+# `obvhs` stays single-threaded (no `parallel` feature) so BVH builds are deterministic.
+crc32fast = "1.5"
+flate2 = "1.1"
+half = "2.7"
+obvhs = "0.4.0"
+rayon = "1.11"
+
+[dev-dependencies]
+# Windowing and input for the examples; the library itself stays headless.
+bevy = { version = "0.20.0", default-features = false, features = [
+    "std",
+    "default_app",
+    "3d_bevy_render",
+    "bevy_winit",
+    "multi_threaded",
+    "keyboard",
+    "mouse",
+    "x11",
+    "wayland",
+    "default_font",
+    "png",
+] }
+# Same versions Bevy 0.20 uses internally; tests compile our WESL modules and
+# check the WGSL struct layouts against the Rust GPU structs.
+naga = { version = "30.0.1", features = ["wgsl-in"] }
+wesl = "0.6.0"
+
+[[example]]
+name = "lighting_test"
+
+[[example]]
+name = "inspector"
+required-features = ["inspector"]
+
+[[bench]]
+name = "bake"
+harness = false
+
+# Bevy's recommended dev profile: some optimization for our code, full for deps.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
