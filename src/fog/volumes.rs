@@ -66,7 +66,7 @@ pub(super) fn pack_fog_volumes(
         let (scale, rotation, position) = transform.to_scale_rotation_translation();
         let bounds = Sphere {
             center: position.into(),
-            radius: bounding_radius(fog, scale, light.outer_cutoff),
+            radius: bounding_radius(fog, light, scale),
         };
         let seen = cameras
             .iter()

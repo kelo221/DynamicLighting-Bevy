@@ -5,17 +5,40 @@ use core::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::math::Vec3;
 
+use super::area::{self, AreaShape};
 use super::kinds::LightType;
 use crate::shared::{ChannelFlags, GpuLight};
 
-/// Brightness at `world` before shadows: attenuation times the light-type pattern. Zero outside
-/// the radius or for a disabled slot.
+/// The point light comes from as seen from `world`: its position, or the nearest point of an
+/// area light's shape.
+pub fn source_point(light: &GpuLight, world: Vec3) -> Vec3 {
+    AreaShape::of(light).map_or(light.position.into(), |shape| shape.nearest_point(world))
+}
+
+/// Brightness at `world` before shadows and the surface's cosine: attenuation (from the
+/// nearest point of an area light) times the light-type pattern. Zero outside the radius or for
+/// a disabled slot.
 pub fn radiance(light: &GpuLight, world: Vec3) -> f32 {
-    let distance_sqr = Vec3::from(light.position).distance_squared(world);
+    let distance_sqr = source_point(light, world).distance_squared(world);
     if light.radius_sqr < 0.0 || distance_sqr > light.radius_sqr {
         return 0.0;
     }
     attenuation(light, distance_sqr) * type_factor(light, world)
+}
+
+/// The diffuse term for a surface at `world` with unit `normal`: Lambert on `baked` surfaces,
+/// Henry's squared half-Lambert elsewhere, and the area-light mean cosine for area lights.
+pub fn diffuse(light: &GpuLight, world: Vec3, normal: Vec3, baked: bool) -> f32 {
+    if let Some(shape) = AreaShape::of(light) {
+        return area::diffuse(&shape, world, normal, baked);
+    }
+    let cosine = normal.dot((Vec3::from(light.position) - world).normalize_or_zero());
+    if baked {
+        cosine.max(0.0)
+    } else {
+        let half_lambert = 0.5 + 0.5 * cosine;
+        half_lambert * half_lambert
+    }
 }
 
 /// Smooth falloff to zero at the radius: `intensity * (1 - s)² / (1 + falloff * s)` with
@@ -35,7 +58,7 @@ pub fn type_factor(light: &GpuLight, world: Vec3) -> f32 {
     let (gp1, gp2, gp3) = (light.gp1, light.gp2, light.gp3);
     let light_type = ChannelFlags::unpack(light.channel).light_type;
     match LightType::from_bits(light_type).unwrap_or_default() {
-        LightType::Point => 1.0,
+        LightType::Point | LightType::Rectangle | LightType::Tube => 1.0,
         LightType::Spot => cone(direction.dot(forward), gp1, gp2),
         LightType::Discoball => {
             let local = to_light_space(direction, forward, up);

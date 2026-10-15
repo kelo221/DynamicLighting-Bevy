@@ -8,6 +8,21 @@ pub const SHADOW_CUBEMAP_RESOLUTION: u32 = 512;
 /// Near plane of the face cameras. Occluders closer to the light than this are clipped.
 pub const SHADOW_NEAR_PLANE: f32 = 0.01;
 
+/// Gaussian blur of a point-like light's cubemap faces, in texels.
+pub const POINT_BLUR: f32 = 1.5;
+/// The widest blur, for area lights whose shape is large next to their radius.
+pub const MAX_AREA_BLUR: f32 = 4.0;
+
+/// How wide a light's cubemap faces are blurred (Gaussian sigma in texels), given half its
+/// shape's diagonal `extent` (0 for point-like lights) and its `radius`. A shape that is a
+/// quarter of the radius or larger gets [`MAX_AREA_BLUR`]; smaller ones scale down towards
+/// [`POINT_BLUR`]. It only softens shadow edges evenly: a real area light's penumbra also grows
+/// with the distance between the occluder and the receiver.
+pub fn face_blur(extent: f32, radius: f32) -> f32 {
+    let size = (4.0 * extent / radius.max(1.0e-6)).clamp(0.0, 1.0);
+    POINT_BLUR + (MAX_AREA_BLUR - POINT_BLUR) * size
+}
+
 /// Forward and up of the camera that renders cube face `face`, in WebGPU face order
 /// (`+X, -X, +Y, -Y, +Z, -Z`; see `shared::cube`). Cube faces are left-handed, so the rendered
 /// image is mirrored horizontally when it is written into the face.
@@ -91,5 +106,15 @@ mod tests {
             [2, 0, 1]
         );
         assert_eq!(select_shadow_lights(lights, None, 2), [0, 1]);
+    }
+
+    #[test]
+    fn larger_shapes_blur_wider() {
+        assert_eq!(face_blur(0.0, 4.0), POINT_BLUR);
+        let tube = face_blur(0.7, 4.0);
+        assert!(tube > POINT_BLUR && tube < MAX_AREA_BLUR, "{tube}");
+        assert!(face_blur(0.9, 4.0) > tube);
+        assert_eq!(face_blur(2.0, 4.0), MAX_AREA_BLUR);
+        assert_eq!(face_blur(1.0, 0.0), MAX_AREA_BLUR);
     }
 }

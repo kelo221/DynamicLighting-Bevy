@@ -37,10 +37,14 @@ impl Default for VolumetricLight {
 pub enum VolumetricShape {
     #[default]
     Sphere = 1,
-    /// A box of half-size `radius`, stretched by the light's scale.
+    /// A box of half-size `radius`, stretched by the light's scale and turned with the light.
     Box = 2,
     /// A cone along the light's forward axis, as wide as the light's `outer_cutoff`.
     ConeZ = 3,
     /// A cone along the light's up axis, as wide as the light's `outer_cutoff`.
     ConeY = 4,
+    /// A rectangular shaft `radius` long along the light's forward axis: it starts as the shape of
+    /// a rectangle or tube light (a point for other types) and widens by the light's
+    /// `outer_cutoff` on every side. A ceiling panel's light falling through haze.
+    Frustum = 5,
 }

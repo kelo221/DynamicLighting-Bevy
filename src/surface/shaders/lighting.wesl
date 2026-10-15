@@ -75,7 +75,11 @@ fn add_cube_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: GpuL
     }
     var map = 1.0;
     if shadows {
-        map = cube_shadow(slot, surface.world, light.position, geometry.distance_sqr, geometry.direction, surface.normal);
+        // Distance cubes are baked from the record's position: an area light's shadow point.
+        let to_point = light.position - surface.world;
+        let point_sqr = dot(to_point, to_point);
+        let point = to_point * inverseSqrt(max(point_sqr, 1.0e-20));
+        map = cube_shadow(slot, surface.world, light.position, point_sqr, point, surface.normal);
         if map == 0.0 {
             return;
         }

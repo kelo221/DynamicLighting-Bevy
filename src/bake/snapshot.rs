@@ -1,8 +1,9 @@
 //! Snapshots the ECS into plain [`BakeInput`]: world-space static meshes and baked lights.
 //!
 //! Meshes are entities with [`BakeStatic`], [`Mesh3d`] and [`GlobalTransform`]; lights are
-//! every [`DynamicLight`] that isn't `realtime`. Entities without a [`BakeId`] get one derived
-//! from their `Name` path (root first) plus, for meshes, the mesh asset path.
+//! every [`DynamicLight`] that isn't `realtime`, area lights as one light per shadow point.
+//! Entities without a [`BakeId`] get one derived from their `Name` path (root first) plus, for
+//! meshes, the mesh asset path.
 
 use std::fmt;
 
@@ -11,7 +12,7 @@ use bevy::mesh::{MeshAccessError, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
-use crate::light::DynamicLight;
+use crate::light::{DynamicLight, shadow_point_id};
 use crate::shared::{BakeId, mesh_content_hash};
 
 use super::identity::{Candidate, NamePaths, assign_ids};
@@ -91,7 +92,8 @@ impl SceneSnapshot<'_, '_> {
                 })?;
                 if data.uv0_as_uv1 && without_uv1.insert(handle.0.id()) {
                     warn!(
-                        "dynlight bake: the mesh of {} has no UV1; using UV0 for the shadows of                          every entity that uses it",
+                        "dynlight bake: the mesh of {} has no UV1; using UV0 for the shadows of \
+                         every entity that uses it",
                         label()
                     );
                 }
@@ -111,32 +113,35 @@ impl SceneSnapshot<'_, '_> {
             mesh.id = id;
         }
 
-        let mut lights = Vec::new();
+        let mut baked = Vec::new();
         let mut candidates = Vec::new();
         for (entity, light, transform, id) in &self.lights {
             if light.realtime {
                 continue;
             }
-            let position = transform.translation();
+            let (_, rotation, position) = transform.to_scale_rotation_translation();
             candidates.push(Candidate::light(&self.paths, entity, id.copied(), position));
-            lights.push(BakeLight {
-                id: BakeId(0),
-                position,
-                radius: light.radius,
-                illumination: light.illumination,
-                transparency: light.transparency,
-                bounce: BakeBounce {
-                    samples: light.bounce.samples.max(2),
-                    intensity: light.bounce.intensity,
-                    compression: light.bounce.compression,
-                },
-            });
+            baked.push((light, position, rotation));
         }
-        for (light, id) in lights
-            .iter_mut()
-            .zip(assign_ids(&candidates, "light", true))
-        {
-            light.id = id;
+        // An area light is baked as one point light per shadow point.
+        let mut lights = Vec::new();
+        let ids = assign_ids(&candidates, "light", true);
+        for ((light, position, rotation), id) in baked.into_iter().zip(ids) {
+            let count = light.shadow_point_count();
+            for point in light.shadow_point_layout(position, rotation) {
+                lights.push(BakeLight {
+                    id: shadow_point_id(id, point.index, count),
+                    position: point.position,
+                    radius: point.radius,
+                    illumination: light.illumination,
+                    transparency: light.transparency,
+                    bounce: BakeBounce {
+                        samples: light.bounce.samples.max(2),
+                        intensity: light.bounce.intensity,
+                        compression: light.bounce.compression,
+                    },
+                });
+            }
         }
         Ok(BakeInput { meshes, lights })
     }

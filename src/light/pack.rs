@@ -30,6 +30,13 @@ pub struct PackContext {
     pub cookie_index: Option<u32>,
     /// Slot in the realtime shadow cubemap array, if the light renders one.
     pub shadow_cubemap_index: Option<u32>,
+    /// Area lights baked from several points: the distance of this record's shadow point from
+    /// the light's position along its long axis. The record stands at that point; the shape
+    /// stays where the light is.
+    pub point_offset: f32,
+    /// The part of the light's intensity this record carries: one over the number of shadow
+    /// points for a baked area light, otherwise 1.
+    pub share: f32,
 }
 
 impl Default for PackContext {
@@ -41,11 +48,14 @@ impl Default for PackContext {
             bounce_bits_per_pixel: 8,
             cookie_index: None,
             shadow_cubemap_index: None,
+            point_offset: 0.0,
+            share: 1.0,
         }
     }
 }
 
-/// The shader record for `light`. Invalid spot and discoball cones give [`GpuLight::DISABLED`].
+/// The shader record for `light`. Invalid lights, such as broken spot cones, give
+/// [`GpuLight::DISABLED`].
 pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuLight {
     if !light.is_valid() {
         return GpuLight::DISABLED;
@@ -64,6 +74,12 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
     if cookie {
         gp3 = cookie_projection_scale(light.outer_cutoff);
     }
+    let mut position = pose.position;
+    if light.light_type.is_area() {
+        // The shaders find the shape's center `gp3` back along the long axis.
+        gp3 = context.point_offset;
+        position += pose.rotation * light.long_axis() * context.point_offset;
+    }
     let (shimmer_scale, shimmer_modifier) = match light.shimmer {
         Shimmer::None => (0.0, 0.0),
         Shimmer::Water => (light.shimmer_scale, 1.0 - light.shimmer_modifier),
@@ -74,11 +90,13 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         LightType::Spot => pose.rotation * Vec3::Z,
         _ => pose.rotation * Vec3::NEG_Z,
     };
+    // Area lights attenuate from the nearest point of their shape over the reach past it.
+    let reach = light.shape_reach();
     GpuLight {
-        position: pose.position.to_array(),
-        radius_sqr: light.radius * light.radius,
+        position: position.to_array(),
+        radius_sqr: reach * reach,
         channel,
-        intensity: light.intensity * context.effect_intensity,
+        intensity: light.intensity * context.effect_intensity * context.share,
         gp1,
         gp2,
         color: linear_rgb(light.color),
@@ -92,7 +110,7 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         cookie_index: context.cookie_index.unwrap_or(0),
         shadow_cubemap_index: context.shadow_cubemap_index.unwrap_or(0),
         bounce_color: bounce_color(light),
-        falloff: light.radius * light.falloff * light.falloff,
+        falloff: reach * light.falloff * light.falloff,
     }
 }
 

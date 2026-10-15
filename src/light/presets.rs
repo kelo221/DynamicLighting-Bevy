@@ -34,6 +34,25 @@ impl DynamicLight {
             ..default()
         }
     }
+
+    /// A `width` by `height` light panel in the entity's local XY plane, lighting along its
+    /// forward axis (`Transform::forward`): point it down for a ceiling panel.
+    pub fn rectangle(width: f32, height: f32) -> Self {
+        Self {
+            light_type: LightType::Rectangle,
+            size: Vec2::new(width, height),
+            ..default()
+        }
+    }
+
+    /// A tube light `length` long along the entity's local X axis, like a fluorescent tube.
+    pub fn tube(length: f32) -> Self {
+        Self {
+            light_type: LightType::Tube,
+            size: Vec2::new(length, 0.0),
+            ..default()
+        }
+    }
 }
 
 /// A sun: DynLight has no directional lights, so this is a point light [`SUN_DISTANCE`] away

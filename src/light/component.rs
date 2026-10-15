@@ -17,7 +17,10 @@ pub struct DynamicLight {
     pub color: Color,
     /// Brightness. Doesn't change the range.
     pub intensity: f32,
-    /// Distance in meters where the light ends completely.
+    /// Distance in meters from the light's position where the light ends completely. Area
+    /// lights are measured from their position too: past their shape they reach `radius` minus
+    /// half the shape's diagonal ([`Self::shape_reach`]). Their shadow points away from the
+    /// position bake a little further, to cover the same lit region.
     pub radius: f32,
     /// Extra decay within the radius for an artistic look, such as a bright desk lamp. 0 is
     /// physically based; 1 roughly matches the falloff to the radius.
@@ -41,6 +44,14 @@ pub struct DynamicLight {
     pub rotor_center: f32,
     /// Disco: how fast the spots move vertically. Negative reverses it.
     pub disco_vertical_speed: f32,
+    /// Rectangle: width (local X) and height (local Y) of the panel in meters. Tube: length
+    /// (local X); `y` is unused. Also the start of frustum fog. Zero makes an area light a point.
+    pub size: Vec2,
+    /// Rectangle and tube: how many points the bake traces shadows from, spread evenly along
+    /// the shape's long side (1 to 8). Each point is baked like a point light, with hard 1-bit
+    /// shadows; together they soften shadow edges along the shape. Moving or turning the light
+    /// moves the points and drops it to realtime lighting until the next bake.
+    pub shadow_points: u32,
     pub shadows: ShadowMode,
     pub illumination: Illumination,
     pub transparency: Transparency,
@@ -68,6 +79,8 @@ impl Default for DynamicLight {
             wave_offset: 0.0,
             rotor_center: 0.1,
             disco_vertical_speed: 1.0,
+            size: Vec2::ZERO,
+            shadow_points: 3,
             shadows: ShadowMode::Raytraced,
             illumination: Illumination::Direct,
             transparency: Transparency::Disabled,
@@ -81,9 +94,40 @@ impl Default for DynamicLight {
 
 impl DynamicLight {
     /// Spot and discoball lights need `outer_cutoff >= inner_cutoff` and a non-zero
-    /// `outer_cutoff`; invalid ones are disabled in every render path.
+    /// `outer_cutoff`; area lights a size that isn't negative and a radius beyond their shape.
+    /// Invalid lights are disabled in every render path.
     pub fn is_valid(&self) -> bool {
-        !matches!(self.light_type, LightType::Spot | LightType::Discoball)
-            || (self.outer_cutoff >= self.inner_cutoff && self.outer_cutoff != 0.0)
+        match self.light_type {
+            LightType::Spot | LightType::Discoball => {
+                self.outer_cutoff >= self.inner_cutoff && self.outer_cutoff != 0.0
+            }
+            LightType::Rectangle | LightType::Tube => {
+                self.size.cmpge(Vec2::ZERO).all() && self.shape_reach() > 0.0
+            }
+            _ => true,
+        }
+    }
+
+    /// Half extents of an area light's shape in its local X and Y: the panel, or the tube with
+    /// zero height. Zero for every other type.
+    pub fn half_extents(&self) -> Vec2 {
+        match self.light_type {
+            LightType::Rectangle => self.size.max(Vec2::ZERO) / 2.0,
+            LightType::Tube => Vec2::new(self.size.x.max(0.0) / 2.0, 0.0),
+            _ => Vec2::ZERO,
+        }
+    }
+
+    /// How far the shape reaches from the light's position: half its diagonal, zero for
+    /// point-like types.
+    pub fn extent(&self) -> f32 {
+        self.half_extents().length()
+    }
+
+    /// How far the light reaches past its shape: the radius minus [`Self::extent`], so that an
+    /// area light, like every other light, ends within `radius` of its position. The radius
+    /// itself for point-like types.
+    pub fn shape_reach(&self) -> f32 {
+        self.radius - self.extent()
     }
 }

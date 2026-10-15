@@ -1,22 +1,31 @@
-//! Lighting test scene: every light type, every effect, shimmer and a cookie over a lit floor,
-//! wall and props, all drawn with `DynLitMaterial` and no Bevy lights.
+//! Lighting test scene: every light type, every effect, shimmer, a cookie, fog volumes and
+//! fluorescent area-light fixtures over a lit floor, wall and props, all drawn with
+//! `DynLitMaterial` and no Bevy lights.
+//!
+//! Drive the cube with WASD or the arrow keys (Shift runs) and switch its lantern with Space;
+//! drag to orbit and scroll to zoom. `--bake` (or the B key) bakes the floor, wall and crates;
+//! the cube and the spheres are lit through the light BVH and distance cubes. V cycles the
+//! debug views (`--debug-view lighting|light-count` starts in one).
 //!
 //! `cargo run --example lighting_test -- --frames 120` exits after 120 frames (smoke test);
-//! add `--screenshot screenshots/lighting_test.png` to save the last frames as an image, and
-//! `--gizmos` to outline every light's radius. `--bake` (or the B key) bakes the static floor
-//! and wall; the moving props are lit through the light BVH and distance cubes. V cycles the
-//! debug views (`--debug-view lighting|light-count` starts in one).
+//! add `--screenshot screenshots/lighting_test.png` to save the last frames as an image,
+//! `--camera x,y,z,target_x,target_y,target_z` to hold the camera still, and `--gizmos` to
+//! outline every light's radius.
 
 mod bake;
 #[path = "../support/baking.rs"]
 mod baking;
 mod debug;
+mod fixtures;
+#[path = "../support/orbit.rs"]
+mod orbit;
+mod player;
 #[path = "../support/mod.rs"]
 mod support;
 
+use orbit::{OrbitCamera, OrbitFollow};
+use player::Solid;
 use support::argument;
-
-use core::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::VertexAttributeValues;
@@ -57,9 +66,8 @@ fn main() -> AppExit {
     .insert_resource(WarmUp {
         ready_at: WARM_UP_SECONDS,
     })
-    .add_plugins((bake::plugin, debug::plugin))
-    .add_systems(Startup, spawn_scene)
-    .add_systems(Update, orbit_camera);
+    .add_plugins((bake::plugin, debug::plugin, orbit::plugin, player::plugin))
+    .add_systems(Startup, spawn_scene);
     // Browser bakes stay small and in memory; Preview skips bounce, preserving the scene.
     #[cfg(target_arch = "wasm32")]
     app.insert_resource(BakeSettings {
@@ -83,7 +91,17 @@ fn spawn_scene(
     mut materials: ResMut<Assets<DynLitMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    commands.spawn((Camera3d::default(), FogPostProcess, Transform::default()));
+    let player = player::spawn(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec2::new(0.0, 4.6),
+    );
+    let mut camera = commands.spawn((Camera3d::default(), FogPostProcess));
+    match fixed_camera() {
+        Some(transform) => camera.insert(transform),
+        None => camera.insert((orbit_camera(), OrbitFollow(player))),
+    };
 
     let floor = materials.add(Color::srgb(0.8, 0.8, 0.8));
     let wall = materials.add(Color::srgb(0.7, 0.72, 0.75));
@@ -111,6 +129,7 @@ fn spawn_scene(
             MeshMaterial3d(prop.clone()),
             Transform::from_xyz(x + 0.7, 0.3, -2.4).with_rotation(Quat::from_rotation_y(0.6)),
             BakeStatic,
+            Solid(0.4),
         ));
     }
     // Metallic shading: metals and dielectrics alternate, roughness grows to the right.
@@ -127,6 +146,7 @@ fn spawn_scene(
             Mesh3d(sphere.clone()),
             MeshMaterial3d(material),
             Transform::from_xyz(x, 0.35, 2.6),
+            Solid(0.35),
         ));
     }
 
@@ -138,6 +158,11 @@ fn spawn_scene(
                 light_type,
                 color: Color::hsl(hue, 0.7, 0.6),
                 radius: 3.5,
+                size: match light_type {
+                    LightType::Rectangle => Vec2::new(0.8, 0.4),
+                    LightType::Tube => Vec2::new(1.2, 0.0),
+                    _ => Vec2::ZERO,
+                },
                 wave_frequency: 2.0,
                 // One light bakes bounce lighting, which switches the bake to the bounce layout.
                 illumination: if i == 0 {
@@ -187,56 +212,7 @@ fn spawn_scene(
         ));
     }
 
-    commands.spawn((
-        Name::new("Fog"),
-        DynamicLight {
-            color: Color::srgb(0.4, 0.6, 1.0),
-            radius: 2.0,
-            realtime: true,
-            ..default()
-        },
-        VolumetricLight {
-            radius: 2.0,
-            ..default()
-        },
-        LightEffect::new(LightEffectKind::Pulse),
-        Transform::from_xyz(0.0, 1.5, 6.0),
-    ));
-    commands.spawn((
-        Name::new("Cone fog"),
-        DynamicLight {
-            light_type: LightType::Spot,
-            color: Color::srgb(1.0, 0.85, 0.5),
-            radius: 4.0,
-            inner_cutoff: 20.0,
-            outer_cutoff: 25.0,
-            realtime: true,
-            ..default()
-        },
-        VolumetricLight {
-            shape: VolumetricShape::ConeZ,
-            radius: 3.5,
-            intensity: 0.5,
-            ..default()
-        },
-        Transform::from_xyz(7.0, 3.5, 5.0).looking_to(Dir3::NEG_Y, Vec3::NEG_Z),
-    ));
-    commands.spawn((
-        Name::new("Box fog"),
-        DynamicLight {
-            color: Color::srgb(0.6, 1.0, 0.6),
-            radius: 2.0,
-            realtime: true,
-            ..default()
-        },
-        VolumetricLight {
-            shape: VolumetricShape::Box,
-            radius: 1.0,
-            intensity: 0.5,
-            ..default()
-        },
-        Transform::from_xyz(-7.0, 1.0, 5.0).with_scale(Vec3::new(1.5, 1.0, 1.0)),
-    ));
+    fixtures::spawn(&mut commands, &mut meshes, &mut materials, prop);
 }
 
 /// A box whose faces get their own cell of a 3×2 UV1 atlas. Bevy's box UVs put every face on
@@ -287,26 +263,26 @@ fn cookie_image() -> Image {
     )
 }
 
-/// Orbits the scene, or stays at `--camera x,y,z,target_x,target_y,target_z`.
-fn orbit_camera(time: Res<Time>, mut cameras: Query<&mut Transform, With<Camera3d>>) {
-    let angle = time.elapsed_secs() * TAU / 60.0 - FRAC_PI_2 * 0.2;
-    let fixed = argument("--camera").and_then(|value| {
-        let numbers: Vec<f32> = value
-            .split(',')
-            .filter_map(|n| n.trim().parse().ok())
-            .collect();
-        let [x, y, z, tx, ty, tz] = numbers[..] else {
-            return None;
-        };
-        Some((Vec3::new(x, y, z), Vec3::new(tx, ty, tz)))
-    });
-    let (eye, target) = fixed.unwrap_or((
-        Vec3::new(angle.sin() * 14.0, 7.0, angle.cos() * 14.0),
-        Vec3::new(0.0, 0.5, 0.0),
-    ));
-    for mut transform in &mut cameras {
-        *transform = Transform::from_translation(eye).looking_at(target, Vec3::Y);
-    }
+/// The camera from `--camera x,y,z,target_x,target_y,target_z`.
+fn fixed_camera() -> Option<Transform> {
+    let numbers: Vec<f32> = argument("--camera")?
+        .split(',')
+        .filter_map(|n| n.trim().parse().ok())
+        .collect();
+    let [x, y, z, tx, ty, tz] = numbers[..] else {
+        return None;
+    };
+    Some(Transform::from_xyz(x, y, z).looking_at(Vec3::new(tx, ty, tz), Vec3::Y))
+}
+
+/// Orbits the cube from the front: the wall hides everything from behind.
+fn orbit_camera() -> OrbitCamera {
+    let mut orbit = OrbitCamera::new(Vec3::new(0.0, 0.5, 0.0), -0.3, 0.43, 15.0);
+    orbit.yaw_range = Some((-1.2, 1.2));
+    orbit.pitch_range = (0.15, 1.3);
+    orbit.distance_range = (4.0, 26.0);
+    orbit.drift = 0.12;
+    orbit
 }
 
 fn exit_after_frames(

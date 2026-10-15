@@ -1,6 +1,7 @@
-//! GPU readback check: renders a floor lit by realtime point, spot, wave and interference
-//! lights into a float image, reads it back and compares sampled pixels with the CPU mirror of
-//! the light shaders (`dynlight::light::mirror`) evaluated on the same packed light records.
+//! GPU readback check: renders a floor lit by realtime point, spot, wave, interference,
+//! rectangle and tube lights into a float image, reads it back and compares sampled pixels with
+//! the CPU mirror of the light shaders (`dynlight::light::mirror`) evaluated on the same packed
+//! light records.
 //!
 //! `cargo run --example gpu_check` prints the largest difference and exits with an error code
 //! when any sample is off by more than 1% (plus 0.01 absolute). The window shows the same view.
@@ -11,7 +12,7 @@ use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use dynlight::light::PackedLights;
-use dynlight::light::mirror::radiance;
+use dynlight::light::mirror;
 use dynlight::prelude::*;
 
 /// Image side in pixels: 256 `Rgba16Float` texels are 2048 bytes, so rows have no padding.
@@ -105,6 +106,24 @@ fn setup(
         }),
         Transform::from_xyz(-2.5, 1.2, 2.5),
     ));
+    // A tilted panel and a tube, so their mean cosines vary across the floor.
+    commands.spawn((
+        realtime(DynamicLight {
+            color: Color::srgb(1.0, 1.0, 0.8),
+            radius: 4.0,
+            ..DynamicLight::rectangle(1.6, 0.8)
+        }),
+        Transform::from_xyz(0.0, 1.0, -3.5).looking_to(Vec3::new(0.3, -1.0, 0.4), Vec3::Z),
+    ));
+    commands.spawn((
+        realtime(DynamicLight {
+            color: Color::srgb(0.6, 0.9, 1.0),
+            radius: 3.5,
+            intensity: 1.2,
+            ..DynamicLight::tube(2.4)
+        }),
+        Transform::from_xyz(0.5, 0.6, 3.5).with_rotation(Quat::from_rotation_y(0.4)),
+    ));
 
     let view = (
         Projection::Orthographic(OrthographicProjection {
@@ -148,9 +167,8 @@ fn pixel_world(x: u32, y: u32) -> Vec3 {
 /// light unshadowed with the half-Lambert term of unbaked surfaces.
 fn expected(lights: &PackedLights, world: Vec3) -> Vec3 {
     lights.lights.iter().fold(Vec3::ZERO, |sum, light| {
-        let direction = (Vec3::from(light.position) - world).normalize_or_zero();
-        let half_lambert = 0.5 + 0.5 * direction.y;
-        sum + Vec3::from(light.color) * radiance(light, world) * half_lambert * half_lambert
+        let diffuse = mirror::diffuse(light, world, Vec3::Y, false);
+        sum + Vec3::from(light.color) * mirror::radiance(light, world) * diffuse
     })
 }
 

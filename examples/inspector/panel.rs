@@ -118,6 +118,25 @@ fn panel() -> impl Scene {
                 light.inner_cutoff = outer * 0.85;
             })
             --
+            @label("Size (rectangle, tube) (m)")
+            --
+            @FeathersSlider { @max: 3.0 }
+            SliderValue(1.0)
+            SliderPrecision(2)
+            on(|change: On<ValueChange<f32>>, mut light: Light, mut commands: Commands| {
+                let width = slide(&change, &mut commands);
+                light.size = Vec2::new(width, width * 0.5);
+            })
+            --
+            @label("Baked shadow points (rectangle, tube)")
+            --
+            @FeathersSlider { @min: 1.0, @max: 8.0 }
+            SliderValue(3.0)
+            SliderPrecision(0)
+            on(|change: On<ValueChange<f32>>, mut light: Light, mut commands: Commands| {
+                light.shadow_points = slide(&change, &mut commands).round() as u32;
+            })
+            --
             @label("Falloff")
             --
             @FeathersSlider { @max: 4.0 }

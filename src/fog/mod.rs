@@ -23,7 +23,7 @@ use bevy::render::render_resource::SpecializedRenderPipelines;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::load_shader_library;
 
-pub use params::{Placement, bounding_radius, cone_term, is_active, pack};
+pub use params::{Placement, bounding_radius, cone_term, is_active, pack, shaft_slope};
 pub use volumes::{FOG_BUFFER, FogPostProcess, FogVolumes};
 pub use volumetric::{VolumetricLight, VolumetricShape};
 

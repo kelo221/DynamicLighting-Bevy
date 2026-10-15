@@ -1,7 +1,7 @@
 //! CPU reference for the fog post-process: how opaque one fog volume is along a camera ray, and
 //! how volumes combine with the scene color.
 
-use bevy::math::Vec3;
+use bevy::math::{Vec2, Vec3};
 
 use super::volumetric::VolumetricShape;
 use crate::shared::math::smoothstep01;
@@ -11,10 +11,16 @@ use crate::shared::math::smoothstep01;
 pub struct FogVolume {
     pub shape: VolumetricShape,
     pub center: Vec3,
-    /// Cone axis.
+    /// Cone or shaft axis (the light's forward, or up for `ConeY`).
     pub axis: Vec3,
-    /// Box stretch per axis.
+    /// The light's up axis: with `axis`, the frame boxes and shafts turn with.
+    pub up: Vec3,
+    /// Box stretch per axis of that frame: right, up, axis.
     pub scale: Vec3,
+    /// Shaft half width and height where it starts.
+    pub half: Vec2,
+    /// How much the shaft's half width grows per meter, from `fog::shaft_slope`.
+    pub slope: f32,
     pub radius: f32,
     pub thickness: f32,
     /// Fog opacity times the light's effect intensity.
@@ -48,14 +54,22 @@ pub fn opacity(volume: &FogVolume, camera: Vec3, surface: Vec3) -> f32 {
         _ if depth <= 1.0e-6 => 0.0,
         VolumetricShape::Box => {
             let extent = volume.scale * volume.radius;
-            let hit = ray_box(
-                camera,
-                ray / depth,
-                volume.center - extent,
-                volume.center + extent,
-                depth,
-            );
+            let shaft = Shaft {
+                half: extent.truncate(),
+                slope: 0.0,
+                along: Vec2::new(-extent.z, extent.z),
+            };
+            let hit = ray_shaft(camera, ray / depth, volume, shaft, depth);
             hit.map_or(0.0, |(near, far)| (far - near) / (extent * 2.0).length())
+        }
+        VolumetricShape::Frustum => {
+            let shaft = Shaft {
+                half: volume.half,
+                slope: volume.slope,
+                along: Vec2::new(0.0, volume.radius),
+            };
+            let hit = ray_shaft(camera, ray / depth, volume, shaft, depth);
+            hit.map_or(0.0, |(near, far)| (far - near) / volume.radius)
         }
         VolumetricShape::ConeZ | VolumetricShape::ConeY => {
             let hit = ray_cone(
@@ -90,12 +104,50 @@ fn screen(a: Vec3, b: Vec3) -> Vec3 {
     Vec3::ONE - (Vec3::ONE - a) * (Vec3::ONE - b)
 }
 
-fn ray_box(origin: Vec3, direction: Vec3, low: Vec3, high: Vec3, depth: f32) -> Option<(f32, f32)> {
-    let inverse = direction.recip();
-    let first = (low - origin) * inverse;
-    let second = (high - origin) * inverse;
-    let near = first.min(second).max_element().max(0.0);
-    let far = first.max(second).min_element().min(depth);
+/// A box or frustum in a volume's frame: `|x| ≤ half.x + slope · z`, `|y| ≤ half.y + slope · z`
+/// and `along.x ≤ z ≤ along.y`, with x right, y up and z along the axis.
+#[derive(Clone, Copy)]
+struct Shaft {
+    half: Vec2,
+    slope: f32,
+    along: Vec2,
+}
+
+/// Where a ray is inside `shaft`, clipped to `[0, depth]`: the ray against each of its six planes.
+fn ray_shaft(
+    origin: Vec3,
+    direction: Vec3,
+    volume: &FogVolume,
+    shaft: Shaft,
+    depth: f32,
+) -> Option<(f32, f32)> {
+    let axis = volume.axis.normalize_or_zero();
+    let frame = [axis.cross(volume.up), volume.up, axis];
+    let local = |v: Vec3| Vec3::new(v.dot(frame[0]), v.dot(frame[1]), v.dot(frame[2]));
+    let (o, d) = (local(origin - volume.center), local(direction));
+    let k = shaft.slope;
+    let planes = [
+        (Vec3::new(1.0, 0.0, -k), shaft.half.x),
+        (Vec3::new(-1.0, 0.0, -k), shaft.half.x),
+        (Vec3::new(0.0, 1.0, -k), shaft.half.y),
+        (Vec3::new(0.0, -1.0, -k), shaft.half.y),
+        (Vec3::NEG_Z, -shaft.along.x),
+        (Vec3::Z, shaft.along.y),
+    ];
+    let (mut near, mut far) = (0.0_f32, depth);
+    for (normal, offset) in planes {
+        let facing = normal.dot(d);
+        let room = offset - normal.dot(o);
+        if facing.abs() < 1.0e-8 {
+            if room < 0.0 {
+                return None;
+            }
+        } else if facing > 0.0 {
+            far = far.min(room / facing);
+        } else {
+            near = near.max(room / facing);
+        }
+    }
     (far >= near).then_some((near, far))
 }
 

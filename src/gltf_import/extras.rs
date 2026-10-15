@@ -4,14 +4,16 @@
 //!
 //! | Key | Value |
 //! |---|---|
-//! | `dynlight_type` | `point`, `spot`, `discoball`, `wave`, `interference`, `rotor`, `shock`, `disco` |
+//! | `dynlight_type` | `point`, `spot`, `discoball`, `wave`, `interference`, `rotor`, `shock`, `disco`, `rectangle`, `tube` |
 //! | `dynlight_color` | `[r, g, b]` sRGB 0–1 |
+//! | `dynlight_size` | `[width, height]` of a rectangle, `[length]` of a tube, in meters |
+//! | `dynlight_shadow_points` | 1 to 8: points a rectangle or tube is baked from |
 //! | `dynlight_intensity`, `dynlight_radius`, `dynlight_falloff` | numbers |
 //! | `dynlight_inner_cutoff`, `dynlight_outer_cutoff` | degrees |
 //! | `dynlight_realtime` | bool |
 //! | `dynlight_shimmer` | `none`, `water`, `random` |
 //! | `dynlight_effect` | an effect name such as `candle` or `fluorescent_starter` |
-//! | `dynlight_fog` | `sphere`, `box`, `cone_z`, `cone_y` |
+//! | `dynlight_fog` | `sphere`, `box`, `cone_z`, `cone_y`, `frustum` |
 //! | `dynlight_static` | bool, on mesh nodes: bake shadows onto and from this mesh |
 
 use bevy::prelude::*;
@@ -49,15 +51,16 @@ pub fn parse(json: &str) -> NodeExtras {
     if let Some(kind) = name_of(&map, "dynlight_type", &LightType::ALL) {
         light.light_type = kind;
     }
-    if let Some(Value::Array(rgb)) = map.get("dynlight_color") {
-        let c: Vec<f32> = rgb
-            .iter()
-            .filter_map(Value::as_f64)
-            .map(|v| v as f32)
-            .collect();
-        if c.len() >= 3 {
-            light.color = Color::srgb(c[0], c[1], c[2]);
-        }
+    if let [r, g, b, ..] = numbers(&map, "dynlight_color")[..] {
+        light.color = Color::srgb(r, g, b);
+    }
+    match numbers(&map, "dynlight_size")[..] {
+        [length] => light.size = Vec2::new(length, 0.0),
+        [width, height, ..] => light.size = Vec2::new(width, height),
+        [] => {}
+    }
+    if let Some(points) = number(&map, "dynlight_shadow_points") {
+        light.shadow_points = points.round().max(1.0) as u32;
     }
     let fields: [(&str, &mut f32); 5] = [
         ("dynlight_intensity", &mut light.intensity),
@@ -88,6 +91,7 @@ pub fn parse(json: &str) -> NodeExtras {
             VolumetricShape::Box,
             VolumetricShape::ConeZ,
             VolumetricShape::ConeY,
+            VolumetricShape::Frustum,
         ],
     )
     .map(|shape| VolumetricLight { shape, ..default() });
@@ -99,6 +103,17 @@ fn number(map: &Map<String, Value>, key: &str) -> Option<f32> {
     map.get(key)
         .and_then(Value::as_f64)
         .map(|value| value as f32)
+}
+
+fn numbers(map: &Map<String, Value>, key: &str) -> Vec<f32> {
+    match map.get(key) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(Value::as_f64)
+            .map(|value| value as f32)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn boolean(map: &Map<String, Value>, key: &str) -> Option<bool> {
@@ -151,6 +166,21 @@ mod tests {
             LightEffectKind::FluorescentStarter
         );
         assert_eq!(extras.fog.unwrap().shape, VolumetricShape::ConeZ);
+    }
+
+    #[test]
+    fn area_lights_take_a_size() {
+        let panel = parse(r#"{"dynlight_type": "rectangle", "dynlight_size": [1.2, 0.6]}"#);
+        let panel = panel.light.unwrap();
+        assert_eq!(panel.light_type, LightType::Rectangle);
+        assert_eq!(panel.size, Vec2::new(1.2, 0.6));
+        assert_eq!(panel.shadow_points, 3);
+        let tube = parse(r#"{"dynlight_type": "tube", "dynlight_size": [2]}"#);
+        assert_eq!(tube.light.unwrap().size, Vec2::new(2.0, 0.0));
+        let sharp = parse(r#"{"dynlight_type": "tube", "dynlight_shadow_points": 1}"#);
+        assert_eq!(sharp.light.unwrap().shadow_points, 1);
+        let shaft = parse(r#"{"dynlight_type": "rectangle", "dynlight_fog": "frustum"}"#);
+        assert_eq!(shaft.fog.unwrap().shape, VolumetricShape::Frustum);
     }
 
     #[test]

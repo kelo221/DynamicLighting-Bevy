@@ -2,9 +2,10 @@
 // face's layer of the cube array.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
-import dynlight::realtime_shadows::shaders::shadow_kernel::{BLUR_CENTER, BLUR_SIDE};
+import dynlight::realtime_shadows::shaders::shadow_kernel::{ShadowFace, blur_taps, blur_weight};
 
 @group(0) @binding(0) var moments_texture: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> face: ShadowFace;
 
 fn moments_at(pixel: vec2<i32>) -> vec2<f32> {
     let size = vec2<i32>(textureDimensions(moments_texture));
@@ -14,8 +15,13 @@ fn moments_at(pixel: vec2<i32>) -> vec2<f32> {
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
-    let up = moments_at(pixel - vec2(0, 1));
-    let down = moments_at(pixel + vec2(0, 1));
-    let moments = moments_at(pixel) * BLUR_CENTER + (up + down) * BLUR_SIDE;
-    return vec4(moments, 0.0, 1.0);
+    var moments = moments_at(pixel);
+    var total = 1.0;
+    let taps = blur_taps(face.blur);
+    for (var k = 1; k <= taps; k++) {
+        let weight = blur_weight(k, face.blur);
+        moments += (moments_at(pixel - vec2(0, k)) + moments_at(pixel + vec2(0, k))) * weight;
+        total += 2.0 * weight;
+    }
+    return vec4(moments / total, 0.0, 1.0);
 }

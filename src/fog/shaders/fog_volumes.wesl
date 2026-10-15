@@ -2,8 +2,9 @@
 // `DynamicLightingPostProcessing.shader`). Mirrors `fog::mirror`.
 //
 // Records reuse `GpuLight` (see `fog::pack`): `channel` is the shape, `radius_sqr` the radius
-// (not squared), `gp1` the thickness, `gp2` the cone term or box x scale, `gp3` and
-// `shimmer_scale` the box y and z scale, `forward` the cone axis.
+// (not squared), `gp1` the thickness, `gp2` the cone term, box x scale or shaft half width, `gp3`
+// and `shimmer_scale` the box y and z scale or the shaft half height and slope, `forward` the
+// cone or shaft axis, which with `up` gives the frame boxes and shafts turn with.
 
 import dynlight::shared::shaders::types::GpuLight;
 
@@ -11,6 +12,7 @@ const SHAPE_SPHERE: u32 = 1u;
 const SHAPE_BOX: u32 = 2u;
 const SHAPE_CONE_Z: u32 = 3u;
 const SHAPE_CONE_Y: u32 = 4u;
+const SHAPE_FRUSTUM: u32 = 5u;
 
 struct Span {
     near: f32,
@@ -18,14 +20,39 @@ struct Span {
     hit: bool,
 }
 
-fn ray_box(origin: vec3<f32>, direction: vec3<f32>, low: vec3<f32>, high: vec3<f32>, depth: f32) -> Span {
-    let inverse = 1.0 / direction;
-    let first = (low - origin) * inverse;
-    let second = (high - origin) * inverse;
-    let lows = min(first, second);
-    let highs = max(first, second);
-    let near = max(max(max(lows.x, lows.y), lows.z), 0.0);
-    let far = min(min(min(highs.x, highs.y), highs.z), depth);
+// Where a ray is inside a box or frustum in the volume's frame (x right, y up, z along
+// `forward`): `|x| <= half.x + slope * z`, `|y| <= half.y + slope * z` and
+// `along.x <= z <= along.y`, clipped to `[0, depth]` against each of the six planes.
+fn ray_shaft(origin: vec3<f32>, direction: vec3<f32>, volume: GpuLight, half: vec2<f32>, slope: f32, along: vec2<f32>, depth: f32) -> Span {
+    let axis = normalize(volume.forward);
+    let right = cross(axis, volume.up);
+    let offset = origin - volume.position;
+    let o = vec3(dot(offset, right), dot(offset, volume.up), dot(offset, axis));
+    let d = vec3(dot(direction, right), dot(direction, volume.up), dot(direction, axis));
+    var planes = array<vec4<f32>, 6>(
+        vec4(1.0, 0.0, -slope, half.x),
+        vec4(-1.0, 0.0, -slope, half.x),
+        vec4(0.0, 1.0, -slope, half.y),
+        vec4(0.0, -1.0, -slope, half.y),
+        vec4(0.0, 0.0, -1.0, -along.x),
+        vec4(0.0, 0.0, 1.0, along.y),
+    );
+    var near = 0.0;
+    var far = depth;
+    for (var i = 0u; i < 6u; i++) {
+        let plane = planes[i];
+        let facing = dot(plane.xyz, d);
+        let room = plane.w - dot(plane.xyz, o);
+        if abs(facing) < 1.0e-8 {
+            if room < 0.0 {
+                return Span(0.0, 0.0, false);
+            }
+        } else if facing > 0.0 {
+            far = min(far, room / facing);
+        } else {
+            near = max(near, room / facing);
+        }
+    }
     return Span(near, far, far >= near);
 }
 
@@ -98,9 +125,15 @@ fn fog_opacity(volume: GpuLight, camera: vec3<f32>, surface: vec3<f32>) -> f32 {
         let direction = ray / depth;
         if shape == SHAPE_BOX {
             let extent = vec3(volume.gp2, volume.gp3, volume.shimmer_scale) * radius;
-            let span = ray_box(camera, direction, volume.position - extent, volume.position + extent, depth);
+            let span = ray_shaft(camera, direction, volume, extent.xy, 0.0, vec2(-extent.z, extent.z), depth);
             if span.hit {
                 coverage = (span.far - span.near) / length(extent * 2.0);
+            }
+        } else if shape == SHAPE_FRUSTUM {
+            let half = vec2(volume.gp2, volume.gp3);
+            let span = ray_shaft(camera, direction, volume, half, volume.shimmer_scale, vec2(0.0, radius), depth);
+            if span.hit {
+                coverage = (span.far - span.near) / radius;
             }
         } else if shape == SHAPE_CONE_Z || shape == SHAPE_CONE_Y {
             let axis = normalize(volume.forward);

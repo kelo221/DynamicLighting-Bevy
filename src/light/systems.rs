@@ -1,21 +1,18 @@
 //! Per-frame light packing: baked slots, moved lights and the realtime budget.
 
 use bevy::camera::primitives::{Frustum, Sphere};
-use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::budget::{RealtimeCandidate, select_realtime};
 use super::buffer::{BakedLightSlots, LightAttachments, PackedLights};
 use super::component::DynamicLight;
-use super::pack::{LightPose, PackContext, pack};
+use super::pack::{PackContext, pack};
+use super::placement::{SlotIndex, pose_of};
 use crate::effects::LightEffectState;
 use crate::shared::{
-    BakeId, DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals,
-    ResolvedBakeId, RuntimeQuality,
+    DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, ResolvedBakeId,
+    RuntimeQuality,
 };
-
-/// How far a baked light may drift from where it was baked before it counts as moved.
-const MOVED_DISTANCE: f32 = 1.0e-3;
 
 type LightItem<'a> = (
     Entity,
@@ -39,12 +36,8 @@ pub(super) fn pack_lights(
     mut packed: ResMut<PackedLights>,
 ) {
     let seconds = time.elapsed_secs();
-    let slot_of: HashMap<BakeId, usize> = slots
-        .slots
-        .iter()
-        .enumerate()
-        .map(|(index, slot)| (slot.id, index))
-        .collect();
+    let index = SlotIndex::new(&slots);
+    let mut points = Vec::new();
 
     let packed = &mut *packed;
     packed.lights.clear();
@@ -60,6 +53,8 @@ pub(super) fn pack_lights(
         bounce_bits_per_pixel: 8,
         cookie_index: attachments.cookies.get(&entity).copied(),
         shadow_cubemap_index: attachments.shadow_cubemaps.get(&entity).copied(),
+        point_offset: 0.0,
+        share: 1.0,
     };
 
     let mut candidates = Vec::new();
@@ -67,24 +62,25 @@ pub(super) fn pack_lights(
         if !visibility.get() {
             continue;
         }
-        let (_, rotation, position) = transform.to_scale_rotation_translation();
-        let pose = LightPose { position, rotation };
-        let baked_slot = id
-            .filter(|_| !light.realtime)
-            .and_then(|id| slot_of.get(&id.0).copied())
-            .filter(|&slot| slots.slots[slot].origin.distance(position) <= MOVED_DISTANCE);
-        if let Some(slot) = baked_slot {
-            let context = PackContext {
-                realtime: false,
-                bounce_bits_per_pixel: slots.slots[slot].bounce_bits_per_pixel,
-                ..context(entity, effect)
-            };
-            packed.lights[slot] = pack(light, pose, context);
-            packed.baked[slot] = Some(entity);
+        let pose = pose_of(transform);
+        if index.baked_points(light, id, pose, &mut points) {
+            // An area light baked from several points fills one slot per point.
+            let share = 1.0 / points.len() as f32;
+            for point in &points {
+                let context = PackContext {
+                    realtime: false,
+                    bounce_bits_per_pixel: slots.slots[point.slot].bounce_bits_per_pixel,
+                    point_offset: point.offset,
+                    share,
+                    ..context(entity, effect)
+                };
+                packed.lights[point.slot] = pack(light, pose, context);
+                packed.baked[point.slot] = Some(entity);
+            }
         } else {
             candidates.push(RealtimeCandidate {
                 key: (entity, pose),
-                position,
+                position: pose.position,
                 radius: light.radius,
             });
         }

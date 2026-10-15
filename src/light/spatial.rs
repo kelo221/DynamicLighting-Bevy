@@ -11,12 +11,17 @@ use super::{component::DynamicLight, kinds::LightType};
 /// - interference: wave phase and frequency in radians
 /// - rotor: wave phase, blade count and center size
 /// - disco: horizontal phase, spot count and vertical phase
+/// - rectangle, tube: half extents of the shape in its local X and Y
 ///
 /// Spot lights with a cookie overwrite `gp3` with the cookie projection scale.
 pub fn type_parameters(light: &DynamicLight, seconds: f32) -> [f32; 3] {
     let wave_time = light.wave_offset + seconds * light.wave_speed;
     match light.light_type {
         LightType::Point => [0.0; 3],
+        LightType::Rectangle | LightType::Tube => {
+            let half = light.half_extents();
+            [half.x, half.y, 0.0]
+        }
         LightType::Spot | LightType::Discoball => [
             light.inner_cutoff.to_radians().cos(),
             light.outer_cutoff.to_radians().cos(),

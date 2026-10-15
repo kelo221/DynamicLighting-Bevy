@@ -362,6 +362,8 @@ Per frame, in `PostUpdate` after transform propagation:
 - Spot and discoball lights with equal inner and outer cutoffs divide by zero in the cone falloff (`S/DynamicLighting.cginc:144,185`). We give them a hard edge (`light::mirror`; the WESL must match).
 - Realtime shadow cubemaps hold 16-bit moments on GPUs without filterable 32-bit floats; Henry always uses `RGFloat`. We use `Rg32Float` wherever possible.
 - The VSM variance can round below zero in half floats and give NaN; it is clamped to 0.
+- Jagged realtime shadow terminators. Henry's light-bleeding cut `max(0.3, 1 − NdotL, depth)` takes the half-Lambert NdotL of dynamic geometry. Together with the 0.75% depth bias, it lets wrap light reach about 35° past the terminator of a curved surface. Then the 512² map cuts the light off along a jagged line of texels: saw-tooth bands down pillars, crescents on cylinder caps, dark outlines along crate edges. We drop the `1 − NdotL` term. Instead, a shadow-casting light fades with a smoothstep of the true cosine, from −0.1 to 0.3 (`realtime_shadows::mirror::terminator`). Surfaces turned away from a shadow-casting light lose its wrap light; lights without a cubemap keep it. Normal-offset lookups were tried as well: they only moved cast-shadow edges and did nothing for the terminator.
+- Stair-stepped cast-shadow edges. The 3-tap σ = 1 face blur leaves the 512² texels visible along shadow edges, so we use 5 taps at σ = 1.5. Shadows are slightly softer. Area lights blur wider (Beyond Henry).
 
 **Keep** (they define the look):
 
@@ -374,8 +376,7 @@ Per frame, in `PostUpdate` after transform propagation:
 - The shadow filter kernels.
 - Bounce sqrt-encoding.
 - The effect formulas. Thresholds are re-calibrated for our noise.
-- The VSM test: 0.75% relative depth bias and the light-bleeding cut `max(0.3, 1 − NdotL, depth)`.
-- The 3-tap σ = 1 Gaussian over shadow cubemap faces (SmoShaders weights).
+- The VSM test: 0.75% relative depth bias and the light-bleeding cut `max(0.3, depth)` (Henry's, minus the `1 − NdotL` term; see Fix).
 
 **Also fixed** (found while writing `docs/PORT_MAP.md`):
 
@@ -399,6 +400,18 @@ Per frame, in `PostUpdate` after transform propagation:
 - The light BVH query also tests each light's own sphere, so leaves never return lights out of range.
 - Bounce sampling seeds one random stream per texel (not one per sample); the output is still deterministic.
 - `TrackingMode` has no effect: transforms are change-tracked in Bevy, so both modes see current positions.
+
+**Beyond Henry** (features his package doesn't have, M10 and M11, and their approximations):
+
+- Shadow cubemaps keep their slot and only redraw faces that changed (`realtime_shadows::slots`): a face renders again when its light moves or changes radius, the array is recreated, the set of casters it draws changes, a `Mesh` or `DynLitMaterial` asset changes, or a caster that moved, appeared, disappeared or is skinned overlaps the face's frustum. Every face also redraws for a few frames after a pass ran with pipelines still compiling. A light standing where it was baked leaves baked meshes out of its cubemap (`realtime_shadows::filter`): their shadows are in the bake already, so its cubemap only holds moving casters.
+- Area lights (`LightType::Rectangle`, `LightType::Tube`) are two more light types in Henry's family. Their shading comes from a shape; their shadows come from fixed points, each baked exactly like a point light:
+  - Baked shadows: an area light is baked as `DynamicLight::shadow_points` point lights (3 by default, 1 to 8) at the centers of equal parts of its long side (a tube's length, a panel's longer side; `light::shadow_points`). Each has 1-bit shadows traced from its fixed position, its own bounce light and distance cube, and its own id (`BakeId::part`); the baker doesn't know they belong to one light, and the `.dynlight` format is unchanged (version 1). At runtime each point fills its own light-buffer slot with an equal share of the intensity and the whole shape's shading, so the sum is the area light's shading times the fraction of points a texel sees: a penumbra in steps along the long side, smoothed by the shader's filter tiers. `tests/area_light_bake.rs` checks that a one-point panel or tube bakes the same bytes as a point light, and that three points bake three lights whose shadows differ only in a penumbra.
+  - `radius` is the sphere around the light's position where the light ends, as for every type. Past its shape the light reaches `radius` minus half the shape's diagonal (`DynamicLight::shape_reach`, packed as the record's radius); a light whose shape doesn't fit inside its radius is invalid and disabled, like a broken spot cone. A shadow point away from the position bakes with its radius grown by that distance, so it covers everything the shape lights.
+  - A baked area light keeps its bake while every shadow point stands within 1 mm of where it was baked (`light::placement`). Moving or turning it, changing its length or its number of points moves them, and it falls back to one realtime record until the next bake; its height (a panel's shorter side), color, intensity and effects can change freely. A shadow point's record stores its distance back to the shape's center in `gp3`, so the shaders and `light::area` find the shape where the light is.
+  - Shading (the only new math): diffuse is the mean cosine over the shape (Lambert's polygon form factor for rectangles, the closed-form line integral for tubes, each over the angle the shape covers); a rectangle also has a Lambertian emitter cosine at its nearest point, so it lights only its front. Attenuation uses the distance to the nearest point over the reach past the shape. Specular uses one representative point with Karis's (2013) energy normalization, applied per axis of the rectangle (an approximation of the 2-D widening).
+  - Realtime shadow cubemaps are seen from the light's position. Their faces are blurred wider the larger the shape is next to the radius: σ from 1.5 up to 4 texels, reached when half the diagonal is a quarter of the radius (`realtime_shadows::faces::face_blur`, 5 taps a side at σ 4). This softens the shadows of moving objects evenly; it doesn't model a penumbra that grows with the distance between occluder and receiver.
+  - Limits: the penumbra spreads only along the long side; few points leave visible steps under tall occluders (the lab panel uses 5). Each point is a full baked light: it costs bake time, an entry in the per-triangle light lists and a pass through the fragment loop. The earlier soft-shadow version (4-bit visibility over the shape, `.dynlight` format 2) broke Henry's 1-bit rule and was dropped.
+- Fog: `VolumetricShape::Frustum` is a rectangular shaft along the light's forward axis, starting at the light's size and widening by `tan(outer_cutoff)` (clamped to 0–75°) over the fog radius. Box fog now turns with the light (Henry's and bevyout's ignored rotation). Both are a ray clipped against six planes in the light's frame.
 
 ## 13. Bevy 0.20 APIs
 
@@ -434,7 +447,7 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - Lift bevyout `core/*` into the `light/`, `effects/`, `fog/` and `shared/` slices; replace Unity RNG and Perlin; delete the Unity goldens and parity tests; add analytic and statistical tests.
   - `tests/repo_hygiene.rs`: 400-line file limit and forbidden identifiers (AGENTS.md).
   - Delivered beyond the list: a naga-checked WESL/Rust layout test for the GPU light (`shared::wesl_check`), a headless plugin test, and a gizmo-only `lighting_test` with `--frames`/`--screenshot` for smoke runs.
-- **Status, 2026-10-15:** M0 to M9 are implemented. Per milestone, below: what was delivered where it differs from the plan.
+- **Status, 2026-10-15:** M0 to M9 are implemented (M10 and M11, beyond Henry's feature set, followed on 2026-10-16). Per milestone, below: what was delivered where it differs from the plan.
 - **M1 Realtime-only lighting (M), done:**
   - `DynamicLight`, light buffer + globals, the `DynLitMaterial` Diffuse port, the WESL modules `types`, `math`, `light_types`, `light_processor`, `lighting` (brute-force + realtime loop).
   - All 8 light types, 15 effects, shimmer, cookies.
@@ -454,7 +467,7 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
 - **M9 Fallback + polish (M), done:** triangle-ID attribute mode for adapters without primitive index, light presets, Feathers inspector example, docs, a 1000-light stress test.
   - Fallback: see §6. Presets: `DynamicLight::{point, spot, discoball}` and `light::sun_light`, from Henry's editor menu.
   - `inspector` example behind the `inspector` Cargo feature (Feathers needs Bevy UI, BSN scenes and custom cursors).
-  - `stress_lights`: 1000 baked lights 1.43 ms per frame; 100 realtime 1.5 ms; 1000 realtime 6.0 ms (RTX 4080 SUPER, dev profile, 1280×720). The bake of that scene takes 0.7 s.
+  - `stress_lights`: 1000 baked lights 1.43 ms per frame; 100 realtime 1.5 ms; 1000 realtime 6.0 ms (RTX 4080 SUPER, dev profile, 1280×720). The bake of that scene takes 0.7 s. (Superseded by the 2026-10-15 demo rework below.)
   - `gpu_check`: GPU readback against `light::mirror` at 1024 pixels; the largest difference is 0.001.
   - Debug views (the M3 item): `DynamicLightingSettings::debug_view` = `Lighting` (white surfaces) or `LightCount` (heat map of the lights reaching each fragment), passed as light-buffer flags. `lighting_test --debug-view …` or the V key.
 
@@ -464,7 +477,26 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - Lit materials are marked modified whenever the shadow cubemap or cookie array is replaced (`surface::shared_arrays`): Bevy prepares a material's bind group once and doesn't track its images. In the browser the materials were prepared before the first shadow cubemap and kept sampling the zeroed 1×1 placeholder, so every realtime-shadowed light was black.
   - Examples share `examples/support/` for the page canvas, status line and arguments; in a browser, the query string stands for the command line (`?debug-view=light-count`). `lighting_test` and `inspector` bake a Preview at startup in the browser (lower texel density, no bounce); `stress_lights` defaults to 256 realtime lights there and writes its frame time into the page.
   - `web/build.sh` builds each demo with the `wasm-release` profile, runs `wasm-bindgen` (version checked against `Cargo.lock`) and Binaryen's `wasm-opt -Oz`, and writes `dist/` with the landing page and native-screenshot thumbnails from `web/thumbnails/`. `.github/workflows/pages.yml` deploys it on pushes to `master`.
+  - Demo rework (after user feedback). The lighting test's camera orbited behind its wall for half of every lap; now `examples/support/orbit.rs` gives the demos a drag-to-orbit, scroll-to-zoom camera that drifts when idle, kept in front of the wall there. In the lighting test you drive a cube with WASD or the arrow keys (Bevy's `KeyCode` is the key position, so Colemak's WARS works). It carries a realtime-shadowed lantern that Space switches. The fog volumes moved to the sides, out of the camera's line of sight. `stress_lights` now has a low orbiting camera, jittered lights with 0–2 pillars 0.8–1.3 m from each, and a 4 m radius; in realtime mode the lights drift. New numbers (same machine and profile): 1000 baked lights 1.79 ms, 100 realtime 1.88 ms, 1000 realtime 11.1 ms; the 1000-light bake (1047 meshes, 6.3 M texels, 18 M rays) takes 2.0 s.
+  - Realtime shadow cubemaps are too expensive for the stress scene: each shadowed light costs about 4 ms of CPU per frame in the dev profile, about 0.7 ms for each of its six depth-prepass face cameras. The GPU pass timings stay small and the cost grows with the scene's entity count, so it is per-view CPU work; it hasn't been profiled further. With 256 lights, 16 shadowed lights took the frame from 2.5 ms to 73 ms, so the stress scene stays unshadowed in realtime mode. Fixed in M10: cubemaps now redraw only the faces that changed.
   - Checked in headless Edge 155 with WebGPU on an RTX 4080 SUPER, with the published build: all four demos run. `lighting_test` bakes its Preview in 91 ms (103,188 texels, 19,277 rays) and the inspector in 4–8 ms. B, V, the inspector's sliders, buttons and checkboxes, and the query-string options work. After `wasm-opt`, each demo is 21.8 MB (6.9 MB gzipped); the inspector, with Bevy UI, is 31.9 MB (9.9 MB).
+
+- **M10 Shadow cubemap cache, done 2026-10-16:**
+  - Stable cube slots, per-face dirty tracking and moving-only casters for lights at their baked position (§12, Beyond Henry). `ShadowCubemapStats { lights, faces_rendered }` reports the cost.
+  - `realtime_shadows` (two shadowed lights, RTX 4080 SUPER, dev profile, 1280×720): while the crates and lamp move, 9 of 12 faces render per frame, 7.7 ms; with `--still`, 0 faces, 2.35 ms. Before the cache all 12 faces rendered every frame.
+- **M11 Area lights and a square fog shaft, done 2026-10-16:**
+  - `LightType::Rectangle = 8` and `Tube = 9`, `DynamicLight::size`, presets `rectangle(w, h)` and `tube(length)`; half extents in `gp1`/`gp2`, orientation from `up`/`forward`, reach past the shape in `radius_sqr`. Shading, gizmos, inspector sliders and glTF `dynlight_type`/`dynlight_size` extras.
+  - They follow Henry's rules (§12, Beyond Henry): 1-bit shadows from the light's position, `radius` around the position, only moving a baked light invalidates it. The bake, the `.dynlight` format (still version 1) and the shadow decoding are unchanged. M12 then bakes them from several points.
+  - `VolumetricShape::Frustum` and rotating box fog; glTF `fog: "frustum"`.
+  - Tests: the area math against brute-force integration, nothing lit past the radius around the position, area lights baking the same bytes as a point light, baked area lights keeping their bake when turned or resized, and the shaft fog shape. `gpu_check` adds a tilted panel and a tube (largest difference 0.001).
+  - The lab gets a fluorescent ceiling panel (`FluorescentStarter`, a frustum fog shaft, realtime shadows for the cube you drive) over a crate and a pillar, and a flickering wall tube. Its bake (12 meshes, 29 lights, 7.9 M texels, 2.1 M rays) takes 0.48 s.
+
+- **M12 Soft area-light shadows within Henry's rules, done 2026-10-16:**
+  - Area lights bake as `shadow_points` point lights along their long side (§12, Beyond Henry), packed into one slot each with an equal share of the light; `BakeId::part` gives each point its id. The `.dynlight` format stays at version 1.
+  - Shadow cubemap faces take their blur width from the face uniform; area lights blur wider (σ up to 4 texels). Point lights keep the 5-tap σ 1.5 kernel.
+  - glTF `dynlight_shadow_points`, an inspector slider, and gizmo crosses at the shadow points.
+  - Tests: the point layout and ids, packing (each record finds the shape's center, and the shares add up to the whole light), placement (every point must be in place), the bake (one point equals a point light; three points bake three lights with a penumbra), and the blur kernel against the mirror.
+  - The lab panel uses 5 points. Its bake (12 meshes, 39 lights, 7.9 M texels, 4.2 M rays) takes 0.47 s.
 
 ## 15. Testing
 

@@ -98,9 +98,14 @@ root = pathlib.Path('.')
 demos = {
     'lighting_test': (
         'Lighting laboratory',
-        'Every light type and effect, metallic surfaces and volumetric fog, baked in your browser.',
+        'Every light type and effect, metallic surfaces and volumetric fog, baked in your browser. '
+        'Drive a cube through it with a lantern that casts realtime shadows.',
+        '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrow keys Move the cube '
+        '(the same keys on Colemak: W A R S)</span>'
+        '<span><kbd>Shift</kbd> Run</span><span><kbd>Space</kbd> Lantern on or off</span>'
+        '<span>Drag to orbit, scroll to zoom</span>'
         '<span><kbd>B</kbd> Rebake</span><span><kbd>V</kbd> Cycle debug views</span>'
-        '<span>Click the canvas first. The camera orbits on its own.</span>'
+        '<span>Click the canvas first. The camera drifts on its own when left alone.</span>'
         '<span>Add <code>?debug-view=light-count</code> to the address to start in a debug view.</span>',
         ''),
     'realtime_shadows': (
@@ -117,7 +122,9 @@ demos = {
         ''),
     'stress_lights': (
         'Many lights, one scene',
-        '256 realtime lights over an 80 m floor. Compare the frame time on your hardware.',
+        '256 moving realtime lights among the pillars of an 80 m hall, nothing baked. '
+        'Compare the frame time on your hardware.',
+        '<span>Drag to orbit, scroll to zoom. The camera drifts on its own when left alone.</span>'
         '<span>Add <code>?lights=1024</code> to the address for more lights.</span>'
         '<span>Browsers cap the frame rate at the display refresh rate.</span>',
         '<p class="metric"><span>Frame time</span> '

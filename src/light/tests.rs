@@ -66,7 +66,7 @@ fn light_type_bits_round_trip() {
     for light_type in LightType::ALL {
         assert_eq!(LightType::from_bits(light_type as u32), Some(light_type));
     }
-    assert_eq!(LightType::from_bits(8), None);
+    assert_eq!(LightType::from_bits(10), None);
 }
 
 #[test]

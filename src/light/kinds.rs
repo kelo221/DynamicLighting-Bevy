@@ -24,10 +24,18 @@ pub enum LightType {
     Shock = 6,
     /// Spots of light scrolling around and up and down.
     Disco = 7,
+    /// An area light: a `size.x` by `size.y` panel in the light's local XY plane, lighting only
+    /// the side its forward axis points to, like a ceiling panel. Like every type, it is
+    /// shadowed from its position and ends within `radius` of it.
+    Rectangle = 8,
+    /// An area light: a `size.x` long segment along the light's local X axis, lighting all
+    /// around, like a fluorescent tube. Like every type, it is shadowed from its position and
+    /// ends within `radius` of it.
+    Tube = 9,
 }
 
 impl LightType {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Point,
         Self::Spot,
         Self::Discoball,
@@ -36,11 +44,18 @@ impl LightType {
         Self::Rotor,
         Self::Shock,
         Self::Disco,
+        Self::Rectangle,
+        Self::Tube,
     ];
 
     /// The type with GPU discriminant `bits`, if there is one.
     pub fn from_bits(bits: u32) -> Option<Self> {
         Self::ALL.get(bits as usize).copied()
+    }
+
+    /// Light comes from a shape instead of a point: [`Self::Rectangle`] and [`Self::Tube`].
+    pub fn is_area(self) -> bool {
+        matches!(self, Self::Rectangle | Self::Tube)
     }
 }
 

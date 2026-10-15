@@ -44,6 +44,7 @@ impl Plugin for BakedLightingPlugin {
                 PostUpdate,
                 BakedLightingSystems
                     .after(BakeSystems::ResolveIds)
+                    .before(LightSystems::Locate)
                     .before(LightSystems::Attach),
             )
             .add_systems(

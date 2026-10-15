@@ -3,12 +3,7 @@
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_render::view::View;
-import dynlight::realtime_shadows::shaders::shadow_kernel::{BLUR_CENTER, BLUR_SIDE};
-
-struct ShadowFace {
-    radius: f32,
-    layer: u32,
-}
+import dynlight::realtime_shadows::shaders::shadow_kernel::{ShadowFace, blur_taps, blur_weight};
 
 @group(0) @binding(0) var depth_texture: texture_depth_2d;
 // The face camera sits at the light, so the view position is the light position.
@@ -36,8 +31,13 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(depth_texture));
     // Cube faces are left-handed: face texel x shows camera column (size - 1 - x).
     let pixel = vec2(size.x - 1 - i32(in.position.x), i32(in.position.y));
-    let left = moments_at(pixel - vec2(1, 0));
-    let right = moments_at(pixel + vec2(1, 0));
-    let moments = moments_at(pixel) * BLUR_CENTER + (left + right) * BLUR_SIDE;
-    return vec4(moments, 0.0, 1.0);
+    var moments = moments_at(pixel);
+    var total = 1.0;
+    let taps = blur_taps(face.blur);
+    for (var k = 1; k <= taps; k++) {
+        let weight = blur_weight(k, face.blur);
+        moments += (moments_at(pixel - vec2(k, 0)) + moments_at(pixel + vec2(k, 0))) * weight;
+        total += 2.0 * weight;
+    }
+    return vec4(moments / total, 0.0, 1.0);
 }

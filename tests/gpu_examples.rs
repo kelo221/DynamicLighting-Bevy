@@ -69,6 +69,30 @@ fn gpu_lighting_matches_the_cpu_mirror() {
     assert!(log.contains("GPU lighting matches the CPU mirror"), "{log}");
 }
 
+/// The faces rendered per frame from the `realtime_shadows` log line.
+fn faces_per_frame(log: &str) -> f32 {
+    let line = log
+        .lines()
+        .find(|line| line.contains("cube faces rendered per frame"))
+        .unwrap_or_else(|| panic!("no shadow report:\n{log}"));
+    let after = line.split("ms per frame, ").nth(1).expect("report format");
+    after
+        .split(' ')
+        .next()
+        .and_then(|faces| faces.parse().ok())
+        .expect("a face count")
+}
+
+#[test]
+#[ignore = "needs a GPU"]
+fn still_shadow_cubemaps_stay_cached() {
+    let still = run_example("realtime_shadows", &["--frames", "120", "--still"]);
+    assert_eq!(faces_per_frame(&still), 0.0, "{still}");
+    // The orbiting lamp's six faces render every frame, the spot only the faces seeing crates.
+    let moving = faces_per_frame(&run_example("realtime_shadows", &["--frames", "120"]));
+    assert!((6.0..12.0).contains(&moving), "{moving} faces per frame");
+}
+
 #[test]
 #[ignore = "needs a GPU"]
 fn lighting_test_renders_a_lit_scene() {

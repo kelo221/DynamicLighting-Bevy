@@ -3,9 +3,13 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT, LIGHT_TYPE_DISCOBALL, light_type, light_has_cookie,
+    light_is_area,
 };
 import dynlight::light::shaders::light_types::{
     attenuation, cone, discoball_theta, pattern, shimmer, spot_theta, to_light_space,
+};
+import dynlight::light::shaders::area::{
+    area_diffuse, area_representative_point, area_shape, area_specular_scale, nearest_point,
 };
 import dynlight::surface::shaders::bindings::{light_cookies, light_cookie_sampler};
 import dynlight::surface::shaders::brdf::{PI, reflectance};
@@ -20,11 +24,15 @@ struct SurfacePoint {
 }
 
 struct LightGeometry {
-    // Light position minus the surface position.
+    // From the surface to where the light comes from: the light position, or the nearest point
+    // of an area light's shape.
     to_light: vec3<f32>,
     distance_sqr: f32,
     // Normalized `to_light`.
     direction: vec3<f32>,
+    // The light's entity position minus the surface position: the record's position, or an
+    // area light's center. Shadow cubemaps are seen from there.
+    to_center: vec3<f32>,
     // Diffuse term; 0 means no direct light (bounce light may still arrive).
     ndotl: f32,
     // False for lights out of range or disabled (negative radius): skip them entirely.
@@ -34,11 +42,24 @@ struct LightGeometry {
 // Distance and diffuse term.
 fn light_geometry(light: GpuLight, surface: SurfacePoint) -> LightGeometry {
     var geometry: LightGeometry;
-    geometry.to_light = light.position - surface.world;
+    geometry.to_center = light.position - surface.world;
+    let area = light_is_area(light);
+    if area {
+        let shape = area_shape(light);
+        geometry.to_center = shape.center - surface.world;
+        geometry.to_light = nearest_point(shape, surface.world) - surface.world;
+    } else {
+        geometry.to_light = geometry.to_center;
+    }
     geometry.distance_sqr = dot(geometry.to_light, geometry.to_light);
     geometry.ndotl = 0.0;
     geometry.in_range = geometry.distance_sqr <= light.radius_sqr;
     if !geometry.in_range {
+        return geometry;
+    }
+    if area {
+        geometry.direction = geometry.to_light * inverseSqrt(max(geometry.distance_sqr, 1.0e-20));
+        geometry.ndotl = area_diffuse(light, surface.world, surface.normal, surface.baked);
         return geometry;
     }
     geometry.direction = normalize(geometry.to_light);
@@ -80,10 +101,10 @@ fn light_mask(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry, t
             return 0.0;
         }
         map = cone(theta, light.gp1, light.gp2);
-    } else if kind != LIGHT_TYPE_POINT {
+    } else if kind != LIGHT_TYPE_POINT && !light_is_area(light) {
         map = pattern(light, geometry.to_light);
     }
-    map *= realtime_shadow(light, geometry.to_light, geometry.distance_sqr, geometry.ndotl);
+    map *= realtime_shadow(light, geometry.to_center, dot(geometry.to_center, geometry.to_center), surface.normal);
     return map * shimmer(light, surface.world, time);
 }
 
@@ -142,10 +163,19 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
         return;
     }
     let bounce_light = light.bounce_color * (attenuation(light, geometry.distance_sqr) * bounce * (1.0 - shading.metallic));
-    let reflected = reflectance(surface.normal, shading.view, geometry.direction, shading.roughness, shading.metallic, shading.f0);
-    let lambert = max(dot(surface.normal, geometry.direction), 0.0);
+    // Area lights reflect from the point of their shape the mirror direction points at.
+    var direction = geometry.direction;
+    var scale = 1.0;
+    if light_is_area(light) {
+        let reflection = reflect(-shading.view, surface.normal);
+        let point = area_representative_point(light, surface.world, reflection);
+        direction = normalize(point - surface.world);
+        scale = area_specular_scale(light, surface.world, point, shading.roughness);
+    }
+    let reflected = reflectance(surface.normal, shading.view, direction, shading.roughness, shading.metallic, shading.f0);
+    let lambert = max(dot(surface.normal, direction), 0.0);
     (*sum).diffuse += strength * reflected.diffuse_weight * (geometry.ndotl * map) + bounce_light;
-    (*sum).specular += strength * reflected.specular * (PI * lambert * map);
+    (*sum).specular += strength * reflected.specular * (PI * lambert * map * scale);
 }
 
 // Adds a light without baked shadows (realtime lights, and every light on unbaked meshes

@@ -18,7 +18,7 @@ fn has_function(module: &naga::Module, name: &str) -> bool {
 #[test]
 fn fog_volumes_compile_and_validate() {
     let module = compile(FOG_VOLUMES.0, &[SHARED_TYPES, FOG_VOLUMES], &[]);
-    for name in ["fog_opacity", "add_fog", "compose", "ray_box", "ray_cone"] {
+    for name in ["fog_opacity", "add_fog", "compose", "ray_shaft", "ray_cone"] {
         assert!(has_function(&module, name), "{name} is missing");
     }
 }
@@ -31,6 +31,7 @@ fn shape_constants_match_the_component() {
         ("BOX", VolumetricShape::Box),
         ("CONE_Z", VolumetricShape::ConeZ),
         ("CONE_Y", VolumetricShape::ConeY),
+        ("FRUSTUM", VolumetricShape::Frustum),
     ] {
         let line = format!("const SHAPE_{name}: u32 = {}u;", shape as u32);
         assert!(source.contains(&line), "missing `{line}`");

@@ -1,4 +1,4 @@
-use bevy::math::{Quat, Vec3};
+use bevy::math::{Quat, Vec2, Vec3};
 
 use super::mirror::{FogVolume, compose, opacity};
 use super::*;
@@ -9,7 +9,10 @@ fn volume(shape: VolumetricShape) -> FogVolume {
         shape,
         center: Vec3::ZERO,
         axis: Vec3::NEG_Y,
+        up: Vec3::Z,
         scale: Vec3::ONE,
+        half: Vec2::ZERO,
+        slope: shaft_slope(30.0),
         radius: 1.0,
         thickness: 1.0,
         intensity: 0.75,
@@ -120,21 +123,115 @@ fn cone_term_widens_up_to_ninety_degrees() {
 #[test]
 fn bounding_radius_contains_each_shape() {
     let fog = VolumetricLight::default();
-    assert_eq!(bounding_radius(&fog, Vec3::splat(9.0), 30.0), 4.0);
+    let light = DynamicLight::default();
+    assert_eq!(light.outer_cutoff, 30.0);
+    assert_eq!(bounding_radius(&fog, &light, Vec3::splat(9.0)), 4.0);
     let fog_box = VolumetricLight {
         shape: VolumetricShape::Box,
         ..fog
     };
-    let radius = bounding_radius(&fog_box, Vec3::new(1.0, -2.0, 3.0), 30.0);
+    let radius = bounding_radius(&fog_box, &light, Vec3::new(1.0, -2.0, 3.0));
     assert!((radius - 224.0_f32.sqrt()).abs() < 1e-5);
     let cone = VolumetricLight {
         shape: VolumetricShape::ConeZ,
         ..fog
     };
-    let radius = bounding_radius(&cone, Vec3::ONE, 30.0);
+    let radius = bounding_radius(&cone, &light, Vec3::ONE);
     assert!((radius - 4.0 / 30.0_f32.to_radians().cos()).abs() < 1e-5);
-    let wide = bounding_radius(&cone, Vec3::ONE, 147.5);
+    let wide_light = DynamicLight {
+        outer_cutoff: 147.5,
+        ..light.clone()
+    };
+    let wide = bounding_radius(&cone, &wide_light, Vec3::ONE);
     assert!((wide - 4.0 / 37.5_f32.to_radians().cos()).abs() < 1e-5);
+    // A shaft's farthest corners: 4 m along, half extents grown by 4 · tan 30° on each side.
+    let shaft = VolumetricLight {
+        shape: VolumetricShape::Frustum,
+        ..fog
+    };
+    let panel = DynamicLight {
+        outer_cutoff: 30.0,
+        ..DynamicLight::rectangle(1.0, 0.5)
+    };
+    let far = Vec2::new(0.5, 0.25) + 4.0 * 30.0_f32.to_radians().tan();
+    let radius = bounding_radius(&shaft, &panel, Vec3::ONE);
+    assert!((radius - far.extend(4.0).length()).abs() < 1e-5);
+}
+
+#[test]
+fn shafts_start_at_the_light_shape_and_widen() {
+    let panel = DynamicLight {
+        outer_cutoff: 20.0,
+        ..DynamicLight::rectangle(1.2, 0.4)
+    };
+    let fog = VolumetricLight {
+        shape: VolumetricShape::Frustum,
+        ..Default::default()
+    };
+    let record = pack(&panel, &fog, 1.0, placement());
+    assert_eq!(record.channel, 5);
+    assert_eq!((record.gp2, record.gp3), (0.6, 0.2));
+    assert_eq!(record.shimmer_scale, shaft_slope(20.0));
+    let rotation = placement().rotation;
+    assert!(Vec3::from(record.forward).abs_diff_eq(rotation * Vec3::NEG_Z, 1e-6));
+    // Point lights start the shaft at a point; the opening stops at 75°.
+    let pyramid = pack(&DynamicLight::default(), &fog, 1.0, placement());
+    assert_eq!((pyramid.gp2, pyramid.gp3), (0.0, 0.0));
+    assert_eq!(shaft_slope(89.0), 75.0_f32.to_radians().tan());
+    assert_eq!(shaft_slope(-5.0), 0.0);
+}
+
+#[test]
+fn shaft_fog_is_square_and_below_the_light() {
+    // A 1 m square shaft pointing down 4 m, not widening; up is +Z, so it spans x and z ±0.5.
+    let shaft = FogVolume {
+        radius: 4.0,
+        half: Vec2::splat(0.5),
+        slope: 0.0,
+        ..volume(VolumetricShape::Frustum)
+    };
+    let across = |y: f32, z: f32| opacity(&shaft, Vec3::new(-5.0, y, z), Vec3::new(5.0, y, z));
+    assert!(across(-2.0, 0.45) > 0.0, "inside the square");
+    assert_eq!(across(-2.0, 0.55), 0.0, "outside the square");
+    assert_eq!(across(1.0, 0.0), 0.0, "behind the light");
+    assert_eq!(across(-4.5, 0.0), 0.0, "past the end");
+    // Down the axis the whole length is fog: coverage 1.
+    let thick = FogVolume {
+        thickness: 10.0,
+        inverse_visibility: 10.0,
+        ..shaft
+    };
+    let down = opacity(&thick, Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, -6.0, 0.0));
+    assert!((down - 0.75).abs() < 1e-6, "{down}");
+    // A widening shaft reaches further out the further it goes.
+    let widening = FogVolume {
+        slope: 0.5,
+        ..shaft
+    };
+    let wide = |y: f32| opacity(&widening, Vec3::new(-5.0, y, 1.2), Vec3::new(5.0, y, 1.2));
+    assert_eq!(wide(-1.0), 0.0);
+    assert!(wide(-3.0) > 0.0);
+}
+
+#[test]
+fn boxes_turn_with_the_light() {
+    // Turned 45° about Y, the unit box's corners reach √2 along X and Z.
+    let rotation = Quat::from_rotation_y(core::f32::consts::FRAC_PI_4);
+    let turned = FogVolume {
+        axis: rotation * Vec3::NEG_Z,
+        up: Vec3::Y,
+        ..volume(VolumetricShape::Box)
+    };
+    let along_x = |z: f32| opacity(&turned, Vec3::new(-5.0, 0.0, z), Vec3::new(5.0, 0.0, z));
+    assert!(along_x(1.2) > 0.0, "a corner pokes out past z = 1");
+    assert_eq!(along_x(1.5), 0.0);
+    let straight = volume(VolumetricShape::Box);
+    let straight_x = opacity(
+        &straight,
+        Vec3::new(-5.0, 0.0, 1.2),
+        Vec3::new(5.0, 0.0, 1.2),
+    );
+    assert_eq!(straight_x, 0.0);
 }
 
 #[test]

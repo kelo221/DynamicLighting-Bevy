@@ -1,6 +1,6 @@
 //! The face pass, after each face camera's depth prepass: depth becomes variance moments with a
 //! horizontal blur into a scratch texture, then a vertical blur writes the face's layer of the
-//! cube array (Henry's two Gaussian blur blits).
+//! cube array (Henry's two Gaussian blur blits). Both read the blur width from the face uniform.
 
 use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
@@ -22,6 +22,7 @@ use bevy::render::view::{ViewUniform, ViewUniformOffset, ViewUniforms};
 use super::cameras::ShadowFaceUniform;
 use super::cubemaps::{SHADOW_CUBEMAP_FORMATS, SHADOW_CUBEMAPS};
 use super::faces::SHADOW_CUBEMAP_RESOLUTION;
+use super::tracking::ShadowFeedback;
 
 const MOMENTS_SHADER: &str = "embedded://dynlight/realtime_shadows/shaders/shadow_moments.wesl";
 const BLUR_SHADER: &str = "embedded://dynlight/realtime_shadows/shaders/shadow_blur.wesl";
@@ -62,9 +63,12 @@ pub(super) fn init_shadow_pipelines(
     );
     let blur_layout = BindGroupLayoutDescriptor::new(
         "dynlight_shadow_blur_layout",
-        &BindGroupLayoutEntries::single(
+        &BindGroupLayoutEntries::sequential(
             ShaderStages::FRAGMENT,
-            texture_2d(TextureSampleType::Float { filterable: false }),
+            (
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                uniform_buffer::<ShadowFaceUniform>(true),
+            ),
         ),
     );
     let pipeline = |label: &'static str,
@@ -176,6 +180,8 @@ type FaceView = (
     &'static ViewUniformOffset,
 );
 
+/// Renders one face. When it can't, or when some pipeline is still compiling (so the depth
+/// prepass may have skipped casters), it tells the main world to render the cubes again.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn shadow_face_pass(
     view: ViewQuery<FaceView>,
@@ -185,14 +191,19 @@ pub(super) fn shadow_face_pass(
     view_uniforms: Res<ViewUniforms>,
     faces: Res<ComponentUniforms<ShadowFaceUniform>>,
     device: Res<RenderDevice>,
+    feedback: Res<ShadowFeedback>,
     mut ctx: RenderContext,
 ) {
+    if cache.waiting_pipelines().next().is_some() {
+        feedback.report_incomplete();
+    }
     let (face, face_index, prepass, view_offset) = view.into_inner();
     let Some(variant) = pipelines
         .variants
         .iter()
         .find(|variant| Some(variant.format) == layers.format)
     else {
+        feedback.report_incomplete();
         return;
     };
     let (Some(moments), Some(blur), Some(depth), Some(target)) = (
@@ -201,30 +212,39 @@ pub(super) fn shadow_face_pass(
         prepass.depth_only_view(),
         layers.layers.get(face.layer as usize),
     ) else {
+        feedback.report_incomplete();
         return;
     };
     let (Some(view_binding), Some(face_binding)) =
         (view_uniforms.uniforms.binding(), faces.uniforms().binding())
     else {
+        feedback.report_incomplete();
         return;
     };
     let moments_group = device.create_bind_group(
         "dynlight_shadow_moments",
         &cache.get_bind_group_layout(&pipelines.moments_layout),
-        &BindGroupEntries::sequential((depth, view_binding, face_binding)),
+        &BindGroupEntries::sequential((depth, view_binding, face_binding.clone())),
     );
     let blur_group = device.create_bind_group(
         "dynlight_shadow_blur",
         &cache.get_bind_group_layout(&pipelines.blur_layout),
-        &BindGroupEntries::single(&variant.scratch),
+        &BindGroupEntries::sequential((&variant.scratch, face_binding)),
     );
 
     let encoder = ctx.command_encoder();
+    let face_offset = face_index.index();
+    let moments_offsets = [view_offset.offset, face_offset];
     let passes = [
-        (moments, &moments_group, &variant.scratch, true),
-        (blur, &blur_group, target, false),
+        (
+            moments,
+            &moments_group,
+            &variant.scratch,
+            &moments_offsets[..],
+        ),
+        (blur, &blur_group, target, &[face_offset][..]),
     ];
-    for (pipeline, group, target, needs_offsets) in passes {
+    for (pipeline, group, target, offsets) in passes {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("dynlight_shadow_face"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -239,11 +259,7 @@ pub(super) fn shadow_face_pass(
             multiview_mask: None,
         });
         pass.set_pipeline(pipeline);
-        if needs_offsets {
-            pass.set_bind_group(0, group, &[view_offset.offset, face_index.index()]);
-        } else {
-            pass.set_bind_group(0, group, &[]);
-        }
+        pass.set_bind_group(0, group, offsets);
         pass.draw(0..3, 0..1);
     }
 }

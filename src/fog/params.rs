@@ -2,7 +2,7 @@
 
 use core::f32::consts::FRAC_PI_2;
 
-use bevy::math::{Quat, Vec3};
+use bevy::math::{Quat, Vec2, Vec3};
 
 use super::volumetric::{VolumetricLight, VolumetricShape};
 use crate::light::DynamicLight;
@@ -10,6 +10,8 @@ use crate::shared::GpuLight;
 use crate::shared::math::{inverse_lerp_clamped, lerp_clamped};
 
 const MIN_VISIBILITY: f32 = 1.0e-5;
+/// The widest a fog shaft opens, in degrees, so its far end stays finite.
+const MAX_SHAFT_ANGLE: f32 = 75.0;
 
 /// Where a light is: translation, rotation and scale from its global transform.
 #[derive(Clone, Copy, Debug)]
@@ -29,8 +31,9 @@ pub fn is_active(light: &DynamicLight, fog: &VolumetricLight, effect_intensity: 
 /// - `channel`: the shape discriminant
 /// - `radius_sqr`: the fog radius (not squared)
 /// - `gp1`: thickness
-/// - `gp2`: the cone's cosine term, or the box's x scale (`gp3` and `shimmer_scale`: y and z)
-/// - `forward`: the cone axis
+/// - `gp2`: the cone's cosine term, the box's x scale (`gp3` and `shimmer_scale`: y and z), or
+///   the shaft's half width (`gp3`: half height, `shimmer_scale`: how fast it widens)
+/// - `forward`: the cone or shaft axis; with `up` the frame boxes and shafts turn with
 /// - `volumetric_visibility`: one over the visibility distance
 pub fn pack(
     light: &DynamicLight,
@@ -64,8 +67,22 @@ pub fn pack(
             record.gp2 = cone_term(light.outer_cutoff);
             record.forward = record.up;
         }
+        VolumetricShape::Frustum => {
+            let half = light.half_extents();
+            record.gp2 = half.x;
+            record.gp3 = half.y;
+            record.shimmer_scale = shaft_slope(light.outer_cutoff);
+        }
     }
     record
+}
+
+/// How much a fog shaft's half width grows per meter along it: the tangent of the outer cutoff.
+pub fn shaft_slope(outer_cutoff_degrees: f32) -> f32 {
+    outer_cutoff_degrees
+        .clamp(0.0, MAX_SHAFT_ANGLE)
+        .to_radians()
+        .tan()
 }
 
 /// Henry's empirical cone width term: the cosine of 90° plus the outer cutoff, widened by up to
@@ -76,16 +93,21 @@ pub fn cone_term(outer_cutoff_degrees: f32) -> f32 {
 }
 
 /// Radius of a sphere around the light that contains the whole fog volume, for culling.
-pub fn bounding_radius(fog: &VolumetricLight, scale: Vec3, outer_cutoff_degrees: f32) -> f32 {
+pub fn bounding_radius(fog: &VolumetricLight, light: &DynamicLight, scale: Vec3) -> f32 {
+    let outer_cutoff = light.outer_cutoff;
     match fog.shape {
         VolumetricShape::Sphere => fog.radius,
         VolumetricShape::Box => (scale.abs() * fog.radius).length(),
         VolumetricShape::ConeZ | VolumetricShape::ConeY => {
-            let mut angle = outer_cutoff_degrees.clamp(0.0, 75.0);
-            if outer_cutoff_degrees > 90.0 {
-                angle = (1.0 - inverse_lerp_clamped(115.0, 180.0, outer_cutoff_degrees)) * 75.0;
+            let mut angle = outer_cutoff.clamp(0.0, 75.0);
+            if outer_cutoff > 90.0 {
+                angle = (1.0 - inverse_lerp_clamped(115.0, 180.0, outer_cutoff)) * 75.0;
             }
             fog.radius / angle.to_radians().cos()
+        }
+        VolumetricShape::Frustum => {
+            let far = light.half_extents() + Vec2::splat(fog.radius * shaft_slope(outer_cutoff));
+            far.extend(fog.radius).length()
         }
     }
 }

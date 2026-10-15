@@ -64,24 +64,26 @@ pub fn cubemap_array(cubes: u32, format: TextureFormat) -> Image {
 }
 
 /// Grows the array to hold `needed` cubes. Capacity doubles so lights coming and going don't
-/// reallocate it every frame; it never shrinks.
+/// reallocate it every frame; it never shrinks. Returns whether the array was recreated, which
+/// loses every rendered cube.
 pub(super) fn ensure_capacity(
     needed: u32,
     capacity: &mut ShadowCubemapCapacity,
     images: &mut Assets<Image>,
     budget: u32,
     format: TextureFormat,
-) {
+) -> bool {
     if needed <= capacity.0 {
-        return;
+        return false;
     }
     let cubes = needed.next_power_of_two().min(budget.max(needed));
-    if images
+    let recreated = images
         .insert(&SHADOW_CUBEMAPS, cubemap_array(cubes, format))
-        .is_ok()
-    {
+        .is_ok();
+    if recreated {
         capacity.0 = cubes;
     }
+    recreated
 }
 
 pub(super) fn create_placeholder(app: &mut App) {
@@ -111,11 +113,12 @@ mod tests {
     fn capacity_doubles_up_to_the_budget() {
         let mut images = Assets::<Image>::default();
         let mut capacity = ShadowCubemapCapacity(0);
-        ensure_capacity(3, &mut capacity, &mut images, 16, TextureFormat::Rg16Float);
+        let format = TextureFormat::Rg16Float;
+        assert!(ensure_capacity(3, &mut capacity, &mut images, 16, format));
         assert_eq!(capacity.0, 4);
-        ensure_capacity(2, &mut capacity, &mut images, 16, TextureFormat::Rg16Float);
+        assert!(!ensure_capacity(2, &mut capacity, &mut images, 16, format));
         assert_eq!(capacity.0, 4, "never shrinks");
-        ensure_capacity(9, &mut capacity, &mut images, 12, TextureFormat::Rg16Float);
+        assert!(ensure_capacity(9, &mut capacity, &mut images, 12, format));
         assert_eq!(capacity.0, 12);
     }
 

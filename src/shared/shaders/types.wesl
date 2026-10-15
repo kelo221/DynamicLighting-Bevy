@@ -65,6 +65,8 @@ const LIGHT_TYPE_INTERFERENCE: u32 = 256u;
 const LIGHT_TYPE_ROTOR: u32 = 320u;
 const LIGHT_TYPE_SHOCK: u32 = 384u;
 const LIGHT_TYPE_DISCO: u32 = 448u;
+const LIGHT_TYPE_RECTANGLE: u32 = 512u;
+const LIGHT_TYPE_TUBE: u32 = 576u;
 
 const LIGHT_SHIMMER_NONE: u32 = 0u;
 const LIGHT_SHIMMER_WATER: u32 = 1024u;
@@ -77,6 +79,22 @@ fn light_is_realtime(light: GpuLight) -> bool {
 // One of the `LIGHT_TYPE_*` constants.
 fn light_type(light: GpuLight) -> u32 {
     return light.channel & LIGHT_TYPE_MASK;
+}
+
+// Rectangle and tube lights, whose light comes from a shape with half extents (gp1, gp2).
+fn light_is_area(light: GpuLight) -> bool {
+    let kind = light_type(light);
+    return kind == LIGHT_TYPE_RECTANGLE || kind == LIGHT_TYPE_TUBE;
+}
+
+// How far an area light's shape reaches from its position; 0 for the other types. An area
+// light's `radius_sqr` is its reach past the shape, so `sqrt(radius_sqr) + light_extent(light)`
+// is the light's radius around its position.
+fn light_extent(light: GpuLight) -> f32 {
+    if light_is_area(light) {
+        return length(vec2(light.gp1, light.gp2));
+    }
+    return 0.0;
 }
 
 // One of the `LIGHT_SHIMMER_*` constants.

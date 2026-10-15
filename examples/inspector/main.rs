@@ -136,6 +136,7 @@ fn spawn_room(
             intensity: 2.5,
             outer_cutoff: 40.0,
             inner_cutoff: 34.0,
+            size: Vec2::new(1.0, 0.5),
             ..DynamicLight::spot()
         },
         Transform::from_xyz(0.5, 4.5, 3.5).looking_at(Vec3::new(0.0, 0.0, -1.0), Vec3::Y),

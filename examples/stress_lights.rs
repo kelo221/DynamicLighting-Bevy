@@ -1,26 +1,34 @@
-//! Stress test: 1000 baked lights over an 80 m floor with 100 pillars.
+//! Stress test: 1000 lights over an 80 m floor, with up to two pillars beside each light.
 //!
-//! `cargo run --release --example stress_lights -- --bake` bakes the scene (a few seconds) into
-//! `assets/stress_lights.dynlight`; later runs load it. Without a bake the lights render as
-//! realtime lights, of which only the nearest `realtime_light_budget` count.
+//! Baked (native default): `cargo run --release --example stress_lights -- --bake` bakes the
+//! scene into `assets/stress_lights.dynlight`, shadows included; later runs load it. Without a
+//! bake the lights render as realtime lights without shadows, of which only the nearest
+//! `realtime_light_budget` count.
 //!
-//! - `--lights N` changes the number of lights (default 1000; rebake after changing it).
-//! - `--realtime` makes every light realtime and raises the budget to match, which measures
-//!   the brute-force realtime loop instead of the baked per-triangle light lists.
+//! Realtime (`--realtime`, and the browser default): every light is realtime and drifts, without
+//! shadows. This measures the brute-force realtime loop instead of the baked per-triangle light
+//! lists. (Realtime shadow cubemaps cost six depth renders per light per frame, far too many for
+//! hundreds of lights.)
+//!
+//! - `--lights N` changes the number of lights (default 1000, 256 in a browser; rebake after
+//!   changing it).
 //! - `--frames N` exits after measuring N frames and prints the mean frame time;
-//!   `--screenshot path.png` also saves the last frame.
+//!   `--screenshot path.png` also saves the last frame. The camera holds still while measuring.
 //!
-//! VSync is off so the frame time is the real cost.
-//!
-//! In a browser it defaults to 256 realtime lights (nothing to bake) and shows the frame time on
-//! the page; browsers cap the frame rate at the display's refresh rate.
+//! Drag to orbit and scroll to zoom. VSync is off so the frame time is the real cost; browsers
+//! cap the frame rate at the display's refresh rate.
 
 #[path = "support/baking.rs"]
 mod baking;
+#[path = "support/orbit.rs"]
+mod orbit;
 #[path = "support/mod.rs"]
 mod support;
 
+use core::f32::consts::TAU;
+
 use baking::PendingBake;
+use orbit::OrbitCamera;
 use support::{argument, flag};
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -33,7 +41,12 @@ use dynlight::prelude::*;
 
 const BAKE_ASSET: &str = "stress_lights.dynlight";
 const FLOOR_SIZE: f32 = 80.0;
-const LIGHT_RADIUS: f32 = 3.5;
+const LIGHT_RADIUS: f32 = 4.0;
+const PILLAR_HEIGHT: f32 = 3.0;
+/// Pillars stand this far from their light, so baked shadows cross its bright pool.
+const PILLAR_DISTANCE: (f32, f32) = (0.8, 1.3);
+/// How far a realtime light drifts from its place: round a circle, and up and down.
+const DRIFT: Vec2 = Vec2::new(0.35, 0.3);
 /// Real time before measuring starts: pipelines compile and the bake loads first.
 const WARM_UP_SECONDS: f32 = 3.0;
 /// The browser default: enough to stress the realtime loop without a long shader warm-up.
@@ -52,6 +65,15 @@ struct Measurement {
     started_at: Option<f32>,
     frames: u32,
     seconds: f64,
+}
+
+/// A realtime light circling and bobbing around `anchor`.
+#[derive(Component)]
+struct Drift {
+    anchor: Vec3,
+    phase: f32,
+    /// Radians per second; negative circles the other way.
+    speed: f32,
 }
 
 fn main() -> AppExit {
@@ -73,7 +95,7 @@ fn main() -> AppExit {
         ..default()
     }))
     .add_plugins((DynamicLightingPlugin, FrameTimeDiagnosticsPlugin::default()))
-    .add_plugins(baking::plugin)
+    .add_plugins((baking::plugin, orbit::plugin))
     .insert_resource(ClearColor(Color::srgb(0.01, 0.01, 0.015)))
     .insert_resource(BakeSettings {
         pixel_density: 16.0,
@@ -86,7 +108,7 @@ fn main() -> AppExit {
     })
     .init_resource::<Measurement>()
     .add_systems(Startup, (spawn_scene, load_or_bake))
-    .add_systems(Update, (apply_finished_bake, report))
+    .add_systems(Update, (drift, apply_finished_bake, report))
     .insert_resource(options);
     app.run()
 }
@@ -120,27 +142,21 @@ fn spawn_scene(
         BakeStatic,
     ));
 
-    let mut pillar = Cylinder::new(0.3, 2.0).mesh().build();
+    let mut pillar = Cylinder::new(0.3, PILLAR_HEIGHT).mesh().build();
     let uv = pillar.attribute(Mesh::ATTRIBUTE_UV_0).unwrap().clone();
     pillar.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv);
     let pillar = meshes.add(pillar);
     let stone = materials.add(Color::srgb(0.6, 0.55, 0.5));
-    for i in 0..100u32 {
-        let (x, z) = ((i % 10) as f32, (i / 10) as f32);
-        let jitter = Vec2::new(hash(i * 2), hash(i * 2 + 1)) * 3.0 - 1.5;
-        commands.spawn((
-            Name::new(format!("Pillar {i}")),
-            Mesh3d(pillar.clone()),
-            MeshMaterial3d(stone.clone()),
-            Transform::from_xyz((x - 4.5) * 8.0 + jitter.x, 1.0, (z - 4.5) * 8.0 + jitter.y),
-            BakeStatic,
-        ));
-    }
 
+    // Lights sit on a jittered grid, each with up to two pillars beside it.
     let side = (options.lights as f32).sqrt().ceil() as u32;
     let spacing = FLOOR_SIZE / side as f32;
+    let edge = FLOOR_SIZE / 2.0 - 0.5;
     for i in 0..options.lights {
-        let (x, z) = ((i % side) as f32 + 0.5, (i / side) as f32 + 0.5);
+        let cell = Vec2::new((i % side) as f32 + 0.5, (i / side) as f32 + 0.5) * spacing;
+        let jitter = (Vec2::new(hash(i * 7 + 1), hash(i * 7 + 2)) - 0.5) * spacing * 0.4;
+        let position = cell + jitter - FLOOR_SIZE / 2.0;
+        let anchor = Vec3::new(position.x, 0.8 + hash(i + 104_729) * 1.5, position.y);
         let light = DynamicLight {
             color: Color::hsl(hash(i + 7919) * 360.0, 0.8, 0.6),
             radius: LIGHT_RADIUS,
@@ -151,11 +167,7 @@ fn spawn_scene(
         let mut entity = commands.spawn((
             Name::new(format!("Light {i}")),
             light,
-            Transform::from_xyz(
-                x * spacing - FLOOR_SIZE / 2.0,
-                0.8 + hash(i + 104_729) * 1.5,
-                z * spacing - FLOOR_SIZE / 2.0,
-            ),
+            Transform::from_translation(anchor),
         ));
         if i % 4 == 0 {
             entity.insert(LightEffect {
@@ -164,12 +176,35 @@ fn spawn_scene(
                 ..default()
             });
         }
+        // Baked lights must stay where they were baked.
+        if options.realtime {
+            entity.insert(Drift {
+                anchor,
+                phase: hash(i * 7 + 6) * TAU,
+                speed: (0.3 + hash(i * 7 + 7) * 0.5) * if i % 2 == 0 { 1.0 } else { -1.0 },
+            });
+        }
+        let pillars = (hash(i * 7 + 3) * 3.0) as u32;
+        for k in 0..pillars {
+            let angle = (hash(i * 7 + 4) + k as f32 / 2.0) * TAU;
+            let (near, far) = PILLAR_DISTANCE;
+            let away = Vec2::from_angle(angle) * (near + hash(i * 7 + 5 + k) * (far - near));
+            let at = (position + away).clamp(Vec2::splat(-edge), Vec2::splat(edge));
+            commands.spawn((
+                Name::new(format!("Pillar {i}.{k}")),
+                Mesh3d(pillar.clone()),
+                MeshMaterial3d(stone.clone()),
+                Transform::from_xyz(at.x, PILLAR_HEIGHT / 2.0, at.y),
+                BakeStatic,
+            ));
+        }
     }
 
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 38.0, 46.0).looking_at(Vec3::new(0.0, 0.0, 4.0), Vec3::Y),
-    ));
+    let mut camera = OrbitCamera::new(Vec3::ZERO, 0.0, 0.5, 30.0);
+    camera.distance_range = (6.0, 90.0);
+    camera.pitch_range = (0.1, 1.45);
+    camera.drift = if options.frames.is_some() { 0.0 } else { 0.04 };
+    commands.spawn((Camera3d::default(), camera));
 }
 
 fn load_or_bake(
@@ -179,7 +214,7 @@ fn load_or_bake(
     mut pending: ResMut<PendingBake>,
 ) {
     if options.realtime {
-        support::status(&format!("{} realtime lights", options.lights));
+        support::status(&format!("{} moving realtime lights", options.lights));
         return;
     }
     if flag("--bake") {
@@ -191,6 +226,19 @@ fn load_or_bake(
         warn!("no bake yet: run with --bake; until then only the nearest lights render");
     }
     support::status(&format!("{} baked lights", options.lights));
+}
+
+fn drift(time: Res<Time>, mut lights: Query<(&Drift, &mut Transform)>) {
+    let seconds = time.elapsed_secs();
+    for (drift, mut transform) in &mut lights {
+        let angle = drift.phase + seconds * drift.speed;
+        transform.translation = drift.anchor
+            + Vec3::new(
+                angle.cos() * DRIFT.x,
+                (angle * 1.7).sin() * DRIFT.y,
+                angle.sin() * DRIFT.x,
+            );
+    }
 }
 
 fn apply_finished_bake(
