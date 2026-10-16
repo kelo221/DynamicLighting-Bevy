@@ -8,6 +8,7 @@ use super::input::{BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
 use super::light_bvh::build_light_bvh;
 use super::mesh_bake::{MeshOutput, Scene, bake_mesh};
 use super::mesh_builder::PreparedMesh;
+use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::Occluders;
 use super::progress::{BakeProgress, BakeStage};
 
@@ -74,6 +75,16 @@ pub fn bake(
         })
         .collect::<Result<_, _>>()?;
     scene.photons.clear();
+    for output in outputs.iter().filter(|output| output.crowded.triangles > 0) {
+        bevy::log::warn!(
+            "dynlight bake: mesh {:#018x} has {} triangles lit by more than {MAX_TRIANGLE_LIGHTS} \
+             baked lights (up to {}); shaders read only the first {MAX_TRIANGLE_LIGHTS}, so the \
+             others leave dark seams. Split large triangles or lower area lights' shadow points",
+            output.mesh.id.0,
+            output.crowded.triangles,
+            output.crowded.most_lights
+        );
+    }
 
     progress.begin(BakeStage::DistanceCubes, scene.lights.len() as u64 * 6);
     let distance_cubes = bake_distance_cubes(

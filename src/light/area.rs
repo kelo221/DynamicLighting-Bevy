@@ -187,6 +187,48 @@ pub fn diffuse(shape: &AreaShape, world: Vec3, normal: Vec3, baked: bool) -> f32
     half_lambert * half_lambert * emission
 }
 
+/// The largest cosine between `normal` and a direction on the great arc from unit vector `a` to
+/// unit vector `b`, shorter than a half turn.
+fn arc_facing(a: Vec3, b: Vec3, normal: Vec3) -> f32 {
+    let mut best = normal.dot(a).max(normal.dot(b));
+    let c = a.cross(b);
+    let s = c.length();
+    if s > MIN_ANGLE {
+        let axis = c / s;
+        let in_plane = normal - axis * normal.dot(axis);
+        if a.cross(in_plane).dot(axis) > 0.0 && in_plane.cross(b).dot(axis) > 0.0 {
+            best = best.max(in_plane.length());
+        }
+    }
+    best
+}
+
+/// The cosine between `normal` and the direction to the point of the shape the surface faces
+/// most. Above 0 exactly when part of the shape is above the surface's horizon; a point light's
+/// cosine as the shape shrinks. Realtime shadows fade their terminator with it.
+pub fn facing_cosine(shape: &AreaShape, world: Vec3, normal: Vec3) -> f32 {
+    if !shape.rectangle {
+        let [a, b] = shape.ends().map(|end| safe_normalize(end - world));
+        return arc_facing(a, b, normal);
+    }
+    let base = shape.center - world;
+    let denominator = normal.dot(shape.forward);
+    if denominator.abs() > 1.0e-6 {
+        let t = base.dot(shape.forward) / denominator;
+        let hit = normal * t - base;
+        if t > 0.0
+            && hit.dot(shape.x).abs() <= shape.half.x
+            && hit.dot(shape.y).abs() <= shape.half.y
+        {
+            return 1.0;
+        }
+    }
+    let d = shape.corners().map(|corner| safe_normalize(corner - world));
+    (0..4)
+        .map(|i| arc_facing(d[i], d[(i + 1) % 4], normal))
+        .fold(-1.0, f32::max)
+}
+
 /// The point of the shape whose reflection a surface at `world` shows along `reflection`.
 pub fn representative_point(shape: &AreaShape, world: Vec3, reflection: Vec3) -> Vec3 {
     if !shape.rectangle {

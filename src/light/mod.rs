@@ -7,6 +7,8 @@
 
 pub mod area;
 #[cfg(test)]
+mod area_record_tests;
+#[cfg(test)]
 mod area_tests;
 mod budget;
 mod buffer;
@@ -64,6 +66,7 @@ impl Plugin for LightPlugin {
             .init_resource::<BakedLightSlots>()
             .init_resource::<LightAttachments>()
             .init_resource::<PackedLights>()
+            .init_resource::<placement::LightPlacement>()
             .configure_sets(
                 PostUpdate,
                 (LightSystems::Attach, LightSystems::Pack)

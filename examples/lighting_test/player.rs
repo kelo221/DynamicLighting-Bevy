@@ -135,6 +135,6 @@ fn switch_lantern(
         return;
     }
     for mut visibility in &mut lanterns {
-        visibility.toggle_visible_hidden();
+        visibility.toggle_inherited_hidden();
     }
 }

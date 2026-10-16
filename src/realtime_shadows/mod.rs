@@ -4,7 +4,8 @@
 //!
 //! Cubes are cached: a light keeps its slot in the cube array, and a face renders again only
 //! when its light moves or a shadow caster it can see changes. Lights that use their baked
-//! shadows draw only meshes without baked data.
+//! shadows draw only meshes without baked data. Material changes are followed for material
+//! types with a [`CasterMaterialPlugin`]; `DynLitMaterial` has one.
 //!
 //! Shader modules: `dynlight::realtime_shadows::shaders::{vsm, shadow_kernel}`; the face pass
 //! entries are `shadow_moments.wesl` and `shadow_blur.wesl`.
@@ -13,11 +14,14 @@ mod cameras;
 mod cubemaps;
 pub mod faces;
 mod filter;
+mod materials;
 pub mod mirror;
 mod render;
 #[cfg(test)]
 pub(crate) mod shader_tests;
 pub mod slots;
+#[cfg(test)]
+mod tests;
 mod tracking;
 
 use bevy::asset::{AssetPlugin, embedded_asset};
@@ -34,6 +38,7 @@ pub use cubemaps::{
     SHADOW_CUBEMAP_FORMATS, SHADOW_CUBEMAPS, ShadowCubemapCapacity, cubemap_array,
     shadow_cubemap_format,
 };
+pub use materials::{CasterMaterial, CasterMaterialPlugin};
 
 use crate::light::LightSystems;
 use crate::shared::shaders_available;
@@ -85,6 +90,7 @@ impl Plugin for RealtimeShadowsPlugin {
         load_shader_library!(app, "shaders/shadow_kernel.wesl");
         load_shader_library!(app, "shaders/vsm.wesl");
         cubemaps::create_placeholder(app);
+        app.init_resource::<tracking::TouchedCasters>();
         // Cameras must be in place before their frusta are computed this frame; caster bounds
         // and visibility must be final before the changes are collected.
         app.add_systems(

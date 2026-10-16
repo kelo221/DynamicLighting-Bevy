@@ -18,6 +18,7 @@ use bevy::shader::load_shader_library;
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
 
+use crate::realtime_shadows::CasterMaterialPlugin;
 use crate::shared::shaders_available;
 
 pub struct SurfacePlugin;
@@ -30,7 +31,10 @@ impl Plugin for SurfacePlugin {
             embedded_asset!(app, "shaders/dynlit.wesl");
             embedded_asset!(app, "shaders/dynlit_vertex.wesl");
             embedded_asset!(app, "shaders/dynlit_prepass.wesl");
-            app.add_plugins(MaterialPlugin::<DynLitMaterial>::default());
+            app.add_plugins((
+                MaterialPlugin::<DynLitMaterial>::default(),
+                CasterMaterialPlugin::<DynLitMaterial>::default(),
+            ));
         }
     }
 

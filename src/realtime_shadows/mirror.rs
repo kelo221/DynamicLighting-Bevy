@@ -56,21 +56,21 @@ pub fn visibility(moments: Vec2, depth: f32) -> f32 {
     ((lit - cut) / (1.0 - cut).max(1.0e-6)).clamp(0.0, 1.0)
 }
 
-/// `realtime_shadow` for a surface `to_light` away from a light of `radius` (light minus
-/// surface) with unit `normal`, where `sample(direction)` gives the filtered moments in a
-/// direction from the light.
+/// `realtime_shadow` for a surface `to_light` away from where the cube of a light of `radius`
+/// was rendered (light minus surface), whose normal makes `cosine` with the part of the light
+/// it faces most, where `sample(direction)` gives the filtered moments in a direction from the
+/// light.
 pub fn realtime_shadow(
     to_light: Vec3,
-    normal: Vec3,
+    cosine: f32,
     radius: f32,
     sample: impl Fn(Vec3) -> Vec2,
 ) -> f32 {
-    let distance = to_light.length();
-    let fade = terminator(normal.dot(to_light) / distance.max(1.0e-6));
+    let fade = terminator(cosine);
     if fade <= 0.0 {
         return 0.0;
     }
-    fade * visibility(sample(-to_light), distance / radius)
+    fade * visibility(sample(-to_light), to_light.length() / radius)
 }
 
 #[cfg(test)]
@@ -150,8 +150,9 @@ mod tests {
     fn open_and_blocked_receivers() {
         let empty = |_: Vec3| Vec2::ONE;
         let to_light = Vec3::new(0.0, 4.0, 0.0);
-        let shadow =
-            |normal, map: &dyn Fn(Vec3) -> Vec2| realtime_shadow(to_light, normal, RADIUS, map);
+        let shadow = |normal: Vec3, map: &dyn Fn(Vec3) -> Vec2| {
+            realtime_shadow(to_light, normal.dot(to_light.normalize()), RADIUS, map)
+        };
         assert_eq!(shadow(Vec3::Y, &empty), 1.0);
         assert_eq!(shadow(Vec3::NEG_Y, &empty), 0.0);
         // The receiver sits 4 below the light; a sphere 2 below it blocks the light.

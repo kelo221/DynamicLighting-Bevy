@@ -3,13 +3,14 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT, LIGHT_TYPE_DISCOBALL, light_type, light_has_cookie,
-    light_is_area,
+    light_has_shadow_cubemap, light_is_area,
 };
 import dynlight::light::shaders::light_types::{
     attenuation, cone, discoball_theta, pattern, shimmer, spot_theta, to_light_space,
 };
 import dynlight::light::shaders::area::{
-    area_diffuse, area_representative_point, area_shape, area_specular_scale, nearest_point,
+    area_diffuse, area_facing_cosine, area_representative_point, area_shape, area_specular_scale,
+    nearest_point,
 };
 import dynlight::surface::shaders::bindings::{light_cookies, light_cookie_sampler};
 import dynlight::surface::shaders::brdf::{PI, reflectance};
@@ -31,7 +32,7 @@ struct LightGeometry {
     // Normalized `to_light`.
     direction: vec3<f32>,
     // The light's entity position minus the surface position: the record's position, or an
-    // area light's center. Shadow cubemaps are seen from there.
+    // area light's center. Shadow cubemaps are seen from there; only the lookup uses it.
     to_center: vec3<f32>,
     // Diffuse term; 0 means no direct light (bounce light may still arrive).
     ndotl: f32,
@@ -104,8 +105,19 @@ fn light_mask(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry, t
     } else if kind != LIGHT_TYPE_POINT && !light_is_area(light) {
         map = pattern(light, geometry.to_light);
     }
-    map *= realtime_shadow(light, geometry.to_center, dot(geometry.to_center, geometry.to_center), surface.normal);
+    if light_has_shadow_cubemap(light) {
+        map *= realtime_shadow(light, geometry.to_center, facing_cosine(light, surface, geometry));
+    }
     return map * shimmer(light, surface.world, time);
+}
+
+// The cosine between the normal and the direction to the part of the light the surface faces
+// most: the light itself, or the point of an area light's shape.
+fn facing_cosine(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry) -> f32 {
+    if light_is_area(light) {
+        return area_facing_cosine(light, surface.world, surface.normal);
+    }
+    return dot(surface.normal, geometry.direction);
 }
 
 // How much of a light's baked bounce light the cone lets through. Bounce light spreads wider

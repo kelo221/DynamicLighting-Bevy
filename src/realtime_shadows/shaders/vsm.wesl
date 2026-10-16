@@ -23,18 +23,20 @@ fn linstep(low: f32, high: f32, value: f32) -> f32 {
     return saturate((value - low) / max(high - low, 1.0e-6));
 }
 
-// How much of `light` reaches a surface `to_light` away from it (light position minus surface,
-// `distance_sqr` its squared length) with unit `normal`: 1 without a shadow cubemap. Area lights
-// are shadowed from their position too, and their cubemaps reach their full radius.
+// How much of `light` reaches a surface `to_light` away from where its cubemap was rendered
+// (light position, or an area light's center, minus surface): 1 without a shadow cubemap.
+// `cosine` is the cosine between the surface normal and the direction to the part of the light
+// the surface faces most: `to_light` for point-like lights, the facing point of an area light's
+// shape. Area light cubemaps reach their full radius.
 //
 // The map can't resolve where a curved surface turns away from the light; left to the map, the
 // surface goes dark along a jagged line of texels. It fades out with the angle instead.
-fn realtime_shadow(light: GpuLight, to_light: vec3<f32>, distance_sqr: f32, normal: vec3<f32>) -> f32 {
+fn realtime_shadow(light: GpuLight, to_light: vec3<f32>, cosine: f32) -> f32 {
     if !light_has_shadow_cubemap(light) {
         return 1.0;
     }
-    let distance = sqrt(distance_sqr);
-    let terminator = smoothstep(TERMINATOR_START, TERMINATOR_END, dot(normal, to_light) / max(distance, 1.0e-6));
+    let distance = length(to_light);
+    let terminator = smoothstep(TERMINATOR_START, TERMINATOR_END, cosine);
     if terminator <= 0.0 {
         return 0.0;
     }

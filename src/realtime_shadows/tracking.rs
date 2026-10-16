@@ -1,11 +1,14 @@
 //! What changed for the shadow cubemaps since the last frame: shadow casters that moved,
-//! appeared, disappeared or animate, and anything that may have kept the last renderings from
-//! being complete (pipelines still compiling, meshes and textures still arriving).
+//! appeared, disappeared, animate, changed render layers, mesh or material, and anything that
+//! may have kept the last renderings from being complete (pipelines still compiling, new meshes,
+//! materials and textures still on their way to the GPU).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use bevy::asset::asset_changed::AssetChanged;
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::mesh::morph::MeshMorphWeights;
 use bevy::mesh::skinning::SkinnedMesh;
@@ -38,12 +41,20 @@ impl ShadowFeedback {
 #[derive(Resource, Default)]
 pub(super) struct CasterBounds(EntityHashMap<CasterChange>);
 
+/// Casters whose material or textures changed, reported by the material trackers in
+/// `materials.rs` for [`track_casters`] to pick up.
+#[derive(Resource, Default)]
+pub(super) struct TouchedCasters(pub Vec<Entity>);
+
 /// This frame's changes for the cube planning in `cameras.rs`.
 #[derive(Resource, Default)]
 pub(super) struct CasterChanges {
     pub changes: Vec<CasterChange>,
     /// Frames left in which every face renders.
     pub settle: u32,
+    /// Casters with a new mesh, material or textures, and the frames left in which they are
+    /// reported where they are: the new data may take a frame or two to reach the GPU.
+    lingering: EntityHashMap<u32>,
 }
 
 type CasterItem<'a> = (
@@ -60,6 +71,7 @@ type Changed3d = (
         Changed<Mesh3d>,
         Changed<Aabb>,
         Changed<InheritedVisibility>,
+        Changed<RenderLayers>,
     )>,
 );
 /// Skinned meshes move with their joints and morph targets change shape, both without a
@@ -84,57 +96,85 @@ fn bounds(transform: &GlobalTransform, aabb: &Aabb, baked: bool) -> CasterChange
     }
 }
 
+type Caster<'a> = (
+    Entity,
+    &'a GlobalTransform,
+    Option<&'a Aabb>,
+    &'a InheritedVisibility,
+    bool,
+);
+
+/// Where a visible caster is now. Without bounds (`NoFrustumCulling`) it could be anywhere, so
+/// every face renders.
+fn current(caster: Caster, settle: &mut u32) -> Option<CasterChange> {
+    let (_, transform, aabb, visibility, baked) = caster;
+    if !visibility.get() {
+        return None;
+    }
+    let Some(aabb) = aabb else {
+        *settle = (*settle).max(1);
+        return None;
+    };
+    Some(bounds(transform, aabb, baked))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn track_casters(
     changed: Query<CasterItem, Changed3d>,
     animated: Query<CasterItem, Animated>,
+    casters: Query<CasterItem, With<Mesh3d>>,
+    remeshed: Query<Entity, (With<Mesh3d>, AssetChanged<Mesh3d>)>,
     rebaked: Query<(), (With<Mesh3d>, Added<BakedReceiver>)>,
     mut unbaked: RemovedComponents<BakedReceiver>,
+    mut relayered: RemovedComponents<RenderLayers>,
     mut removed: RemovedComponents<Mesh3d>,
-    mut meshes: MessageReader<AssetEvent<Mesh>>,
-    mut images: MessageReader<AssetEvent<Image>>,
+    mut touched: ResMut<TouchedCasters>,
     feedback: Res<ShadowFeedback>,
     mut known: ResMut<CasterBounds>,
     mut changes: ResMut<CasterChanges>,
 ) {
-    let changes = &mut *changes;
-    changes.changes.clear();
-    // Which meshes are baked decides what cubes of baked lights draw; new meshes and textures
-    // may still be on their way to the GPU.
-    let events = unbaked.read().count() + meshes.read().count() + images.read().count();
-    let unsettled = feedback.take() | !rebaked.is_empty() | (events > 0);
-    if unsettled {
-        changes.settle = SETTLE_FRAMES;
+    let CasterChanges {
+        changes: list,
+        settle,
+        lingering,
+    } = &mut *changes;
+    list.clear();
+    // Which meshes are baked decides what cubes of baked lights draw.
+    if feedback.take() | !rebaked.is_empty() | (unbaked.read().count() > 0) {
+        *settle = SETTLE_FRAMES;
     }
 
     for entity in removed.read() {
         if let Some(old) = known.0.remove(&entity) {
-            changes.changes.push(old);
+            list.push(old);
         }
     }
-    for (entity, transform, aabb, visibility, baked) in &changed {
+    for caster in &changed {
+        let entity = caster.0;
         if let Some(old) = known.0.remove(&entity) {
-            changes.changes.push(old);
+            list.push(old);
         }
-        if !visibility.get() {
-            continue;
+        if let Some(new) = current(caster, settle) {
+            known.0.insert(entity, new);
+            list.push(new);
         }
-        let Some(aabb) = aabb else {
-            // Without bounds (`NoFrustumCulling`) it could be anywhere.
-            changes.settle = changes.settle.max(1);
-            continue;
+    }
+    for caster in &animated {
+        list.extend(current(caster, settle));
+    }
+
+    let fresh = touched.0.drain(..).chain(&remeshed).chain(relayered.read());
+    for entity in fresh {
+        lingering.insert(entity, SETTLE_FRAMES);
+    }
+    lingering.retain(|&entity, frames| {
+        let Ok(caster) = casters.get(entity) else {
+            return false;
         };
-        let new = bounds(transform, aabb, baked);
-        known.0.insert(entity, new);
-        changes.changes.push(new);
-    }
-    for (_, transform, aabb, visibility, baked) in &animated {
-        match aabb {
-            Some(aabb) if visibility.get() => changes.changes.push(bounds(transform, aabb, baked)),
-            Some(_) => {}
-            None => changes.settle = changes.settle.max(1),
-        }
-    }
+        list.extend(current(caster, settle));
+        *frames -= 1;
+        *frames > 0
+    });
 }
 
 #[cfg(test)]

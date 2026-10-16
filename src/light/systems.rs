@@ -7,11 +7,10 @@ use super::budget::{RealtimeCandidate, select_realtime};
 use super::buffer::{BakedLightSlots, LightAttachments, PackedLights};
 use super::component::DynamicLight;
 use super::pack::{PackContext, pack};
-use super::placement::{SlotIndex, pose_of};
+use super::placement::{LightPlacement, pose_of};
 use crate::effects::LightEffectState;
 use crate::shared::{
-    DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, ResolvedBakeId,
-    RuntimeQuality,
+    DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, RuntimeQuality,
 };
 
 type LightItem<'a> = (
@@ -20,24 +19,23 @@ type LightItem<'a> = (
     &'a GlobalTransform,
     &'a InheritedVisibility,
     Option<&'a LightEffectState>,
-    Option<&'a ResolvedBakeId>,
 );
 
 /// Packs every visible light into [`PackedLights`]: baked lights at their bake slots, then the
 /// realtime lights that fit the budget (lights marked realtime, lights the bake doesn't know,
 /// and baked lights that moved).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn pack_lights(
     time: Res<Time>,
     settings: Res<DynamicLightingSettings>,
     slots: Res<BakedLightSlots>,
+    placement: Res<LightPlacement>,
     attachments: Res<LightAttachments>,
     lights: Query<LightItem>,
     cameras: Query<(&Camera, &GlobalTransform, &Frustum)>,
     mut packed: ResMut<PackedLights>,
 ) {
     let seconds = time.elapsed_secs();
-    let index = SlotIndex::new(&slots);
-    let mut points = Vec::new();
 
     let packed = &mut *packed;
     packed.lights.clear();
@@ -58,15 +56,15 @@ pub(super) fn pack_lights(
     };
 
     let mut candidates = Vec::new();
-    for (entity, light, transform, visibility, effect, id) in &lights {
+    for (entity, light, transform, visibility, effect) in &lights {
         if !visibility.get() {
             continue;
         }
         let pose = pose_of(transform);
-        if index.baked_points(light, id, pose, &mut points) {
+        if let Some(points) = placement.points_of(entity) {
             // An area light baked from several points fills one slot per point.
             let share = 1.0 / points.len() as f32;
-            for point in &points {
+            for point in points {
                 let context = PackContext {
                     realtime: false,
                     bounce_bits_per_pixel: slots.slots[point.slot].bounce_bits_per_pixel,
@@ -108,7 +106,7 @@ pub(super) fn pack_lights(
     );
     for candidate in selected {
         let (entity, pose) = candidate.key;
-        let Ok((_, light, _, _, effect, _)) = lights.get(entity) else {
+        let Ok((_, light, _, _, effect)) = lights.get(entity) else {
             continue;
         };
         packed

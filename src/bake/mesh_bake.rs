@@ -11,11 +11,12 @@ use super::geometry::{Aabb, approx_eq, sphere_intersects_triangle};
 use super::input::{BakeError, BakeLight, BakeOptions};
 use super::light_bvh::LightBvh;
 use super::mesh_builder::{PreparedMesh, crop_rect};
+use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::{Occluders, RayCaster};
 use super::progress::BakeProgress;
 use super::shadows;
 use super::texels::triangle_texels;
-use super::triangle_words::serialize_triangles;
+use super::triangle_words::{TriangleRecord, serialize_triangles};
 
 /// Henry's tolerance for surfaces facing slightly away from a light.
 pub const NDOTL_TOLERANCE: f32 = -0.1;
@@ -61,6 +62,7 @@ pub struct MeshOutput {
     pub rays: u64,
     pub bounce_rays: u64,
     pub lights_removed: u64,
+    pub crowded: Crowding,
 }
 
 pub fn bake_mesh(scene: &Scene, prepared: &PreparedMesh) -> Result<MeshOutput, BakeError> {
@@ -86,6 +88,7 @@ pub fn bake_mesh(scene: &Scene, prepared: &PreparedMesh) -> Result<MeshOutput, B
         .for_each(|(region, _)| super::seams::pad_seams(region, &traced.visited));
 
     let records = entries.into_records(scene, prepared, &regions, &bits);
+    let crowded = Crowding::of(&records);
     let triangles = serialize_triangles(&records, scene.bounce_in_scene);
     Ok(MeshOutput {
         mesh: BakedMesh {
@@ -98,7 +101,31 @@ pub fn bake_mesh(scene: &Scene, prepared: &PreparedMesh) -> Result<MeshOutput, B
         rays: traced.rays,
         bounce_rays,
         lights_removed,
+        crowded,
     })
+}
+
+/// Triangles with more lights than the shaders read ([`MAX_TRIANGLE_LIGHTS`]); the rest of
+/// their lights go missing at runtime.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Crowding {
+    pub triangles: u64,
+    /// The most lights any triangle has.
+    pub most_lights: usize,
+}
+
+impl Crowding {
+    fn of(records: &[TriangleRecord]) -> Self {
+        let limit = MAX_TRIANGLE_LIGHTS as usize;
+        records
+            .iter()
+            .map(|record| record.lights.len())
+            .filter(|&lights| lights > limit)
+            .fold(Self::default(), |crowding, lights| Self {
+                triangles: crowding.triangles + 1,
+                most_lights: crowding.most_lights.max(lights),
+            })
+    }
 }
 
 /// Henry's light association: lights whose sphere touches the triangle, skipping lights the
@@ -241,5 +268,42 @@ fn trace(
             .collect(),
         texels,
         rays,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bake::triangle_words::TriangleLight;
+
+    fn record(lights: u32) -> TriangleRecord {
+        TriangleRecord {
+            crop: TexelRect {
+                min_x: 0,
+                min_y: 0,
+                max_x: 0,
+                max_y: 0,
+            },
+            lights: (0..lights)
+                .map(|light| TriangleLight {
+                    light,
+                    shadow: None,
+                    bounce: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn triangles_past_the_shader_light_limit_are_counted() {
+        let limit = MAX_TRIANGLE_LIGHTS;
+        let fits = [record(3), record(limit)];
+        assert_eq!(Crowding::of(&fits), Crowding::default());
+        let crowded = [record(limit + 1), record(2), record(limit + 9)];
+        let expected = Crowding {
+            triangles: 2,
+            most_lights: limit as usize + 9,
+        };
+        assert_eq!(Crowding::of(&crowded), expected);
     }
 }

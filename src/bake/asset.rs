@@ -1,6 +1,7 @@
 //! The `.dynlight` asset: a [`BakedScene`] loaded through Bevy's asset server.
 
 use std::fmt;
+use std::sync::Arc;
 
 use bevy::asset::{AssetLoader, LoadContext, io::Reader};
 use bevy::prelude::*;
@@ -75,6 +76,57 @@ pub(super) fn register(app: &mut App) {
             .register_asset_loader(DynLightBakeLoader);
     } else {
         app.init_resource::<Assets<DynLightBake>>()
-            .add_message::<AssetEvent<DynLightBake>>();
+            .init_resource::<HeadlessBakes>()
+            .add_message::<AssetEvent<DynLightBake>>()
+            .add_systems(Last, free_unused_bakes);
+    }
+}
+
+/// Without `AssetPlugin` nothing frees an asset once its handles are gone (Bevy's
+/// `Assets::track_assets` needs the asset server). Headless apps keep a handle to every bake
+/// here, and a bake is removed once that handle is its last.
+#[derive(Resource, Default)]
+pub(super) struct HeadlessBakes(Vec<Handle<DynLightBake>>);
+
+impl HeadlessBakes {
+    pub(super) fn hold(&mut self, handle: &Handle<DynLightBake>) {
+        self.0.push(handle.clone());
+    }
+}
+
+fn free_unused_bakes(mut held: ResMut<HeadlessBakes>, mut assets: ResMut<Assets<DynLightBake>>) {
+    held.0.retain(|handle| {
+        let Handle::Strong(strong) = handle else {
+            return false;
+        };
+        if Arc::strong_count(strong) > 1 {
+            return true;
+        }
+        assets.remove(handle);
+        false
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn headless_bakes_are_freed_with_their_last_handle() {
+        let mut app = App::new();
+        register(&mut app);
+        let world = app.world_mut();
+        let bake = DynLightBake {
+            scene: BakedScene::default(),
+        };
+        let handle = world.resource_mut::<Assets<DynLightBake>>().add(bake);
+        world.resource_mut::<HeadlessBakes>().hold(&handle);
+        app.update();
+        app.update();
+        assert_eq!(app.world().resource::<Assets<DynLightBake>>().len(), 1);
+        drop(handle);
+        app.update();
+        assert!(app.world().resource::<Assets<DynLightBake>>().is_empty());
+        assert!(app.world().resource::<HeadlessBakes>().0.is_empty());
     }
 }

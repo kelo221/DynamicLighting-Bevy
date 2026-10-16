@@ -3,6 +3,9 @@
 //! so turning it keeps its bake; an area light's points lie along its long side, so turning it
 //! or changing its length moves them. Packing and the shadow cubemap pass both read this.
 
+use core::ops::Range;
+
+use bevy::ecs::entity::EntityHashMap;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
@@ -35,26 +38,27 @@ pub(super) fn pose_of(transform: &GlobalTransform) -> LightPose {
 }
 
 /// The active bake's slots by light id.
-pub(super) struct SlotIndex<'a> {
-    slots: &'a BakedLightSlots,
+#[derive(Default)]
+pub(super) struct SlotIndex {
     by_id: HashMap<BakeId, usize>,
 }
 
-impl<'a> SlotIndex<'a> {
-    pub(super) fn new(slots: &'a BakedLightSlots) -> Self {
+impl SlotIndex {
+    pub(super) fn new(slots: &BakedLightSlots) -> Self {
         let by_id = slots
             .slots
             .iter()
             .enumerate()
             .map(|(index, slot)| (slot.id, index))
             .collect();
-        Self { slots, by_id }
+        Self { by_id }
     }
 
-    /// Fills `points` with the slots a light at `pose` uses, one per shadow point. Returns false
-    /// and leaves `points` empty unless every point is baked where it stands now.
+    /// Fills `points` with the `slots` a light at `pose` uses, one per shadow point. Returns
+    /// false and leaves `points` empty unless every point is baked where it stands now.
     pub(super) fn baked_points(
         &self,
+        slots: &BakedLightSlots,
         light: &DynamicLight,
         id: Option<&ResolvedBakeId>,
         pose: LightPose,
@@ -70,7 +74,7 @@ impl<'a> SlotIndex<'a> {
                 .by_id
                 .get(&shadow_point_id(id.0, point.index, count))
                 .copied()
-                .filter(|&slot| still_baked(&self.slots.slots[slot], point.position));
+                .filter(|&slot| still_baked(&slots.slots[slot], point.position));
             let Some(slot) = slot else {
                 points.clear();
                 return false;
@@ -97,16 +101,51 @@ type PlacedLight<'a> = (
     Has<BakedInPlace>,
 );
 
-/// Adds or removes [`BakedInPlace`] where it changed.
+/// This frame's baked records of every light in place, for packing.
+#[derive(Resource, Default)]
+pub(super) struct LightPlacement {
+    /// Rebuilt when the bake changes.
+    index: SlotIndex,
+    lights: EntityHashMap<Range<usize>>,
+    points: Vec<BakedPoint>,
+}
+
+impl LightPlacement {
+    /// The baked records of `light`, one per shadow point, if it is baked in place.
+    pub(super) fn points_of(&self, light: Entity) -> Option<&[BakedPoint]> {
+        self.lights
+            .get(&light)
+            .map(|range| &self.points[range.clone()])
+    }
+}
+
+/// Finds the baked records of every light in place, and adds or removes [`BakedInPlace`] where
+/// that changed.
 pub(super) fn mark_baked_in_place(
     mut commands: Commands,
     slots: Res<BakedLightSlots>,
+    mut placement: ResMut<LightPlacement>,
     lights: Query<PlacedLight>,
 ) {
-    let index = SlotIndex::new(&slots);
+    let placement = &mut *placement;
+    if slots.is_changed() {
+        placement.index = SlotIndex::new(&slots);
+    }
+    placement.lights.clear();
+    placement.points.clear();
     let mut points = Vec::new();
     for (entity, light, transform, id, marked) in &lights {
-        let in_place = index.baked_points(light, id, pose_of(transform), &mut points);
+        let pose = pose_of(transform);
+        let in_place = placement
+            .index
+            .baked_points(&slots, light, id, pose, &mut points);
+        if in_place {
+            let start = placement.points.len();
+            placement.points.extend_from_slice(&points);
+            placement
+                .lights
+                .insert(entity, start..placement.points.len());
+        }
         if in_place && !marked {
             commands.entity(entity).insert(BakedInPlace);
         } else if !in_place && marked {
@@ -152,7 +191,7 @@ mod tests {
         let mut points = Vec::new();
         let id = id.map(ResolvedBakeId);
         SlotIndex::new(slots)
-            .baked_points(light, id.as_ref(), at, &mut points)
+            .baked_points(slots, light, id.as_ref(), at, &mut points)
             .then(|| points.iter().map(|p| p.slot).collect())
     }
 

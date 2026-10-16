@@ -70,8 +70,9 @@ for demo in "${DEMOS[@]}"; do
     if [[ "$demo" == inspector ]]; then
         FEATURES=(--features inspector)
     fi
+    # Bash before 4.4 (macOS ships 3.2) treats an empty array as unset under `set -u`.
     cargo build --locked --profile wasm-release --target wasm32-unknown-unknown \
-        --example "$demo" "${FEATURES[@]}"
+        --example "$demo" ${FEATURES[@]+"${FEATURES[@]}"}
     mkdir -p "dist/$demo"
     wasm-bindgen --target web --no-typescript --out-dir "dist/$demo" \
         --out-name "$demo" "$TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/$demo.wasm"
@@ -82,10 +83,10 @@ for demo in "${DEMOS[@]}"; do
     fi
     # Bevy resolves its default asset root relative to each demo document. Browser demos bake
     # in memory, so local `.dynlight` bakes stay out of the site.
+    # `tar` rather than `cp --parents`, which BSD cp (macOS) doesn't have.
     if [[ -d assets ]]; then
         mkdir -p "dist/$demo/assets"
-        (cd assets && find . -type f ! -name '*.dynlight' \
-            -exec cp --parents {} "$ROOT/dist/$demo/assets/" \;)
+        tar -C assets --exclude='*.dynlight' -cf - . | tar -C "dist/$demo/assets" -xf -
     fi
 done
 

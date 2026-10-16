@@ -6,7 +6,8 @@
 // - Shadows: a baked area light is a row of records, one per shadow point along its long
 //   side, each with an equal share of the light. A record stands at its point (baked shadows
 //   and distance cubes are seen from there, like a point light's) and keeps the distance back
-//   to the shape's center in `gp3`. Shadow cubemaps are seen from the center.
+//   to the shape's center in `gp3`. Shadow cubemaps are seen from the center; their terminator
+//   fades with the cosine to the point of the shape the surface faces most.
 // - Diffuse: the mean cosine over the shape, i.e. the polygon (Lambert) or line form factor
 //   divided by the solid or plane angle the shape covers. It equals a point light's cosine as
 //   the shape shrinks. A rectangle also has a Lambertian emitter's cosine at its nearest point.
@@ -162,6 +163,52 @@ fn area_diffuse(light: GpuLight, world: vec3<f32>, normal: vec3<f32>, baked: boo
     }
     let half_lambert = 0.5 + 0.5 * cosine;
     return half_lambert * half_lambert * emission;
+}
+
+// The largest cosine between `normal` and a direction on the great arc from unit vector a to
+// unit vector b, shorter than a half turn.
+fn arc_facing(a: vec3<f32>, b: vec3<f32>, normal: vec3<f32>) -> f32 {
+    var best = max(dot(normal, a), dot(normal, b));
+    let c = cross(a, b);
+    let s = length(c);
+    if s > MIN_ANGLE {
+        let axis = c / s;
+        let in_plane = normal - axis * dot(normal, axis);
+        if dot(cross(a, in_plane), axis) > 0.0 && dot(cross(in_plane, b), axis) > 0.0 {
+            best = max(best, length(in_plane));
+        }
+    }
+    return best;
+}
+
+// The cosine between `normal` and the direction to the point of the shape the surface faces
+// most. Above 0 exactly when part of the shape is above the surface's horizon; a point light's
+// cosine as the shape shrinks.
+fn area_facing_cosine(light: GpuLight, world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let shape = area_shape(light);
+    let base = shape.center - world;
+    let hx = shape.x * shape.half.x;
+    if !shape.rectangle {
+        return arc_facing(safe_normalize(base - hx), safe_normalize(base + hx), normal);
+    }
+    let denominator = dot(normal, shape.forward);
+    if abs(denominator) > 1.0e-6 {
+        let t = dot(base, shape.forward) / denominator;
+        let hit = normal * t - base;
+        if t > 0.0 && abs(dot(hit, shape.x)) <= shape.half.x && abs(dot(hit, shape.y)) <= shape.half.y {
+            return 1.0;
+        }
+    }
+    let hy = shape.y * shape.half.y;
+    var d = array<vec3<f32>, 4>(base - hx - hy, base + hx - hy, base + hx + hy, base - hx + hy);
+    for (var i = 0u; i < 4u; i++) {
+        d[i] = safe_normalize(d[i]);
+    }
+    var best = -1.0;
+    for (var i = 0u; i < 4u; i++) {
+        best = max(best, arc_facing(d[i], d[(i + 1u) % 4u], normal));
+    }
+    return best;
 }
 
 // The point of the shape whose reflection a surface at `world` shows along `reflection`: where

@@ -14,7 +14,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 
 use crate::shared::DynamicLightingSettings;
 
-use super::asset::DynLightBake;
+use super::asset::{DynLightBake, HeadlessBakes};
 use super::format::{BakeStats, BakedScene, encode};
 use super::input::{BakeError, BakeInput, BakeOptions};
 use super::progress::BakeProgress;
@@ -154,6 +154,10 @@ pub(super) fn start_bakes(
                 result: Err(failure),
             }
         };
+        if let Some(failure) = unsupported_output(request.output.as_deref(), HAS_FILESYSTEM) {
+            finished.write(fail(failure));
+            continue;
+        }
         if status.is_running() {
             finished.write(fail(BakeFailure::Busy));
             continue;
@@ -191,6 +195,7 @@ pub(super) fn start_bakes(
 pub(super) fn finish_bakes(
     mut status: ResMut<BakeStatus>,
     mut assets: ResMut<Assets<DynLightBake>>,
+    headless: Option<ResMut<HeadlessBakes>>,
     mut finished: MessageWriter<BakeFinished>,
 ) {
     if !status
@@ -213,10 +218,15 @@ pub(super) fn finish_bakes(
         bytes: output.bytes,
     });
     match &result {
-        Ok(report) => info!(
-            "dynlight bake: meshes {}, texels {}, rays {}, ms {}",
-            report.stats.meshes, report.stats.texels, report.stats.rays, report.milliseconds
-        ),
+        Ok(report) => {
+            info!(
+                "dynlight bake: meshes {}, texels {}, rays {}, ms {}",
+                report.stats.meshes, report.stats.texels, report.stats.rays, report.milliseconds
+            );
+            if let Some(mut headless) = headless {
+                headless.hold(&report.handle);
+            }
+        }
         Err(failure) => error!("dynlight bake: {:?} failed: {failure}", bake.output),
     }
     finished.write(BakeFinished {
@@ -261,8 +271,36 @@ fn write_output(output: &Path, bytes: &[u8]) -> Result<(), BakeFailure> {
 
 #[cfg(target_arch = "wasm32")]
 fn write_output(output: &Path, _bytes: &[u8]) -> Result<(), BakeFailure> {
-    Err(BakeFailure::Write(format!(
+    Err(no_filesystem(output))
+}
+
+/// Browsers have no filesystem to write a bake to.
+const HAS_FILESYSTEM: bool = !cfg!(target_arch = "wasm32");
+
+fn no_filesystem(output: &Path) -> BakeFailure {
+    BakeFailure::Write(format!(
         "{}: filesystem output is unsupported on wasm; use BakeRequest.output = None",
         output.display()
-    )))
+    ))
+}
+
+/// A file output the platform can't write, rejected before the bake runs.
+fn unsupported_output(output: Option<&Path>, filesystem: bool) -> Option<BakeFailure> {
+    output.filter(|_| !filesystem).map(no_filesystem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_output_without_a_filesystem_is_rejected_up_front() {
+        let path = Path::new("assets/level.dynlight");
+        assert!(matches!(
+            unsupported_output(Some(path), false),
+            Some(BakeFailure::Write(message)) if message.contains("level.dynlight")
+        ));
+        assert_eq!(unsupported_output(None, false), None);
+        assert_eq!(unsupported_output(Some(path), true), None);
+    }
 }

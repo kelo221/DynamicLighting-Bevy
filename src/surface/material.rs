@@ -16,7 +16,7 @@ use crate::baked_lighting::{
 };
 use crate::cookies::COOKIE_ARRAY;
 use crate::light::LIGHT_BUFFER;
-use crate::realtime_shadows::SHADOW_CUBEMAPS;
+use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS};
 
 const SHADER: &str = "embedded://dynlight/surface/shaders/dynlit.wesl";
 const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
@@ -297,9 +297,37 @@ impl Material for DynLitMaterial {
     }
 }
 
+impl CasterMaterial for DynLitMaterial {
+    fn visit_textures(&self, visit: &mut dyn FnMut(AssetId<Image>)) {
+        [
+            &self.base_color_texture,
+            &self.emissive_texture,
+            &self.metallic_roughness_texture,
+            &self.normal_map_texture,
+            &self.occlusion_texture,
+            &self.reflection_cubemap,
+        ]
+        .into_iter()
+        .flatten()
+        .for_each(|texture| visit(texture.id()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn casters_follow_the_materials_own_textures() {
+        let texture = Handle::<Image>::default();
+        let material = DynLitMaterial {
+            normal_map_texture: Some(texture.clone()),
+            ..DynLitMaterial::from(texture.clone())
+        };
+        let mut seen = Vec::new();
+        material.visit_textures(&mut |id| seen.push(id));
+        assert_eq!(seen, [texture.id(), texture.id()]);
+    }
 
     #[test]
     fn uniform_carries_mask_cutoff_and_flags() {
