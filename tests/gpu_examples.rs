@@ -71,6 +71,16 @@ fn gpu_lighting_matches_the_cpu_mirror() {
 
 #[test]
 #[ignore = "needs a GPU"]
+fn gpu_specular_light_matches_the_cpu_mirror() {
+    let log = run_example("gpu_check_specular", &[]);
+    assert!(
+        log.contains("GPU specular light matches the CPU mirror"),
+        "{log}"
+    );
+}
+
+#[test]
+#[ignore = "needs a GPU"]
 fn gpu_area_shadows_match_the_cpu_mirror_at_every_quality() {
     for quality in ["integrated", "low", "medium", "high"] {
         let log = run_example("gpu_check_area", &["--quality", quality]);

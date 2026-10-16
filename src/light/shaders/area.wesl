@@ -10,10 +10,15 @@
 // - Diffuse: the mean cosine over the shape, i.e. the polygon (Lambert) or line form factor
 //   divided by the solid or plane angle the shape covers. It equals a point light's cosine as
 //   the shape shrinks. A rectangle also has a Lambertian emitter's cosine at its nearest point.
-// - Specular: one representative point on the shape, with the energy normalization of Karis,
-//   "Real Shading in Unreal Engine 4" (2013), applied per axis of the shape.
+// - Specular: a rectangle integrates the GGX lobe over its shape with linearly transformed cosines
+//   (`dynlight::light::shaders::ltc`), divided by its solid angle like the diffuse term. Tubes,
+//   and rectangles too small to integrate, use one representative point on the shape with the
+//   energy normalization of Karis, "Real Shading in Unreal Engine 4" (2013), applied per axis.
 
 import dynlight::shared::shaders::types::{GpuLight, LIGHT_TYPE_RECTANGLE, light_type};
+import dynlight::light::shaders::ltc::ltc_quad_integral;
+
+const PI: f32 = 3.141592653589793;
 
 // Below this solid angle (or plane angle, for tubes) the shape counts as a point.
 const MIN_ANGLE: f32 = 1.0e-6;
@@ -59,18 +64,29 @@ fn triangle_solid_angle(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> f32 {
     return 2.0 * atan2(triple, 1.0 + dot(a, b) + dot(b, c) + dot(c, a));
 }
 
+// The rectangle's corners relative to `world`, in order around it.
+fn rectangle_corners(shape: AreaShape, world: vec3<f32>) -> array<vec3<f32>, 4> {
+    let base = shape.center - world;
+    let hx = shape.x * shape.half.x;
+    let hy = shape.y * shape.half.y;
+    return array<vec3<f32>, 4>(base - hx - hy, base + hx - hy, base + hx + hy, base - hx + hy);
+}
+
+// The solid angle of a quad given the unit directions to its corners.
+fn rectangle_solid_angle(d: array<vec3<f32>, 4>) -> f32 {
+    return triangle_solid_angle(d[0], d[1], d[2]) + triangle_solid_angle(d[0], d[2], d[3]);
+}
+
 // Mean cosine between `normal` and the directions to the rectangle, over its solid angle; with
 // `clip`, only the part above the surface's horizon counts.
 fn rectangle_cosine(shape: AreaShape, world: vec3<f32>, normal: vec3<f32>, clip: bool) -> f32 {
     let base = shape.center - world;
-    let hx = shape.x * shape.half.x;
-    let hy = shape.y * shape.half.y;
-    var corners = array<vec3<f32>, 4>(base - hx - hy, base + hx - hy, base + hx + hy, base - hx + hy);
+    var corners = rectangle_corners(shape, world);
     var d: array<vec3<f32>, 4>;
     for (var i = 0u; i < 4u; i++) {
         d[i] = safe_normalize(corners[i]);
     }
-    let solid = triangle_solid_angle(d[0], d[1], d[2]) + triangle_solid_angle(d[0], d[2], d[3]);
+    let solid = rectangle_solid_angle(d);
     if solid < MIN_ANGLE {
         return dot(normal, safe_normalize(base));
     }
@@ -242,4 +258,31 @@ fn area_specular_scale(light: GpuLight, world: vec3<f32>, point: vec3<f32>, roug
     let spread = shape.half / (3.0 * max(distance(shape.center, world), 1.0e-4));
     let scale = alpha / max(saturate(vec2(alpha) + spread), vec2(1.0e-6));
     return scale.x * select(1.0, scale.y, shape.rectangle);
+}
+
+// The specular light of a rectangle at a surface per unit of light strength, for unit `normal`
+// and `view` and reflectance `f0`: π times the reflected share over the solid angle, so a small
+// rectangle reflects like a point light. `matrix` and `albedo` are the LTC table's layers at the
+// surface's roughness and view cosine. `w` is 0 for tubes and rectangles below `MIN_ANGLE`,
+// which reflect from their representative point instead.
+fn area_ltc_specular(light: GpuLight, world: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, f0: vec3<f32>, matrix: vec4<f32>, albedo: vec4<f32>) -> vec4<f32> {
+    let shape = area_shape(light);
+    if !shape.rectangle {
+        return vec4(0.0);
+    }
+    let corners = rectangle_corners(shape, world);
+    var d: array<vec3<f32>, 4>;
+    for (var i = 0u; i < 4u; i++) {
+        d[i] = safe_normalize(corners[i]);
+    }
+    let solid = rectangle_solid_angle(d);
+    if solid < MIN_ANGLE {
+        return vec4(0.0);
+    }
+    if dot(shape.forward, world - shape.center) <= 0.0 {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+    }
+    let integral = ltc_quad_integral(corners, normal, view, matrix);
+    let reflected = f0 * albedo.x + (1.0 - f0) * albedo.y;
+    return vec4(reflected * (PI * integral / solid), 1.0);
 }

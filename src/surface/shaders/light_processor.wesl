@@ -2,17 +2,20 @@
 // steps the baked, dynamic-geometry and realtime paths share.
 
 import dynlight::shared::shaders::types::{
-    GpuLight, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT, LIGHT_TYPE_DISCOBALL, light_type, light_has_cookie,
-    light_has_shadow_cubemap, light_is_area,
+    GpuLight, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT, LIGHT_TYPE_DISCOBALL, LIGHT_TYPE_RECTANGLE,
+    light_type, light_has_cookie, light_has_shadow_cubemap, light_is_area,
 };
 import dynlight::light::shaders::light_types::{
     attenuation, cone, discoball_theta, pattern, shimmer, spot_theta, to_light_space,
 };
 import dynlight::light::shaders::area::{
-    area_diffuse, area_facing_cosine, area_representative_point, area_shape, area_specular_scale,
-    nearest_point,
+    area_diffuse, area_facing_cosine, area_ltc_specular, area_representative_point, area_shape,
+    area_specular_scale, nearest_point,
 };
-import dynlight::surface::shaders::bindings::{light_cookies, light_cookie_sampler};
+import dynlight::light::shaders::ltc::ltc_uv;
+import dynlight::surface::shaders::bindings::{
+    light_cookies, light_cookie_sampler, area_light_lut, area_light_lut_sampler,
+};
 import dynlight::surface::shaders::brdf::{PI, reflectance};
 import dynlight::realtime_shadows::shaders::vsm::realtime_shadow;
 
@@ -175,7 +178,8 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
         return;
     }
     let bounce_light = light.bounce_color * (attenuation(light, geometry.distance_sqr) * bounce * (1.0 - shading.metallic));
-    // Area lights reflect from the point of their shape the mirror direction points at.
+    // Area lights weight diffuse light by the Fresnel term at the point of their shape the mirror
+    // direction points at, and tubes also reflect from it.
     var direction = geometry.direction;
     var scale = 1.0;
     if light_is_area(light) {
@@ -186,8 +190,22 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
     }
     let reflected = reflectance(surface.normal, shading.view, direction, shading.roughness, shading.metallic, shading.f0);
     let lambert = max(dot(surface.normal, direction), 0.0);
+    var specular = reflected.specular * (PI * lambert * scale);
+    if light_type(light) == LIGHT_TYPE_RECTANGLE {
+        specular = rectangle_specular(shading, surface, light, specular);
+    }
     (*sum).diffuse += strength * reflected.diffuse_weight * (geometry.ndotl * map) + bounce_light;
-    (*sum).specular += strength * reflected.specular * (PI * lambert * map * scale);
+    (*sum).specular += strength * specular * map;
+}
+
+// A rectangle's specular term integrated over its shape, or `point` (its representative
+// point's) when it is too small to integrate.
+fn rectangle_specular(shading: Shading, surface: SurfacePoint, light: GpuLight, point: vec3<f32>) -> vec3<f32> {
+    let uv = ltc_uv(shading.roughness, dot(surface.normal, shading.view));
+    let matrix = textureSampleLevel(area_light_lut, area_light_lut_sampler, uv, 0, 0.0);
+    let albedo = textureSampleLevel(area_light_lut, area_light_lut_sampler, uv, 1, 0.0);
+    let ltc = area_ltc_specular(light, surface.world, surface.normal, shading.view, shading.f0, matrix, albedo);
+    return select(point, ltc.rgb, ltc.w > 0.0);
 }
 
 // Adds a light without baked shadows (realtime lights, and every light on unbaked meshes

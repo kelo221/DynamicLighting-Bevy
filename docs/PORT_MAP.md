@@ -10,6 +10,7 @@ Provenance for every source file of the crate: one row per `*.rs` / `*.wesl` fil
 | `C/` | Same repository, `AlpacaIT.DynamicLighting/Scripts/` | MIT, as above |
 | `E/` | Same repository, `AlpacaIT.DynamicLighting.Editor/Editor/` | MIT, as above |
 | SmoShaders | Daniel Ilett, [smo-shaders](https://github.com/daniel-ilett/smo-shaders) Gaussian blur, as found in Henry's package: `S/Operations/GaussianBlur.shader` (VSM blur) and `C/Utilities/GuassianBlur.cs` (bounce blur); Henry ships the notice as `AlpacaIT.DynamicLighting/Licenses/SmoShaders.txt` | MIT, © 2019 Daniel Ilett, notice in `LICENSES/SmoShaders-MIT.txt` |
+| LTC | Eric Heitz, Jonathan Dupuy, Stephen Hill and David Neubelt, [ltc_code](https://github.com/selfshadow/ltc_code) commit `31e5e96`: the fitted GGX tables `fit/results/ltc_1.dds` and `ltc_2.dds`, from "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines" (SIGGRAPH 2016) | BSD-2-Clause with a request to cite the paper, notice in `LICENSES/LTC-BSD-2.txt` |
 | `BO/` | [kelo221/bevyout](https://github.com/kelo221/bevyout) branch `DynamicLightsPort`, `src/vsa/dynamic_lighting/`, commit `f2c7a6a`. Paths outside that folder are written as `bevyout/src/...` | The repository is GPL-3.0; the code lifted here is relicensed by its sole author under this crate's MIT OR Apache-2.0 |
 
 Nothing here is copied from Unity. Where Henry or bevyout relied on Unity behaviour (`UnityEngine.Random`, `Mathf.PerlinNoise`, physics raycasts, camera renders, `ScriptableObject` storage, InstanceIDs, Unity goldens), the replacement is our own code and the "Status" column says so. Henry's code that reproduces third-party snippets (LearnOpenGL BRDF, Shadertoy `rand`) is not ported; see the rows for `brdf.wesl` and `light_types.wesl`.
@@ -64,7 +65,11 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
-| `src/light/mod.rs` | none | none | New; wiring: `LightPlugin`, `LightSystems::{Attach, Pack}`, loads `light_types.wesl`, creates the light buffer |
+| `src/light/mod.rs` | none | none | New; wiring: `LightPlugin`, `LightSystems::{Attach, Pack}`, loads `light_types.wesl`, `ltc.wesl` and `area.wesl`, creates the light buffer and the LTC table image |
+| `src/light/ltc.rs` | none | none | New; CPU reference of `ltc.wesl` and `area_ltc_specular`, written from the LTC paper; reads the authors' table (LTC source) like a linear sampler |
+| `src/light/ltc_lut.bin` | none | none | Data: LTC source `ltc_1.dds` and `ltc_2.dds` without their 128-byte DDS headers, layer 0 first |
+| `src/light/ltc_image.rs` | none | none | New; the table as a two-layer RGBA16F array image under `AREA_LIGHT_LUT` |
+| `src/light/ltc_tests.rs` | none | none | New; the table, the quad integral against Lambert and the transformed lobe, the fit against brute-force GGX, and `rectangle_specular` |
 | `src/light/area.rs` | none | none | New; CPU reference of `area.wesl` (nearest point, mean cosine, facing cosine for the realtime-shadow terminator, representative point); area lights are Henry-family types shaded from their shape, one record at its center, with soft baked shadows (PLAN §12, Beyond Henry) |
 | `src/light/area_record_tests.rs` | none | none | New; packed area-light records: their shape, nothing lit past the radius, and shadow-point records adding up to the whole light |
 | `src/light/area_tests.rs` | none | none | New; the area-light math against brute-force integration over the shapes |
@@ -77,7 +82,8 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/light/placement.rs` | moved baked lights `C/Core/DynamicLightManager.cs:1004-1159` | none | Ported, split out of `systems.rs`: the `BakedInPlace` marker read by packing and the shadow cubemaps; moved threshold 1 mm (Henry: `ApproximatelyEquals`, 1e-5); area lights also need the rotation and shape they were baked with (New) |
 | `src/light/presets.rs` | `E/EditorMenus.cs:119-167` (point, spot, directional, discoball menu items) | none | Ported; the sun is a point light 2.5 km away with a 10 km radius, as Henry's directional item |
 | `src/light/shader_tests.rs` | none | none | New |
-| `src/light/shaders/area.wesl` | none | none | New; written from the published formulas: Lambert's polygon form factor, the line form factor, and Karis 2013's representative point and energy normalization |
+| `src/light/shaders/area.wesl` | none | none | New; written from the published formulas: Lambert's polygon form factor, the line form factor, Karis 2013's representative point and energy normalization, and `area_ltc_specular` (rectangles, M15) |
+| `src/light/shaders/ltc.wesl` | none | none | New; written from the LTC paper (Heitz et al. 2016): shading frame, inverse transform, horizon clipping and the polygon integral with the authors' fit of θ / sin θ |
 | `src/light/shaders/light_types.wesl` | `S/DynamicLighting.cginc:140-341`; `S/Internal/Common.cginc:3-37`; `S/Generators/TrilinearFilter.cginc:1-36` | `BO/shaders/dynamic_lighting_spatial.wgsl`, `BO/shaders/dynamic_lighting_common.wgsl` | Lifted; shimmer uses the lowbias32 hash (public domain) instead of Shadertoy `rand` (`Common.cginc:39-41`); our clock instead of `_Time`; right = up × forward |
 | `src/light/spatial.rs` | `C/Core/DynamicLightManager.cs:1320-1407`; cookie scale `:1345` | `BO/core/spatial.rs` | Lifted; Unity-parity tests dropped; the cookie scale clamps the cone to 0–90° |
 | `src/light/systems.rs` | `C/Core/DynamicLightManager.cs:1004-1159` (moved baked lights, budget, packing order); `C/Core/DynamicLightManager.LightPositions.cs:67-100` | none | Ported; moved-light detection lives in `placement.rs` |
@@ -91,13 +97,14 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/surface/alpha_mask.rs` | `S/Generators/PhotonCubeTransparent.cginc:55-71` (0.5 alpha cutoff) | none | New; derives `BakeAlphaMask` from `DynLitMaterial`; `Mask(c)` materials bake with their own cutoff |
 | `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false` |
 | `src/surface/shader_tests.rs` | none | none | New |
+| `src/surface/mirror.rs` | none | none | New; CPU reference of `brdf.wesl` and Metallic shading's per-light specular term in `light_processor.wesl` |
 | `src/surface/shared_arrays.rs` | none | none | New; re-prepares lit materials when the shadow cubemap or cookie array is replaced |
-| `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide) |
+| `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide, 27–28 the LTC table) |
 | `src/surface/shaders/brdf.wesl` | none (Henry's `S/Internal/Common.cginc:291-342` is LearnOpenGL code, CC BY-NC) | none | Replaced; GGX / Smith / Schlick rewritten from the published papers |
 | `src/surface/shaders/dynlit.wesl` | fragment bodies `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260`; lighting-only mode `S/DynamicLightingDiffuse.shader:141` | none | Ported; `TRIANGLE_ID` / `PRIMITIVE_INDEX` paths; Unity fog and lightmaps dropped |
 | `src/surface/shaders/dynlit_prepass.wesl` | `S/Generators/DepthNormals.cginc:40-47`, `S/Generators/DepthOnly.cginc` | none | Ported; alpha cutout only |
 | `src/surface/shaders/dynlit_vertex.wesl` | none (Henry relies on `SV_PrimitiveID`) | none | New; Bevy's static mesh vertex shader plus a flat triangle ID |
-| `src/surface/shaders/light_processor.wesl` | `S/Generators/LightProcessor.cginc:1-235`; bounce cones `S/DynamicLighting.cginc:154-163,195-207`; per-light terms `S/DynamicLightingDiffuse.shader:163-203`, `S/DynamicLightingMetallic.shader:262-345` | none | Ported; Metallic intensity-applied-twice and bounce cross-terms fixed (PLAN §12); Metallic diffuse not divided by π, specular scaled by π instead |
+| `src/surface/shaders/light_processor.wesl` | `S/Generators/LightProcessor.cginc:1-235`; bounce cones `S/DynamicLighting.cginc:154-163,195-207`; per-light terms `S/DynamicLightingDiffuse.shader:163-203`, `S/DynamicLightingMetallic.shader:262-345` | none | Ported; Metallic intensity-applied-twice and bounce cross-terms fixed (PLAN §12); Metallic diffuse not divided by π, specular scaled by π instead; rectangle lights reflect through the LTC table (New, PLAN §12) |
 | `src/surface/shaders/lighting.wesl` | `S/DynamicLighting.cginc:1006-1158` (`DYNLIT_FRAGMENT_INTERNAL`) | none | Ported; macros become functions; baked and realtime lights in separate loops; baked entries ≥ `baked_count` ignored; baked shadows decoded at the light's bits per texel, and area lights on dynamic geometry use the soft cube lookup (New, PLAN §12) |
 | `src/surface/shaders/shade.wesl` | `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260` | none | Ported; Unity reflection probes replaced by an optional own cubemap; the light-count heat map (debug view) is New |
 
@@ -233,6 +240,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 |---|---|---|---|
 | `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light |
 | `examples/gpu_check_area.rs` | none | none | New; a baked and an unbaked floor under a panel and a tube, read back and compared with `baked_lighting::mirror` and `dynamic_geometry::mirror` at every quality tier |
+| `examples/gpu_check_specular.rs` | none | none | New; a Metallic copper floor at two roughnesses under rectangles, a tube and a point light, read back and compared with `surface::mirror` and `light::ltc` |
 | `examples/inspector/main.rs` | role of `E/Inspectors/DynamicLightEditor.cs`; light from `DynamicLight::spot()` (`E/EditorMenus.cs:125-131`) | none | New; Feathers UI, bake button |
 | `examples/inspector/panel.rs` | role of `E/Inspectors/DynamicLightEditor.cs` | none | New |
 | `examples/lighting_test/main.rs` | none | `bevyout/src/viewer/lighting_test.rs:366-733` (type, effect and fog grids), `:910-919` (timed exit) | Lifted scene idea, rewritten for `DynLitMaterial`; `--frames`, `--screenshot`, `--gizmos` |
@@ -248,7 +256,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `tests/area_light_bake.rs` | none | none | New; panels bake soft shadows close to a brute-force trace, tubes soften only along their length, point lights keep one bit |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
-| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` and `gpu_check_area` examples and check `lighting_test` screenshots |
+| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check`, `gpu_check_specular` and `gpu_check_area` examples and check `lighting_test` screenshots |
 | `tests/headless_app.rs` | none | none | New |
 | `tests/repo_hygiene.rs` | none | none | New; enforces the `AGENTS.md` rules |
 

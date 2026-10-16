@@ -1,9 +1,9 @@
 //! Light authoring and the per-frame light buffer: the [`DynamicLight`] component, its types
 //! and options, packing into [`GpuLight`](crate::shared::GpuLight) records, the realtime budget,
-//! moved baked lights, presets, the WESL light-type and area-light functions, and a CPU
-//! reference of that shader math.
+//! moved baked lights, presets, the WESL light-type and area-light functions, the LTC table for
+//! rectangle-light specular ([`AREA_LIGHT_LUT`]), and a CPU reference of that shader math.
 //!
-//! Shaders import the light functions as `dynlight::light::shaders::{light_types, area}`.
+//! Shaders import the light functions as `dynlight::light::shaders::{light_types, area, ltc}`.
 
 pub mod area;
 #[cfg(test)]
@@ -14,6 +14,10 @@ mod budget;
 mod buffer;
 mod component;
 mod kinds;
+pub mod ltc;
+mod ltc_image;
+#[cfg(test)]
+mod ltc_tests;
 pub mod mirror;
 mod pack;
 mod placement;
@@ -37,6 +41,7 @@ pub use component::DynamicLight;
 pub use kinds::{
     BounceCompression, Illumination, LightBounce, LightType, ShadowMode, Shimmer, Transparency,
 };
+pub use ltc_image::{AREA_LIGHT_LUT, lut_image};
 pub use pack::{LightPose, PackContext, bounce_color, pack};
 pub use placement::BakedInPlace;
 pub use presets::{SUN_DISTANCE, SUN_RADIUS, sun_light};
@@ -94,8 +99,10 @@ impl Plugin for LightPlugin {
     }
 
     fn finish(&self, app: &mut App) {
+        ltc_image::insert_lut(app);
         if shaders_available(app) {
             load_shader_library!(app, "shaders/light_types.wesl");
+            load_shader_library!(app, "shaders/ltc.wesl");
             load_shader_library!(app, "shaders/area.wesl");
             buffer::create_light_buffer(app);
         }

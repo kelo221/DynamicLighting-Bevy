@@ -1,6 +1,6 @@
 // The `DynLitMaterial` bind group. Bindings 0–19 are the material's own; 20 and up are the
 // scene-wide lighting resources every lit material shares (23 and 24 are declared by
-// `dynlight::baked_lighting::shaders::baked_data`).
+// `dynlight::baked_lighting::shaders::baked_data`, 25 and 26 by the realtime shadows).
 
 import dynlight::shared::shaders::types::DynamicLights;
 
@@ -43,3 +43,6 @@ const FLAG_METALLIC_SHADING: u32 = 256u;
 @group(constants::MATERIAL_BIND_GROUP) @binding(20) var<storage, read> dynamic_lights: DynamicLights;
 @group(constants::MATERIAL_BIND_GROUP) @binding(21) var light_cookies: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(22) var light_cookie_sampler: sampler;
+// The LTC table for rectangle-light specular (`dynlight::light::shaders::ltc`).
+@group(constants::MATERIAL_BIND_GROUP) @binding(27) var area_light_lut: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(28) var area_light_lut_sampler: sampler;

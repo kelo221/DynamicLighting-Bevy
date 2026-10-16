@@ -15,7 +15,7 @@ use crate::baked_lighting::{
     primitive_index_supported,
 };
 use crate::cookies::COOKIE_ARRAY;
-use crate::light::LIGHT_BUFFER;
+use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS};
 
 const SHADER: &str = "embedded://dynlight/surface/shaders/dynlit.wesl";
@@ -40,8 +40,8 @@ pub enum ShadingModel {
 /// Texture conventions follow glTF: `metallic_roughness_texture` has roughness in green and
 /// metallic in blue, `occlusion_texture` uses red, and `normal_map_texture` is a linear
 /// tangent-space map that needs mesh tangents. `lights`, `cookies`, `baked_triangles`,
-/// `baked_aux` and `shadow_cubemaps` point at the scene-wide lighting resources and should stay
-/// at their defaults.
+/// `baked_aux`, `shadow_cubemaps` and `area_light_lut` point at the scene-wide lighting
+/// resources and should stay at their defaults.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 #[uniform(0, DynLitUniform)]
 #[bind_group_data(DynLitKey)]
@@ -97,6 +97,9 @@ pub struct DynLitMaterial {
     #[texture(25, dimension = "cube_array")]
     #[sampler(26)]
     pub shadow_cubemaps: Handle<Image>,
+    #[texture(27, dimension = "2d_array")]
+    #[sampler(28)]
+    pub area_light_lut: Handle<Image>,
 }
 
 impl Default for DynLitMaterial {
@@ -123,6 +126,7 @@ impl Default for DynLitMaterial {
             baked_triangles: BAKED_TRIANGLES,
             baked_aux: BAKED_AUX,
             shadow_cubemaps: SHADOW_CUBEMAPS,
+            area_light_lut: AREA_LIGHT_LUT,
         }
     }
 }

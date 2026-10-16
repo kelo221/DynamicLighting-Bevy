@@ -2,10 +2,12 @@
 //! other slices' shader modules.
 //!
 //! Shader modules: `dynlight::surface::shaders::{bindings, light_processor, lighting, dynlit}`;
-//! `dynlit_vertex` is the vertex shader of meshes with triangle IDs.
+//! `dynlit_vertex` is the vertex shader of meshes with triangle IDs. [`mirror`] is a CPU
+//! reference of Metallic shading's per-light specular term.
 
 mod alpha_mask;
 mod material;
+pub mod mirror;
 #[cfg(test)]
 mod shader_tests;
 mod shared_arrays;
