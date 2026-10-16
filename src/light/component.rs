@@ -47,10 +47,11 @@ pub struct DynamicLight {
     /// Rectangle: width (local X) and height (local Y) of the panel in meters. Tube: length
     /// (local X); `y` is unused. Also the start of frustum fog. Zero makes an area light a point.
     pub size: Vec2,
-    /// Rectangle and tube: how many points the bake traces shadows from, spread evenly along
-    /// the shape's long side (1 to 8). Each point is baked like a point light, with hard 1-bit
-    /// shadows; together they soften shadow edges along the shape. Moving or turning the light
-    /// moves the points and drops it to realtime lighting until the next bake.
+    /// Rectangle and tube: how many points the bake traces shadows from (1 to 16), spread over
+    /// a panel so each has a column and a row of its own, or evenly along a tube. Each point is
+    /// baked like a point light, with hard 1-bit shadows; together they soften shadow edges in
+    /// steps, one per point. Moving, turning or resizing the light moves the points and drops
+    /// it to realtime lighting until the next bake.
     pub shadow_points: u32,
     pub shadows: ShadowMode,
     pub illumination: Illumination,

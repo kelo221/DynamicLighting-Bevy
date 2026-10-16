@@ -69,6 +69,7 @@ fn channel_masks_match_the_shader() {
         ("LIGHT_FLAG_SHADOW_CUBEMAP", ChannelFlags::SHADOW_CUBEMAP),
         ("LIGHT_FLAG_COOKIE", ChannelFlags::COOKIE),
         ("LIGHT_BOUNCE_MASK", ChannelFlags::BOUNCE_MASK),
+        ("LIGHT_GROUP_SHIFT", ChannelFlags::GROUP_SHIFT),
     ] {
         let line = format!("const {name}: u32 = {value}u;");
         assert!(SHARED_TYPES.1.contains(&line), "{line} is missing");

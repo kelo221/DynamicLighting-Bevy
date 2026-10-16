@@ -2,6 +2,7 @@
 //! `layout.rs`.
 
 use super::layout::{AUX_HEADER_WORDS, RECEIVER_WORDS, flags, header};
+use super::mirror;
 use crate::shared::wesl_check::{MATERIAL_CONSTANTS, SHARED_TYPES, compile};
 
 pub(crate) const BAKED_DATA: (&str, &str) = (
@@ -70,4 +71,15 @@ fn constants_match_the_layout() {
         assert_eq!(wesl_const(source, name), value, "{name}");
     }
     const { assert!(header::BAKED_LIGHTS < AUX_HEADER_WORDS) };
+}
+
+#[test]
+fn quality_tiers_match_the_mirror() {
+    let source = TRIANGLES.1;
+    assert_eq!(
+        wesl_const(source, "QUALITY_INTEGRATED"),
+        mirror::QUALITY_INTEGRATED
+    );
+    assert_eq!(wesl_const(source, "QUALITY_LOW"), mirror::QUALITY_LOW);
+    assert_eq!(wesl_const(source, "QUALITY_HIGH"), mirror::QUALITY_HIGH);
 }

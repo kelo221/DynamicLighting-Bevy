@@ -75,32 +75,35 @@ fn triangle_light(triangle: Triangle, k: u32) -> TriangleLight {
     );
 }
 
-// One shadow bit by grid index `x + y · width`, as 0 or 1.
-fn shadow_index(entry: TriangleLight, index: u32) -> f32 {
-    let word = baked_triangles[entry.shadow + index / 32u];
-    return f32((word >> (index % 32u)) & 1u);
-}
-
-// One shadow bit at grid texel `uv` (already minus `bounds.xy`).
-fn shadow_texel(triangle: Triangle, entry: TriangleLight, uv: vec2<u32>) -> f32 {
-    return shadow_index(entry, uv.y * triangle.bounds.z + uv.x);
-}
-
-// Row `i` of Pascal's triangle for n = 4: 1 4 6 4 1.
-fn binomial4(i: u32) -> f32 {
-    return select(select(6.0, 4.0, i == 1u || i == 3u), 1.0, i == 0u || i == 4u);
-}
-
-// 5×5 Gaussian around grid texel `uv`.
-fn shadow_gaussian5(triangle: Triangle, entry: TriangleLight, uv: vec2<u32>) -> f32 {
-    var sum = 0.0;
-    for (var y = 0u; y < 5u; y++) {
-        for (var x = 0u; x < 5u; x++) {
-            let texel = uv + vec2(x, y) - vec2(2u);
-            sum += binomial4(x) * binomial4(y) * shadow_texel(triangle, entry, texel);
-        }
+// Eight shadow bits from grid texel `uv` rightward: bit k is texel `uv + (k, 0)`. As in
+// Henry's `x + y · width` indexing, a run that leaves the grid sideways continues in the
+// neighbouring row. Rows above the grid read its first row and texels before the first read
+// the first texel, where Henry's wrapping index read outside the data. At most two loads.
+fn shadow_row(triangle: Triangle, entry: TriangleLight, uv: vec2<i32>) -> u32 {
+    let start = max(uv.y, 0) * i32(triangle.bounds.z) + uv.x;
+    let index = u32(max(start, 0));
+    let word = entry.shadow + index / 32u;
+    let shift = index % 32u;
+    var bits = baked_triangles[word] >> shift;
+    if shift > 24u {
+        bits |= baked_triangles[word + 1u] << (32u - shift);
     }
-    return sum / 256.0;
+    if start < 0 {
+        let before = min(u32(-start), 8u);
+        bits = (bits << before) | ((bits & 1u) * ((1u << before) - 1u));
+    }
+    return bits & 0xffu;
+}
+
+// Bit `x` of a row from `shadow_row`, as 0 or 1.
+fn row_bit(row: u32, x: u32) -> f32 {
+    return f32((row >> x) & 1u);
+}
+
+// The 1 4 6 4 1 binomial sum of bits `x` to `x + 4` of a row.
+fn row_binomial(row: u32, x: u32) -> f32 {
+    return row_bit(row, x) + row_bit(row, x + 4u)
+        + 4.0 * (row_bit(row, x + 1u) + row_bit(row, x + 3u)) + 6.0 * row_bit(row, x + 2u);
 }
 
 // The grid texel at the top-left of a bilinear footprint around texel coordinates `pixel`.
@@ -111,41 +114,52 @@ fn footprint_corner(triangle: Triangle, pixel: vec2<f32>) -> vec2<u32> {
 // Integrated graphics: bilinear over four single bits.
 fn shadow_integrated(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>) -> f32 {
     let f = fract(pixel - 0.5);
-    let corner = footprint_corner(triangle, pixel);
-    let tl = shadow_texel(triangle, entry, corner);
-    let tr = shadow_texel(triangle, entry, corner + vec2(1u, 0u));
-    let bl = shadow_texel(triangle, entry, corner + vec2(0u, 1u));
-    let br = shadow_texel(triangle, entry, corner + vec2(1u, 1u));
-    let c = mix(vec2(tl, bl), vec2(tr, br), f.x);
+    let corner = vec2<i32>(footprint_corner(triangle, pixel));
+    let top = shadow_row(triangle, entry, corner);
+    let bottom = shadow_row(triangle, entry, corner + vec2(0, 1));
+    let left = vec2(row_bit(top, 0u), row_bit(bottom, 0u));
+    let right = vec2(row_bit(top, 1u), row_bit(bottom, 1u));
+    let c = mix(left, right, f.x);
     return mix(c.x, c.y, f.y);
 }
 
 // Low: the average of the 3×3 texels around the texel containing `pixel`.
 fn shadow_3x3(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>) -> f32 {
-    let uv = vec2<u32>(max(pixel, vec2(0.0))) - triangle.bounds.xy;
-    var sum = 0.0;
-    for (var y = 0u; y < 3u; y++) {
-        let row = (uv.y + y - 1u) * triangle.bounds.z + uv.x;
-        for (var x = 0u; x < 3u; x++) {
-            sum += shadow_index(entry, row + x - 1u);
-        }
+    let uv = vec2<i32>(vec2<u32>(max(pixel, vec2(0.0))) - triangle.bounds.xy) - vec2(1);
+    var count = 0u;
+    for (var y = 0; y < 3; y++) {
+        count += countOneBits(shadow_row(triangle, entry, uv + vec2(0, y)) & 7u);
     }
-    return sum / 9.0;
+    return f32(count) / 9.0;
 }
 
 // Medium and high: four overlapping 3×3 averages, blended bilinearly. High reads each of the
-// 4×4 texels through the 5×5 Gaussian.
+// 4×4 texels through the 5×5 Gaussian (binomial weights, applied across then down).
 fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, gaussian: bool) -> f32 {
     let f = fract(pixel - 0.5);
-    let corner = footprint_corner(triangle, pixel);
+    let corner = vec2<i32>(footprint_corner(triangle, pixel));
     var map: array<array<f32, 4>, 4>;
-    for (var y = 0u; y < 4u; y++) {
-        for (var x = 0u; x < 4u; x++) {
-            let texel = corner + vec2(x, y) - vec2(1u);
-            if gaussian {
-                map[y][x] = shadow_gaussian5(triangle, entry, texel);
-            } else {
-                map[y][x] = shadow_texel(triangle, entry, texel);
+    if gaussian {
+        // Rows −3 to +4 around the corner, from column −3.
+        var across: array<array<f32, 4>, 8>;
+        for (var y = 0; y < 8; y++) {
+            let row = shadow_row(triangle, entry, corner + vec2(-3, y - 3));
+            for (var x = 0u; x < 4u; x++) {
+                across[y][x] = row_binomial(row, x);
+            }
+        }
+        for (var y = 0u; y < 4u; y++) {
+            for (var x = 0u; x < 4u; x++) {
+                let side = across[y][x] + across[y + 4u][x];
+                let near = across[y + 1u][x] + across[y + 3u][x];
+                map[y][x] = (side + 4.0 * near + 6.0 * across[y + 2u][x]) / 256.0;
+            }
+        }
+    } else {
+        for (var y = 0; y < 4; y++) {
+            let row = shadow_row(triangle, entry, corner + vec2(-1, y - 1));
+            for (var x = 0u; x < 4u; x++) {
+                map[y][x] = row_bit(row, x);
             }
         }
     }

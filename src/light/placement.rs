@@ -1,7 +1,7 @@
 //! Whether a light uses its baked data this frame: the bake knows every one of its shadow points
 //! and each still stands where it was baked. A point-like light's only point is its position,
-//! so turning it keeps its bake; an area light's points lie along its long side, so turning it
-//! or changing its length moves them. Packing and the shadow cubemap pass both read this.
+//! so turning it keeps its bake; an area light's points spread over its shape, so turning it or
+//! resizing it moves them. Packing and the shadow cubemap pass both read this.
 
 use core::ops::Range;
 
@@ -13,7 +13,7 @@ use super::buffer::{BakedLightSlots, BakedSlot};
 use super::component::DynamicLight;
 use super::pack::LightPose;
 use super::shadow_points::shadow_point_id;
-use crate::shared::{BakeId, ResolvedBakeId};
+use crate::shared::{BakeId, ChannelFlags, ResolvedBakeId};
 
 /// How far a baked light may drift from where it was baked before it counts as moved.
 const MOVED_DISTANCE: f32 = 1.0e-3;
@@ -23,12 +23,12 @@ const MOVED_DISTANCE: f32 = 1.0e-3;
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BakedInPlace;
 
-/// One baked record of a light: its bake slot, and its shadow point's distance from the light's
-/// position along the long axis.
+/// One baked record of a light: its bake slot, and its shadow point's offset from the light's
+/// position along the light's local X and Y.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct BakedPoint {
     pub(super) slot: usize,
-    pub(super) offset: f32,
+    pub(super) offset: Vec2,
 }
 
 /// The light's pose, read the same way the bake reads it.
@@ -85,6 +85,25 @@ impl SlotIndex {
             });
         }
         true
+    }
+}
+
+/// [`ChannelFlags::group`] for the records of a light baked from `points`: its first slot plus
+/// one when it has several points in consecutive slots, so the shaders shade it once; otherwise
+/// 0, and each record is shaded on its own (bakes that didn't keep the points together).
+pub(super) fn point_group(points: &[BakedPoint]) -> u32 {
+    let Some(first) = points.first().map(|point| point.slot) else {
+        return 0;
+    };
+    let consecutive = points
+        .iter()
+        .enumerate()
+        .all(|(k, point)| point.slot == first + k);
+    let group = first as u32 + 1;
+    if points.len() > 1 && consecutive && group <= ChannelFlags::MAX_GROUP {
+        group
+    } else {
+        0
     }
 }
 
@@ -223,7 +242,7 @@ mod tests {
         let slots = baked(&panel, BakeId(1), home);
         let used = |light: &DynamicLight, at| slots_used(&slots, light, Some(BakeId(1)), at);
         assert_eq!(used(&panel, home), Some(vec![1, 2, 3]));
-        // Turning the panel or changing its length moves the points off their bake.
+        // Turning or resizing the panel moves the points off their bake.
         let turned = pose(
             Vec3::Y,
             Quat::from_rotation_x(-1.0) * Quat::from_rotation_z(0.2),
@@ -232,7 +251,23 @@ mod tests {
         let longer = DynamicLight::rectangle(1.6, 0.4);
         assert_eq!(used(&longer, home), None);
         let taller = DynamicLight::rectangle(1.2, 0.8);
-        assert_eq!(used(&taller, home), Some(vec![1, 2, 3]));
+        assert_eq!(used(&taller, home), None);
+        // A tube's points lie along its length.
+        let tube = DynamicLight::tube(1.2);
+        let tube_slots = baked(&tube, BakeId(2), home);
+        let thicker = DynamicLight {
+            size: Vec2::new(1.2, 0.5),
+            ..tube.clone()
+        };
+        let mut points = Vec::new();
+        let id = ResolvedBakeId(BakeId(2));
+        assert!(SlotIndex::new(&tube_slots).baked_points(
+            &tube_slots,
+            &thicker,
+            Some(&id),
+            home,
+            &mut points
+        ));
         let fewer = DynamicLight {
             shadow_points: 2,
             ..panel.clone()
@@ -240,6 +275,22 @@ mod tests {
         assert_eq!(used(&fewer, home), None);
 
         let mut partial = slots.clone();
+        let points: Vec<BakedPoint> = [4, 5, 6]
+            .map(|slot| BakedPoint {
+                slot,
+                offset: Vec2::ZERO,
+            })
+            .to_vec();
+        assert_eq!(point_group(&points), 5);
+        assert_eq!(point_group(&points[..1]), 0, "one point needs no group");
+        let scattered = [points[0], points[2], points[1]];
+        assert_eq!(point_group(&scattered), 0);
+        let far = [4095, 4096].map(|slot| BakedPoint {
+            slot,
+            offset: Vec2::ZERO,
+        });
+        assert_eq!(point_group(&far), 0, "past the channel's 12 bits");
+
         partial.slots.pop();
         assert_eq!(slots_used(&partial, &panel, Some(BakeId(1)), home), None);
     }

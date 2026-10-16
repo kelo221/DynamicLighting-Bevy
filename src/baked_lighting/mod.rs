@@ -7,6 +7,7 @@
 mod apply;
 mod features;
 pub mod layout;
+pub mod mirror;
 #[cfg(test)]
 pub(crate) mod shader_tests;
 mod systems;

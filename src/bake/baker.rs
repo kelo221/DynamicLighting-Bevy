@@ -31,7 +31,7 @@ pub fn bake(
 
     let positions: Vec<_> = lights.iter().map(|l| l.position).collect();
     let radii: Vec<_> = lights.iter().map(|l| l.radius).collect();
-    let light_bvh = build_light_bvh(&positions, &radii);
+    let light_bvh = build_light_bvh(&positions, &radii, &light_groups(&lights));
     let lights: Vec<&BakeLight> = light_bvh.order.iter().map(|&i| lights[i]).collect();
     let bounce_in_scene = lights.iter().any(|light| light.bakes_bounce(options));
 
@@ -166,5 +166,16 @@ fn sorted_lights(lights: &[BakeLight]) -> Result<Vec<&BakeLight>, BakeError> {
     for light in &sorted {
         light.validate()?;
     }
+    sorted.sort_by_key(|light| light.order_key());
     Ok(sorted)
+}
+
+/// A group number per light, shared by the points of one area light.
+fn light_groups(lights: &[&BakeLight]) -> Vec<u32> {
+    let mut groups = Vec::with_capacity(lights.len());
+    for (k, light) in lights.iter().enumerate() {
+        let next = k > 0 && light.group() != lights[k - 1].group();
+        groups.push(groups.last().map_or(0, |&group| group + u32::from(next)));
+    }
+    groups
 }

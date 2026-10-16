@@ -1,7 +1,7 @@
 //! Packs a [`DynamicLight`] into the [`GpuLight`] record the shaders read.
 
 use bevy::color::{Color, ColorToComponents, Srgba};
-use bevy::math::{Quat, Vec3};
+use bevy::math::{Quat, Vec2, Vec3};
 
 use super::component::DynamicLight;
 use super::kinds::{LightType, Shimmer};
@@ -30,13 +30,16 @@ pub struct PackContext {
     pub cookie_index: Option<u32>,
     /// Slot in the realtime shadow cubemap array, if the light renders one.
     pub shadow_cubemap_index: Option<u32>,
-    /// Area lights baked from several points: the distance of this record's shadow point from
-    /// the light's position along its long axis. The record stands at that point; the shape
-    /// stays where the light is.
-    pub point_offset: f32,
+    /// Area lights baked from several points: the offset of this record's shadow point from
+    /// the light's position along the light's local X and Y. The record stands at that point;
+    /// the shape stays where the light is.
+    pub point_offset: Vec2,
     /// The part of the light's intensity this record carries: one over the number of shadow
     /// points for a baked area light, otherwise 1.
     pub share: f32,
+    /// [`ChannelFlags::group`]: the first slot plus one for the shadow points of a baked area
+    /// light in consecutive slots, otherwise 0.
+    pub group: u32,
 }
 
 impl Default for PackContext {
@@ -48,8 +51,9 @@ impl Default for PackContext {
             bounce_bits_per_pixel: 8,
             cookie_index: None,
             shadow_cubemap_index: None,
-            point_offset: 0.0,
+            point_offset: Vec2::ZERO,
             share: 1.0,
+            group: 0,
         }
     }
 }
@@ -68,6 +72,7 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         shadow_cubemap: context.shadow_cubemap_index.is_some(),
         cookie,
         bounce_bits_per_pixel: context.bounce_bits_per_pixel,
+        group: context.group,
     }
     .pack();
     let [gp1, gp2, mut gp3] = type_parameters(light, context.seconds);
@@ -75,10 +80,13 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         gp3 = cookie_projection_scale(light.outer_cutoff);
     }
     let mut position = pose.position;
+    let mut cookie_index = context.cookie_index.unwrap_or(0);
     if light.light_type.is_area() {
-        // The shaders find the shape's center `gp3` back along the long axis.
-        gp3 = context.point_offset;
-        position += pose.rotation * light.long_axis() * context.point_offset;
+        // The shaders find the shape's center back along X by `gp3` and along Y by the
+        // `cookie_index` bits; area lights have no cookies.
+        gp3 = context.point_offset.x;
+        cookie_index = context.point_offset.y.to_bits();
+        position += pose.rotation * context.point_offset.extend(0.0);
     }
     let (shimmer_scale, shimmer_modifier) = match light.shimmer {
         Shimmer::None => (0.0, 0.0),
@@ -107,7 +115,7 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         shimmer_modifier,
         volumetric_intensity: 0.0,
         volumetric_visibility: 0.0,
-        cookie_index: context.cookie_index.unwrap_or(0),
+        cookie_index,
         shadow_cubemap_index: context.shadow_cubemap_index.unwrap_or(0),
         bounce_color: bounce_color(light),
         falloff: reach * light.falloff * light.falloff,

@@ -39,11 +39,11 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/shared/bake_id.rs` | (Unity InstanceID ordering) | none | Replaced; FNV-1a over the length-prefixed `Name` path; `ResolvedBakeId` for runtime matching; `BakeId::part` for the shadow points of area lights |
 | `src/shared/cube.rs` | `S/Internal/Common.cginc:43-94`; `C/Utilities/PhotonCube.cs:213-275`; `C/Core/DynamicLightManager.DistanceCubes.cs:37-81` | none | Replaced; face order and (face, uv) ↔ direction re-derived from the Vulkan/WebGPU cube face selection table, not copied |
 | `src/shared/globals.rs` | `S/DynamicLighting.cginc:343-356`; `C/Core/DynamicLightManager.Shaders.cs:227-268` | none | New; 32-byte header at the start of the light buffer (counts, ambient, our own clock instead of `_Time`, quality, flags); the `FLAG_DEBUG_*` bits for the debug views are New |
-| `src/shared/gpu_light.rs` | `C/Core/ShaderDynamicLight.cs:1-89`; channel bits `C/Core/DynamicLightManager.cs:1283-1313` | `BO/render/gpu.rs:30-220` | Lifted; flags renamed, `bounce_color` before `falloff` (112 bytes), layout test checks the WESL struct through naga |
+| `src/shared/gpu_light.rs` | `C/Core/ShaderDynamicLight.cs:1-89`; channel bits `C/Core/DynamicLightManager.cs:1283-1313` | `BO/render/gpu.rs:30-220` | Lifted; flags renamed, `bounce_color` before `falloff` (112 bytes), layout test checks the WESL struct through naga; channel bits 20–31 group the shadow points of a baked area light, and area lights keep their y offset in the `cookie_index` bits (New, PLAN §12) |
 | `src/shared/math.rs` | `Mathf.Lerp`/`InverseLerp`/`MoveTowards`/`SmoothStep` call sites | `BO/core/unity_math.rs:18-46` | Replaced; helpers named for what they do |
 | `src/shared/mesh_hash.rs` | (Unity `Mesh.GetFastHash`, `C/Core/DynamicLightManager.cs:646,1208`) | none | New; hashes triangle corners (position + UV1 bits) in draw order, so de-indexed meshes keep their hash |
 | `src/shared/settings.rs` | `C/Core/DynamicLightingSettings.cs`; manager fields `C/Core/DynamicLightManager.cs:198-310`; ambient `C/Core/DynamicLightManager.Shaders.cs:249-268`; `C/Lighting/DynamicLightingRuntimeQuality.cs`, `DynamicGeometryLightingMode.cs`, `DynamicLightTrackingMode.cs`; lighting-only view `E/Interface/DrawModes/SceneViewDrawModeLighting.cs` | `BO/core/config.rs` | Lifted; the `DebugView` enum is New (its `Lighting` view follows Henry's draw mode, `LightCount` has no counterpart); `TrackingMode` is kept for compatibility but has no effect (Bevy transforms are change-tracked, so positions are always current) |
-| `src/shared/shaders/types.wesl` | `S/DynamicLighting.cginc:10-130` (struct, type/shimmer constants, flag getters); globals `:343-356` | `BO/shaders/dynamic_lighting_types.wgsl` | Ported to WESL; adds the `LightGlobals` header and the `DynamicLights` buffer struct |
+| `src/shared/shaders/types.wesl` | `S/DynamicLighting.cginc:10-130` (struct, type/shimmer constants, flag getters); globals `:343-356` | `BO/shaders/dynamic_lighting_types.wgsl` | Ported to WESL; adds the `LightGlobals` header and the `DynamicLights` buffer struct; `light_group` (New) |
 | `src/shared/wesl_check.rs` | none | none | New (test-only); compiles WESL with Bevy's `wesl` and inspects layouts with naga |
 
 ### `effects/`
@@ -65,7 +65,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
 | `src/light/mod.rs` | none | none | New; wiring: `LightPlugin`, `LightSystems::{Attach, Pack}`, loads `light_types.wesl`, creates the light buffer |
-| `src/light/area.rs` | none | none | New; CPU reference of `area.wesl` (nearest point, mean cosine, facing cosine for the realtime-shadow terminator, representative point); area lights are Henry-family types: shaded from their shape, baked as point lights at their shadow points (PLAN §12, Beyond Henry) |
+| `src/light/area.rs` | none | none | New; CPU reference of `area.wesl` (nearest point, mean cosine, facing cosine for the realtime-shadow terminator, representative point); area lights are Henry-family types: shaded from their shape, baked as point lights at their shadow points (PLAN §12, Beyond Henry); a record finds the shape's center from its point's offset along both axes |
 | `src/light/area_record_tests.rs` | none | none | New; packed area-light records: their shape, nothing lit past the radius, and shadow-point records adding up to the whole light |
 | `src/light/area_tests.rs` | none | none | New; the area-light math against brute-force integration over the shapes |
 | `src/light/budget.rs` | `C/Core/DynamicLightManager.cs:1051-1088,1258-1262` | none | Ported; stable sort (ties keep order); Henry's editor-only frustum bypass dropped |
@@ -74,10 +74,10 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/light/kinds.rs` | `C/Lighting/DynamicLight{Type,ShadowMode,IlluminationMode,TransparencyMode,Shimmer}.cs`, `C/Lighting/DynamicBounceLightingCompressionMode.cs` | `BO/core/types.rs` | Lifted; enums match Henry's; `EnabledMax` behaves as `Enabled` (rays alpha-test directly) |
 | `src/light/mirror.rs` | `S/DynamicLighting.cginc:140-336` | `BO/core/spatial.rs` | Ported; right-handed light space; equal cutoffs give a hard edge (PLAN §12) |
 | `src/light/pack.rs` | `C/Core/DynamicLightManager.cs:1264-1443` (`SetShaderDynamicLight`) | `BO/render/gpu.rs:85-161` and its tests `:530-665` | Lifted; spot `forward` from Bevy's −Z forward; invalid cones disabled; area-light half extents, the reach past the shape, and shadow-point records (position, `gp3` offset, intensity share) are New |
-| `src/light/placement.rs` | moved baked lights `C/Core/DynamicLightManager.cs:1004-1159` | none | Ported, split out of `systems.rs`: the `BakedInPlace` marker read by packing and the shadow cubemaps; moved threshold 1 mm (Henry: `ApproximatelyEquals`, 1e-5), checked per shadow point, so an area light baked from several points needs every point in place |
+| `src/light/placement.rs` | moved baked lights `C/Core/DynamicLightManager.cs:1004-1159` | none | Ported, split out of `systems.rs`: the `BakedInPlace` marker read by packing and the shadow cubemaps; moved threshold 1 mm (Henry: `ApproximatelyEquals`, 1e-5), checked per shadow point, so an area light baked from several points needs every point in place; `point_group` marks the records of a light in consecutive slots (New) |
 | `src/light/presets.rs` | `E/EditorMenus.cs:119-167` (point, spot, directional, discoball menu items) | none | Ported; the sun is a point light 2.5 km away with a 10 km radius, as Henry's directional item |
 | `src/light/shader_tests.rs` | none | none | New |
-| `src/light/shadow_points.rs` | none | none | New; the points an area light is baked from (centers of equal parts of its long side) and their ids |
+| `src/light/shadow_points.rs` | none | none | New; the points an area light is baked from (a lattice over a panel with one column and one row per point, a row along a tube) and their ids |
 | `src/light/shaders/area.wesl` | none | none | New; written from the published formulas: Lambert's polygon form factor, the line form factor, and Karis 2013's representative point and energy normalization |
 | `src/light/shaders/light_types.wesl` | `S/DynamicLighting.cginc:140-341`; `S/Internal/Common.cginc:3-37`; `S/Generators/TrilinearFilter.cginc:1-36` | `BO/shaders/dynamic_lighting_spatial.wgsl`, `BO/shaders/dynamic_lighting_common.wgsl` | Lifted; shimmer uses the lowbias32 hash (public domain) instead of Shadertoy `rand` (`Common.cginc:39-41`); our clock instead of `_Time`; right = up × forward |
 | `src/light/spatial.rs` | `C/Core/DynamicLightManager.cs:1320-1407`; cookie scale `:1345` | `BO/core/spatial.rs` | Lifted; Unity-parity tests dropped; the cookie scale clamps the cone to 0–90° |
@@ -99,7 +99,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/surface/shaders/dynlit_prepass.wesl` | `S/Generators/DepthNormals.cginc:40-47`, `S/Generators/DepthOnly.cginc` | none | Ported; alpha cutout only |
 | `src/surface/shaders/dynlit_vertex.wesl` | none (Henry relies on `SV_PrimitiveID`) | none | New; Bevy's static mesh vertex shader plus a flat triangle ID |
 | `src/surface/shaders/light_processor.wesl` | `S/Generators/LightProcessor.cginc:1-235`; bounce cones `S/DynamicLighting.cginc:154-163,195-207`; per-light terms `S/DynamicLightingDiffuse.shader:163-203`, `S/DynamicLightingMetallic.shader:262-345` | none | Ported; Metallic intensity-applied-twice and bounce cross-terms fixed (PLAN §12); Metallic diffuse not divided by π, specular scaled by π instead |
-| `src/surface/shaders/lighting.wesl` | `S/DynamicLighting.cginc:1006-1158` (`DYNLIT_FRAGMENT_INTERNAL`) | none | Ported; macros become functions; baked and realtime lights in separate loops; baked entries ≥ `baked_count` ignored |
+| `src/surface/shaders/lighting.wesl` | `S/DynamicLighting.cginc:1006-1158` (`DYNLIT_FRAGMENT_INTERNAL`) | none | Ported; macros become functions; baked and realtime lights in separate loops; baked entries ≥ `baked_count` ignored; the shadow points of one area light are gathered and the light shaded once (New, PLAN §12) |
 | `src/surface/shaders/shade.wesl` | `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260` | none | Ported; Unity reflection probes replaced by an optional own cubemap; the light-count heat map (debug view) is New |
 
 ### `bake/`
@@ -108,7 +108,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 |---|---|---|---|
 | `src/bake/mod.rs` | none | none | New; wiring: `BakePlugin`, `BakeSystems`, re-exports, `.dynlight` loader registration |
 | `src/bake/asset.rs` | `C/Lighting/RaycastedScene.cs:15-159` (the Unity asset holding the bake) | none | Replaced; Bevy `AssetLoader` for `.dynlight` |
-| `src/bake/baker.rs` | `C/Core/DynamicLightingTracer.cs:133-352` (`CreateDynamicLightsBvh`, `StartRaytracing`) | none | Ported; one pure function on rayon, Henry's step order; channel assignment (`DynamicLightingTracer.Channels.cs`) skipped (PLAN §8) |
+| `src/bake/baker.rs` | `C/Core/DynamicLightingTracer.cs:133-352` (`CreateDynamicLightsBvh`, `StartRaytracing`) | none | Ported; one pure function on rayon, Henry's step order; channel assignment (`DynamicLightingTracer.Channels.cs`) skipped (PLAN §8); an area light's points are ordered together for the light BVH |
 | `src/bake/bits.rs` | `C/Utilities/BitArray2.cs` (bit layout) | none | Ported; adds an OR-only atomic grid so results don't depend on thread order |
 | `src/bake/bounce.rs` | `C/Core/DynamicLightingTracer.cs:719-929` (`BounceTriangle`); photon cubes `C/Core/DynamicLightingTracer.PhotonCamera.cs:133-181`, `S/Operations/PhotonCube.shader:46-70`, `C/Utilities/PhotonCube.cs:277-365` | none | Ported gather; photon cubes Replaced by CPU closest-hit rays (default 512², Henry 1024²); our RNG for `onUnitSphere`; at least 2 samples (Henry divides by `samples − 1`) |
 | `src/bake/bounce_map.rs` | `C/Core/DynamicLightingTracer.cs:410-465,1150-1246`; blur `C/Utilities/GuassianBlur.cs:10-102` (SmoShaders) | none | Ported; keeps only a window around the crops; the blur reads from a copy (Henry's passes alias source and destination) |
@@ -120,11 +120,11 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/format/types.rs` | `C/Lighting/RaycastedScene.cs:108-120`, `C/Lighting/RaycastedMeshRenderer.cs`, `C/Lighting/RaycastedDynamicLight.cs` | none | Replaced; plain structs keyed by `BakeId` |
 | `src/bake/geometry.rs` | `C/Utilities/MathEx.cs:15-35,59-197,327-348` | none | Ported; map size clamped to ≥ 2; `approx_eq` fixes `ApproximatelyEquals` comparing absolute values |
 | `src/bake/identity.rs` | (Unity InstanceID ordering and object references) | none | Replaced; `BakeId` from entity `Name` paths (+ mesh asset path), collisions resolved deterministically |
-| `src/bake/input.rs` | what gets baked `C/Core/DynamicLightingTracer.TemporaryScene.cs:43-118`; UV1 with UV0 fallback `C/Utilities/MeshBuilder.cs:33-110` | none (replaces the inputs of `BO/baker.rs:20-117`) | New; plain data, no ECS types |
-| `src/bake/light_bvh.rs` | `C/Core/Acceleration/BvhLightStructure.cs:1-326`, `C/Core/Acceleration/BvhLightNode.cs:1-38` | none | Ported; the query also tests each light's bounds, so it equals brute force |
+| `src/bake/input.rs` | what gets baked `C/Core/DynamicLightingTracer.TemporaryScene.cs:43-118`; UV1 with UV0 fallback `C/Utilities/MeshBuilder.cs:33-110` | none (replaces the inputs of `BO/baker.rs:20-117`) | New; plain data, no ECS types; `PointOf` ties a shadow point to its area light |
+| `src/bake/light_bvh.rs` | `C/Core/Acceleration/BvhLightStructure.cs:1-326`, `C/Core/Acceleration/BvhLightNode.cs:1-38` | none | Ported; the query also tests each light's bounds, so it equals brute force; an area light's points are one item, in one leaf and consecutive slots (PLAN §12) |
 | `src/bake/mesh_bake.rs` | `C/Core/DynamicLightingTracer.cs:354-717` (`Raytrace`, `RaycastTriangle`) | none | Ported; rayon over triangles instead of `RaycastCommand` batches; −0.1 NdotL and 0.001 offset kept |
 | `src/bake/mesh_builder.rs` | `C/Utilities/MeshBuilder.cs:1-148`; rects `C/Core/DynamicTrianglesBuilder.cs:75-99`, `C/Core/DynamicLightingTracer.cs:940-958,1008-1026`, `C/Utilities/PixelTriangleRect.cs:36-60` | none | Ported; trace and optimize rects derived from texel centers (Henry scales UVs by `size − 1` there) |
-| `src/bake/mirror.rs` | `S/DynamicLighting.cginc:384-392,608-962` | none | Ported (test-only CPU mirror of `triangles.wesl` and the cube fetch) |
+| `src/bake/mirror.rs` | `S/DynamicLighting.cginc:384-392,608-962` | none | Ported (test-only CPU mirror of the `triangles.wesl` layout reads and the cube fetch; the shadow filters are mirrored in `baked_lighting/mirror.rs`) |
 | `src/bake/occluder.rs` | Unity physics: `C/Core/DynamicLightingTracer.Jobs.cs`, `C/Core/Acceleration/Raycast*.cs`; transparency `C/Utilities/PhotonCube.cs:367-457`, `S/Generators/PhotonCubeTransparent.cginc:55-71` | none | Replaced; `obvhs` CWBVH (built from its PLOC, reinsertion and CWBVH steps, untimed for wasm), two-sided, `t ≤ max`; transparency alpha-tested during traversal instead of photon cubes (no 5×5 alpha filter) |
 | `src/bake/progress.rs` | (Unity progress bar, `C/Core/DynamicLightingTracer.cs:215-275,374-420`) | none | Replaced; lock-free counters and a cancel flag |
 | `src/bake/random.rs` | (`UnityEngine.Random.onUnitSphere`, `C/Core/DynamicLightingTracer.cs:719-724`; `Random.Range`, `C/Core/DynamicTrianglesBuilder.cs:450-575`) | none | Replaced; stateless keyed seeds into our PCG32 |
@@ -140,6 +140,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/tests/determinism.rs` | none | none | New |
 | `src/bake/tests/footprint.rs` | none | none | New; analytic shadow footprint |
 | `src/bake/tests/layout.rs` | none | none | New |
+| `src/bake/tests/light_bvh.rs` | none | none | New; moved out of `light_bvh.rs`: Henry's leaves, queries against brute force, area lights kept together |
 | `src/bake/tests/occluder.rs` | none | none | New |
 
 ### `baked_lighting/`
@@ -150,9 +151,10 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/baked_lighting/apply.rs` | `C/Core/DynamicLightManager.cs:550-749` (`Initialize`: buffers per renderer, BVH, distance cubes, baked light slots) | none | Replaced; `ActiveBake` resource, applied again when the asset reloads |
 | `src/baked_lighting/features.rs` | none | none | New; detects wgpu `PRIMITIVE_INDEX` (Henry relies on `SV_PrimitiveID`) |
 | `src/baked_lighting/layout.rs` | buffers `S/DynamicLighting.cginc:343-382,589-606,1003` | none | New; one triangles buffer and one aux buffer (header, receivers, BVH nodes, distance cubes); per-mesh offsets stay relative as in Henry |
-| `src/baked_lighting/shader_tests.rs` | none | none | New; naga validation and constants against `layout.rs` |
+| `src/baked_lighting/mirror.rs` | `S/DynamicLighting.cginc:608-962` (`shadow_sample_*`) | none | New; CPU mirror of the four shadow filter tiers, tested against texel-by-texel reads |
+| `src/baked_lighting/shader_tests.rs` | none | none | New; naga validation and constants against `layout.rs` and the mirror |
 | `src/baked_lighting/shaders/baked_data.wesl` | `S/DynamicLighting.cginc:343-348,606` | none | New; receiver lookup by `MeshTag` instead of per-renderer `lightmap_resolution` |
-| `src/baked_lighting/shaders/triangles.wesl` | `S/DynamicLighting.cginc:589-962` (`DynamicTriangle`) | none | Ported; u32 wrap math kept; realtime lights loop separately, so the stale-offset quirk can't occur (PLAN §12) |
+| `src/baked_lighting/shaders/triangles.wesl` | `S/DynamicLighting.cginc:589-962` (`DynamicTriangle`) | none | Ported; u32 wrap math kept; realtime lights loop separately, so the stale-offset quirk can't occur (PLAN §12); shadow bits read eight to a row (at most two loads), the 5×5 Gaussian applied across then down; rows above the grid repeat its first row (PLAN §12) |
 | `src/baked_lighting/systems.rs` | stale detection `C/Core/DynamicLightManager.cs:1167-1230` | none (replaces `bevyout/src/viewer/scene.rs:34-101`, `MeshTag` from glTF extras and spawn order) | Replaced; stable tags from `BakeId` + content hash; a mismatch falls back to the unbaked path and warns once |
 | `src/baked_lighting/triangle_ids.rs` | none | none | New; de-indexed meshes with a triangle-ID attribute for GPUs without `primitive_index` |
 
@@ -227,7 +229,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
-| `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light |
+| `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light, and a panel record standing at a shadow point off both axes |
 | `examples/inspector/main.rs` | role of `E/Inspectors/DynamicLightEditor.cs`; light from `DynamicLight::spot()` (`E/EditorMenus.cs:125-131`) | none | New; Feathers UI, bake button |
 | `examples/inspector/panel.rs` | role of `E/Inspectors/DynamicLightEditor.cs` | none | New |
 | `examples/lighting_test/main.rs` | none | `bevyout/src/viewer/lighting_test.rs:366-733` (type, effect and fog grids), `:910-919` (timed exit) | Lifted scene idea, rewritten for `DynLitMaterial`; `--frames`, `--screenshot`, `--gizmos` |
@@ -240,7 +242,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `examples/support/mod.rs` | none | none | New; page canvas, status line and query-string arguments for the web demos |
 | `examples/support/baking.rs` | none | none | New; in-memory bakes, queued until the browser has painted the status |
 | `examples/support/orbit.rs` | none | none | New; drag-to-orbit, scroll-to-zoom camera that drifts when idle and can follow an entity |
-| `tests/area_light_bake.rs` | none | none | New; a one-point area light bakes the same bytes as a point light; several points bake one light each, with a penumbra |
+| `tests/area_light_bake.rs` | none | none | New; a one-point area light bakes the same bytes as a point light; several points bake one light each, in consecutive slots, with a penumbra; a square panel's shadows shift along both floor axes |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
 | `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` example and check `lighting_test` screenshots |

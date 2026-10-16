@@ -40,6 +40,7 @@ fn light(id: u64, position: Vec3) -> BakeLight {
         illumination: Illumination::Direct,
         transparency: Transparency::Disabled,
         bounce: Default::default(),
+        point_of: None,
     }
 }
 

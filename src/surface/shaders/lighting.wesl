@@ -3,7 +3,7 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LightGlobals, GLOBALS_FLAG_LIGHTING_ONLY, light_is_realtime,
-    light_bounce_bits_per_pixel,
+    light_bounce_bits_per_pixel, light_group,
 };
 import dynlight::dynamic_geometry::shaders::light_bvh::{bvh_node_count, bvh_start, bvh_next};
 import dynlight::dynamic_geometry::shaders::distance_cubes::cube_shadow;
@@ -14,8 +14,8 @@ import dynlight::baked_lighting::shaders::triangles::{
 };
 import dynlight::surface::shaders::bindings::dynamic_lights;
 import dynlight::surface::shaders::light_processor::{
-    LightSum, Shading, SurfacePoint, add_light, add_unshadowed, bounce_mask, light_geometry,
-    light_mask,
+    LightGeometry, LightSum, Shading, SurfacePoint, add_light, add_unshadowed, bounce_mask,
+    light_geometry, light_mask,
 };
 
 // What the lighting loops need to know about a fragment.
@@ -31,6 +31,20 @@ struct SurfaceInput {
     primitive: u32,
 }
 
+// The baked records of one light gathered so far: a single record, or the shadow points of an
+// area light (consecutive records with the same `light_group`), which shade alike and differ
+// only in their shadows. Their shadow and bounce terms add up and the light is shaded once.
+struct Gathered {
+    // `light_group` of the records; 0 for a single record.
+    group: u32,
+    // False until the first record.
+    open: bool,
+    light: GpuLight,
+    geometry: LightGeometry,
+    map: f32,
+    bounce: f32,
+}
+
 // Light from every `DynamicLight` at a fragment: the baked-triangle path for baked meshes,
 // otherwise the dynamic-geometry path.
 fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
@@ -39,6 +53,32 @@ fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
         return dynamic_surface_light(input.world, input.normal, shading);
     }
     return baked_surface_light(input, record, shading);
+}
+
+// Whether `light` is another shadow point of the area light being gathered.
+fn continues(gathered: Gathered, light: GpuLight) -> bool {
+    let group = light_group(light);
+    return gathered.open && group != 0u && group == gathered.group;
+}
+
+fn start_gathering(light: GpuLight, surface: SurfacePoint) -> Gathered {
+    return Gathered(light_group(light), true, light, light_geometry(light, surface), 0.0, 0.0);
+}
+
+// Adds the gathered light with its summed shadow and bounce terms.
+fn shade_gathered(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, gathered: Gathered, time: f32) {
+    if !gathered.open || (gathered.map == 0.0 && gathered.bounce == 0.0) {
+        return;
+    }
+    var map = gathered.map;
+    var bounce = gathered.bounce;
+    if map != 0.0 {
+        map *= light_mask(gathered.light, surface, gathered.geometry, time);
+    }
+    if bounce != 0.0 {
+        bounce *= bounce_mask(gathered.light, gathered.geometry);
+    }
+    add_light(sum, shading, surface, gathered.geometry, gathered.light, map, bounce);
 }
 
 // Light on a surface without bake data, with half-Lambert diffuse (Henry's dynamic-geometry
@@ -51,12 +91,27 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
     var first_unvisited = 0u;
     if bvh_node_count() > 0u {
         let shadows = (globals.flags & GLOBALS_FLAG_LIGHTING_ONLY) == 0u;
+        var gathered: Gathered;
         var walk = bvh_start();
-        while bvh_next(&walk, world) {
-            if walk.light < globals.baked_count {
-                let light = dynamic_lights.lights[walk.light];
-                add_cube_shadowed(&sum, shading, light, walk.light, surface, globals.time, shadows);
+        // One pass more than the walk to shade the last gathered light: every function the
+        // drivers inline is called once.
+        loop {
+            let more = bvh_next(&walk, world);
+            var light: GpuLight;
+            if more {
+                if walk.light >= globals.baked_count {
+                    continue;
+                }
+                light = dynamic_lights.lights[walk.light];
             }
+            if !more || !continues(gathered, light) {
+                shade_gathered(&sum, shading, surface, gathered, globals.time);
+                if !more {
+                    break;
+                }
+                gathered = start_gathering(light, surface);
+            }
+            gather_cube_shadowed(&gathered, light, walk.light, surface, shadows);
         }
         first_unvisited = globals.baked_count;
     }
@@ -67,25 +122,20 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
     return sum;
 }
 
-// A baked light on dynamic geometry, shadowed by its distance cube when `shadows` is set.
-fn add_cube_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: GpuLight, slot: u32, surface: SurfacePoint, time: f32, shadows: bool) {
-    let geometry = light_geometry(light, surface);
-    if geometry.ndotl == 0.0 {
+// One baked record on dynamic geometry, shadowed by its distance cube when `shadows` is set.
+fn gather_cube_shadowed(gathered: ptr<function, Gathered>, light: GpuLight, slot: u32, surface: SurfacePoint, shadows: bool) {
+    if (*gathered).geometry.ndotl == 0.0 {
         return;
     }
-    var map = 1.0;
-    if shadows {
-        // Distance cubes are baked from the record's position: an area light's shadow point.
-        let to_point = light.position - surface.world;
-        let point_sqr = dot(to_point, to_point);
-        let point = to_point * inverseSqrt(max(point_sqr, 1.0e-20));
-        map = cube_shadow(slot, surface.world, light.position, point_sqr, point, surface.normal);
-        if map == 0.0 {
-            return;
-        }
+    if !shadows {
+        (*gathered).map += 1.0;
+        return;
     }
-    map *= light_mask(light, surface, geometry, time);
-    add_light(sum, shading, surface, geometry, light, map, 0.0);
+    // Distance cubes are baked from the record's position: an area light's shadow point.
+    let to_point = light.position - surface.world;
+    let point_sqr = dot(to_point, to_point);
+    let point = to_point * inverseSqrt(max(point_sqr, 1.0e-20));
+    (*gathered).map += cube_shadow(slot, surface.world, light.position, point_sqr, point, surface.normal);
 }
 
 // Light on a baked mesh: the triangle's own baked lights with their shadow bits and bounce
@@ -96,13 +146,28 @@ fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) 
     let surface = SurfacePoint(input.world, input.normal, true);
     let pixel = input.lightmap_uv * f32(record.resolution);
     let triangle = load_triangle(record, input.primitive);
-    for (var k = 0u; k < triangle.light_count; k++) {
-        let entry = triangle_light(triangle, k);
-        // A bake that doesn't match the light buffer must not read realtime slots.
-        if entry.index < globals.baked_count {
-            let light = dynamic_lights.lights[entry.index];
-            add_baked(&sum, shading, light, surface, triangle, entry, pixel, globals);
+    var gathered: Gathered;
+    // One pass more than the triangle's lights to shade the last gathered light.
+    for (var k = 0u; k <= triangle.light_count; k++) {
+        let more = k < triangle.light_count;
+        var entry: TriangleLight;
+        var light: GpuLight;
+        if more {
+            entry = triangle_light(triangle, k);
+            // A bake that doesn't match the light buffer must not read realtime slots.
+            if entry.index >= globals.baked_count {
+                continue;
+            }
+            light = dynamic_lights.lights[entry.index];
         }
+        if !more || !continues(gathered, light) {
+            shade_gathered(&sum, shading, surface, gathered, globals.time);
+            if !more {
+                break;
+            }
+            gathered = start_gathering(light, surface);
+        }
+        gather_baked(&gathered, light, triangle, entry, pixel, globals);
     }
     for (var k = 0u; k < globals.realtime_count; k++) {
         let light = dynamic_lights.lights[globals.baked_count + k];
@@ -111,18 +176,17 @@ fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) 
     return sum;
 }
 
-// One baked light on a baked triangle (Henry's `LightProcessor.cginc` for static geometry).
-fn add_baked(
-    sum: ptr<function, LightSum>,
-    shading: Shading,
+// One baked record on a baked triangle (Henry's `LightProcessor.cginc` for static geometry):
+// its shadow bits and bounce light.
+fn gather_baked(
+    gathered: ptr<function, Gathered>,
     light: GpuLight,
-    surface: SurfacePoint,
     triangle: Triangle,
     entry: TriangleLight,
     pixel: vec2<f32>,
     globals: LightGlobals,
 ) {
-    let geometry = light_geometry(light, surface);
+    let geometry = (*gathered).geometry;
     if !geometry.in_range {
         return;
     }
@@ -130,21 +194,13 @@ fn add_baked(
     if !has_bounce && geometry.ndotl == 0.0 {
         return;
     }
-    var map = 1.0;
-    var bounce = 0.0;
-    if !light_is_realtime(light) {
-        map = baked_shadow(triangle, entry, pixel, globals.quality);
-        if has_bounce {
-            bounce = baked_bounce(triangle, entry, pixel, light_bounce_bits_per_pixel(light));
-        } else if map == 0.0 {
-            return;
-        }
+    if light_is_realtime(light) {
+        (*gathered).map += 1.0;
+        return;
     }
-    if map != 0.0 {
-        map *= light_mask(light, surface, geometry, globals.time);
+    (*gathered).map += baked_shadow(triangle, entry, pixel, globals.quality);
+    if has_bounce {
+        let bits = light_bounce_bits_per_pixel(light);
+        (*gathered).bounce += baked_bounce(triangle, entry, pixel, bits);
     }
-    if bounce != 0.0 {
-        bounce *= bounce_mask(light, geometry);
-    }
-    add_light(sum, shading, surface, geometry, light, map, bounce);
 }

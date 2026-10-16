@@ -1,7 +1,8 @@
 //! GPU readback check: renders a floor lit by realtime point, spot, wave, interference,
 //! rectangle and tube lights into a float image, reads it back and compares sampled pixels with
 //! the CPU mirror of the light shaders (`dynlight::light::mirror`) evaluated on the same packed
-//! light records.
+//! light records. One more panel record stands at a shadow point off both of the panel's axes,
+//! as a baked area light packs it.
 //!
 //! `cargo run --example gpu_check` prints the largest difference and exits with an error code
 //! when any sample is off by more than 1% (plus 0.01 absolute). The window shows the same view.
@@ -11,8 +12,9 @@ use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
-use dynlight::light::PackedLights;
-use dynlight::light::mirror;
+use bevy::render::storage::ShaderBuffer;
+use dynlight::light::{LIGHT_BUFFER, LightPose, LightSystems, PackContext, PackedLights};
+use dynlight::light::{mirror, pack};
 use dynlight::prelude::*;
 
 /// Image side in pixels: 256 `Rgba16Float` texels are 2048 bytes, so rows have no padding.
@@ -42,7 +44,41 @@ fn main() -> AppExit {
             ..default()
         })
         .add_systems(Startup, setup)
+        .add_systems(
+            PostUpdate,
+            add_shadow_point_record.after(LightSystems::Pack),
+        )
         .run()
+}
+
+/// Adds a panel record standing at a shadow point, as one more realtime light. The shaders must
+/// find the panel's center back from the point.
+fn add_shadow_point_record(
+    mut packed: ResMut<PackedLights>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
+) {
+    let light = DynamicLight {
+        color: Color::srgb(0.9, 0.7, 1.0),
+        radius: 3.0,
+        ..DynamicLight::rectangle(1.2, 0.8)
+    };
+    let transform =
+        Transform::from_xyz(-3.0, 1.2, 0.5).looking_to(Vec3::new(-0.2, -1.0, 0.3), Vec3::Z);
+    let pose = LightPose {
+        position: transform.translation,
+        rotation: transform.rotation,
+    };
+    let context = PackContext {
+        point_offset: Vec2::new(0.45, -0.25),
+        share: 0.5,
+        ..default()
+    };
+    packed.lights.push(pack(&light, pose, context));
+    packed.globals.realtime_count += 1;
+    if let Some(mut buffer) = buffers.get_mut(&LIGHT_BUFFER) {
+        buffer.clear();
+        buffer.extend_from_slice(&packed.to_bytes());
+    }
 }
 
 fn setup(

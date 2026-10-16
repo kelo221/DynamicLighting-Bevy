@@ -113,6 +113,7 @@ mod tests {
             illumination: Default::default(),
             transparency: Default::default(),
             bounce: Default::default(),
+            point_of: None,
         }
     }
 

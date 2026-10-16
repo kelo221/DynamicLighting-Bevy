@@ -23,7 +23,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 
 **New in dynlight**
 
-- **Area lights.** Rectangle and tube lights keep his rules: each is baked as `shadow_points` ordinary point lights (3 by default, up to 8) spread along its long side, each with 1-bit shadows from a fixed position. At runtime every point carries an equal share of the light and the shading of the whole shape, so shadows soften along the shape in steps. Moving or turning a baked area light moves its points, so it falls back to realtime lighting until the next bake.
+- **Area lights.** Rectangle and tube lights keep his rules: each is baked as `shadow_points` ordinary point lights (3 by default, up to 16), spread over a panel so each has a column and a row of its own, or along a tube, each with 1-bit shadows from a fixed position. At runtime the shader adds up the points' shadows and shades the whole shape once, so shadows soften in steps on every side and harden where objects touch the ground. Moving, turning or resizing a baked area light moves its points, so it falls back to realtime lighting until the next bake.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
 - **Platforms and tools:** bakes in memory and in the browser (WebGPU), a triangle-ID fallback for GPUs without primitive indices, debug views (lighting only, light count), and a CPU reference of the shader math that is checked against GPU readback.

@@ -7,7 +7,7 @@
 //! | `dynlight_type` | `point`, `spot`, `discoball`, `wave`, `interference`, `rotor`, `shock`, `disco`, `rectangle`, `tube` |
 //! | `dynlight_color` | `[r, g, b]` sRGB 0–1 |
 //! | `dynlight_size` | `[width, height]` of a rectangle, `[length]` of a tube, in meters |
-//! | `dynlight_shadow_points` | 1 to 8: points a rectangle or tube is baked from |
+//! | `dynlight_shadow_points` | 1 to 16: points a rectangle or tube is baked from |
 //! | `dynlight_intensity`, `dynlight_radius`, `dynlight_falloff` | numbers |
 //! | `dynlight_inner_cutoff`, `dynlight_outer_cutoff` | degrees |
 //! | `dynlight_realtime` | bool |

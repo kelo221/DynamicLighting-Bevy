@@ -3,11 +3,12 @@
 // - Range: like every light type, an area light ends within its radius of its position. The
 //   record's radius is the reach past the shape (the radius minus half the shape's diagonal),
 //   and attenuation uses the distance to the shape's nearest point.
-// - Shadows: a baked area light is a row of records, one per shadow point along its long
-//   side, each with an equal share of the light. A record stands at its point (baked shadows
-//   and distance cubes are seen from there, like a point light's) and keeps the distance back
-//   to the shape's center in `gp3`. Shadow cubemaps are seen from the center; their terminator
-//   fades with the cosine to the point of the shape the surface faces most.
+// - Shadows: a baked area light is a set of records, one per shadow point spread over its
+//   shape, each with an equal share of the light. A record stands at its point (baked shadows
+//   and distance cubes are seen from there, like a point light's) and keeps the offset back to
+//   the shape's center: `gp3` along x, and the float in the `cookie_index` bits along y (area
+//   lights have no cookies). Shadow cubemaps are seen from the center; their terminator fades
+//   with the cosine to the point of the shape the surface faces most.
 // - Diffuse: the mean cosine over the shape, i.e. the polygon (Lambert) or line form factor
 //   divided by the solid or plane angle the shape covers. It equals a point light's cosine as
 //   the shape shrinks. A rectangle also has a Lambertian emitter's cosine at its nearest point.
@@ -33,8 +34,7 @@ struct AreaShape {
 fn area_shape(light: GpuLight) -> AreaShape {
     let x = cross(light.forward, light.up);
     let rectangle = light_type(light) == LIGHT_TYPE_RECTANGLE;
-    let long_axis = select(light.up, x, light.gp1 >= light.gp2);
-    let center = light.position - long_axis * light.gp3;
+    let center = light.position - x * light.gp3 - light.up * bitcast<f32>(light.cookie_index);
     return AreaShape(center, x, light.up, light.forward, vec2(light.gp1, light.gp2), rectangle);
 }
 

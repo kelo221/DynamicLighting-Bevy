@@ -44,7 +44,9 @@ pub use format::{
     BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, FORMAT_VERSION, FormatError,
     decode, encode,
 };
-pub use input::{AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
+pub use input::{
+    AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions, PointOf,
+};
 pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
 pub use progress::{BakeProgress, BakeStage};
 pub use settings::{BakeSettings, BakeStatic};

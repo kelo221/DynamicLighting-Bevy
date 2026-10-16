@@ -1,5 +1,5 @@
 //! Area lights belong to Henry's family of light types: they are baked as one or more ordinary
-//! point lights along their long side, each with 1-bit shadows from a fixed position.
+//! point lights spread over their shape, each with 1-bit shadows from a fixed position.
 
 use std::time::Duration;
 
@@ -129,6 +129,7 @@ fn area_lights_bake_one_point_light_per_shadow_point() {
 
     let lamp = BakeId::from_path(["Lamp"]);
     let mut lit = Vec::new();
+    let mut slots = Vec::new();
     for shadow_point in tube.shadow_point_layout(LAMP, rotation) {
         let id = shadow_point_id(lamp, shadow_point.index, 3);
         let index = scene
@@ -136,11 +137,14 @@ fn area_lights_bake_one_point_light_per_shadow_point() {
             .iter()
             .position(|light| light.id == id)
             .expect("every shadow point is baked");
+        slots.push(index);
         let baked = &scene.lights[index];
         assert!(baked.origin.distance(shadow_point.position) < 1e-6);
         assert_eq!(baked.radius, shadow_point.radius);
         lit.push(floor_lit(&scene, index));
     }
+    // The points fill consecutive slots in order, so the shaders can shade the tube once.
+    assert_eq!(slots, [slots[0], slots[0] + 1, slots[0] + 2]);
     assert_eq!(
         lit[1],
         floor_lit(&point, 0),
@@ -153,4 +157,44 @@ fn area_lights_bake_one_point_light_per_shadow_point() {
         .filter(|&t| !(lit[0][t] == lit[1][t] && lit[1][t] == lit[2][t]))
         .count();
     assert!(penumbra > 0 && penumbra < lit[0].len() / 4, "{penumbra}");
+}
+
+#[test]
+fn panel_shadows_soften_across_both_sides() {
+    let down = Quat::from_rotation_x(-core::f32::consts::FRAC_PI_2);
+    let panel = DynamicLight {
+        radius: 6.0,
+        shadow_points: 4,
+        ..DynamicLight::rectangle(1.5, 1.5)
+    };
+    let scene = decode(&bake_with(panel.clone(), down)).unwrap();
+    assert_eq!(scene.lights.len(), 4);
+    let lamp = BakeId::from_path(["Lamp"]);
+    // Where on the floor each point's shadow of the box lies, in texels.
+    let centers: Vec<Vec2> = panel
+        .shadow_point_layout(LAMP, down)
+        .map(|point| {
+            let id = shadow_point_id(lamp, point.index, 4);
+            let index = scene
+                .lights
+                .iter()
+                .position(|light| light.id == id)
+                .expect("every shadow point is baked");
+            let lit = floor_lit(&scene, index);
+            let size = (lit.len() as f32).sqrt() as usize;
+            let (sum, count) = lit.iter().enumerate().filter(|(_, lit)| !**lit).fold(
+                (Vec2::ZERO, 0),
+                |(sum, count), (texel, _)| {
+                    let at = Vec2::new((texel % size) as f32, (texel / size) as f32);
+                    (sum + at, count + 1)
+                },
+            );
+            sum / count as f32
+        })
+        .collect();
+    let low = centers.iter().fold(Vec2::MAX, |low, &c| low.min(c));
+    let high = centers.iter().fold(Vec2::MIN, |high, &c| high.max(c));
+    let spread = high - low;
+    // A row of points would shift the shadows along one floor axis only.
+    assert!(spread.x > 3.0 && spread.y > 3.0, "{spread}");
 }

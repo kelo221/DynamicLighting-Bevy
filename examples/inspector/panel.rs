@@ -130,7 +130,7 @@ fn panel() -> impl Scene {
             --
             @label("Baked shadow points (rectangle, tube)")
             --
-            @FeathersSlider { @min: 1.0, @max: 8.0 }
+            @FeathersSlider { @min: 1.0, @max: 16.0 }
             SliderValue(3.0)
             SliderPrecision(0)
             on(|change: On<ValueChange<f32>>, mut light: Light, mut commands: Commands| {

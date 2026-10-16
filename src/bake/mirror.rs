@@ -71,32 +71,6 @@ impl<'a> TriangleView<'a> {
         Some(word & (1 << (index % 32)) != 0)
     }
 
-    /// `shadow_sample_bilinear` at lightmap pixel coordinates `uv · resolution`: 4×4 reads
-    /// blended into four 3×3 averages and interpolated.
-    pub fn shadow_bilinear(&self, entry: &LightEntry, pixel: [f32; 2]) -> f32 {
-        let pos = [pixel[0] - 0.5, pixel[1] - 0.5];
-        let fx = pos[0] - pos[0].floor();
-        let fy = pos[1] - pos[1].floor();
-        let (tx, ty) = (pos[0].floor() as u32, pos[1].floor() as u32);
-        let mut map = [[0.0f32; 4]; 4];
-        for (row, dy) in (-1i32..=2).enumerate() {
-            for (column, dx) in (-1i32..=2).enumerate() {
-                let x = tx.wrapping_add_signed(dx);
-                let y = ty.wrapping_add_signed(dy);
-                map[row][column] = f32::from(u8::from(self.shadow_bit(entry, x, y) == Some(true)));
-            }
-        }
-        let common = map[1][1] + map[1][2] + map[2][1] + map[2][2];
-        let top = common + map[0][1] + map[0][2];
-        let tl = top + map[0][0] + map[1][0] + map[2][0];
-        let tr = top + map[0][3] + map[1][3] + map[2][3];
-        let bottom = common + map[3][1] + map[3][2];
-        let bl = bottom + map[1][0] + map[2][0] + map[3][0];
-        let br = bottom + map[1][3] + map[2][3] + map[3][3];
-        let (c0, c1) = (tl + (tr - tl) * fx, bl + (br - bl) * fx);
-        (c0 + (c1 - c0) * fy) / 9.0
-    }
-
     /// `bounce_sample` at lightmap texel `(x, y)`: the stored (square-rooted) value in `[0, 1]`.
     /// `bits_per_pixel` comes from the light's channel bits 17–19.
     pub fn bounce_texel(&self, entry: &LightEntry, x: u32, y: u32, bits_per_pixel: u32) -> f32 {

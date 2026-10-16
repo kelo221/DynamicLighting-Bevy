@@ -25,7 +25,8 @@ pub struct AreaShape {
 
 impl AreaShape {
     /// The shape of a rectangle or tube light; `None` for the other types. A record standing
-    /// at one of the light's shadow points finds the center `gp3` back along the long axis.
+    /// at one of the light's shadow points finds the center back by `gp3` along X and by the
+    /// float in the `cookie_index` bits along Y.
     pub fn of(light: &GpuLight) -> Option<Self> {
         let kind = LightType::from_bits(ChannelFlags::unpack(light.channel).light_type)?;
         if !kind.is_area() {
@@ -34,14 +35,13 @@ impl AreaShape {
         let forward = Vec3::from(light.forward);
         let up = Vec3::from(light.up);
         let x = forward.cross(up);
-        let half = Vec2::new(light.gp1, light.gp2);
-        let long_axis = if half.x >= half.y { x } else { up };
+        let offset = x * light.gp3 + up * f32::from_bits(light.cookie_index);
         Some(Self {
-            center: Vec3::from(light.position) - long_axis * light.gp3,
+            center: Vec3::from(light.position) - offset,
             x,
             y: up,
             forward,
-            half,
+            half: Vec2::new(light.gp1, light.gp2),
             rectangle: kind == LightType::Rectangle,
         })
     }

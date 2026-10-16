@@ -97,6 +97,18 @@ pub struct BakeLight {
     pub illumination: Illumination,
     pub transparency: Transparency,
     pub bounce: BakeBounce,
+    /// Set on the shadow points of an area light baked from several points. A light's points
+    /// get consecutive slots, in index order, so the shaders can shade the light once.
+    pub point_of: Option<PointOf>,
+}
+
+/// The area light a [`BakeLight`] is a shadow point of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PointOf {
+    /// The area light's own id.
+    pub light: BakeId,
+    /// Which of its points this is.
+    pub index: u32,
 }
 
 /// The bounce settings the tracer reads, from [`crate::light::LightBounce`].
@@ -265,6 +277,17 @@ impl BakeLight {
             return Err(invalid("radius must be positive and finite"));
         }
         Ok(())
+    }
+
+    /// The area light this light is a point of, or its own id.
+    pub fn group(&self) -> BakeId {
+        self.point_of.map_or(self.id, |point| point.light)
+    }
+
+    /// The baker's light order: an area light's points together and in index order, every
+    /// other light by id.
+    pub fn order_key(&self) -> (BakeId, u32, BakeId) {
+        (self.group(), self.point_of.map_or(0, |p| p.index), self.id)
     }
 
     /// Whether the tracer bakes bounce lighting for this light.

@@ -5,6 +5,7 @@ mod bounce;
 mod determinism;
 mod footprint;
 mod layout;
+mod light_bvh;
 mod occluder;
 
 use bevy::math::{Vec2, Vec3};
@@ -88,5 +89,6 @@ pub fn point_light(id: u64, position: Vec3, radius: f32) -> BakeLight {
         illumination: Illumination::Direct,
         transparency: Transparency::Disabled,
         bounce: BakeBounce::default(),
+        point_of: None,
     }
 }

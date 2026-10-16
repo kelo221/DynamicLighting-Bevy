@@ -16,7 +16,7 @@ use crate::light::{DynamicLight, shadow_point_id};
 use crate::shared::{BakeId, mesh_content_hash};
 
 use super::identity::{Candidate, NamePaths, assign_ids};
-use super::input::{AlphaTexture, BakeBounce, BakeInput, BakeLight, BakeMesh};
+use super::input::{AlphaTexture, BakeBounce, BakeInput, BakeLight, BakeMesh, PointOf};
 use super::settings::BakeStatic;
 
 /// Base color alpha for transparent baked shadows. Put it on a [`BakeStatic`] mesh that has UV0;
@@ -140,6 +140,10 @@ impl SceneSnapshot<'_, '_> {
                         intensity: light.bounce.intensity,
                         compression: light.bounce.compression,
                     },
+                    point_of: (count > 1).then_some(PointOf {
+                        light: id,
+                        index: point.index,
+                    }),
                 });
             }
         }
