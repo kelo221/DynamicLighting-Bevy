@@ -1,14 +1,66 @@
 //! CPU reference for the area-light math in `shaders/area.wesl`, evaluated from the same
 //! [`GpuLight`] record: rectangle panels and tubes, their nearest points, mean cosines (the
-//! diffuse term) and representative points for specular light.
+//! diffuse term) and representative points for specular light. Also the shape a baked area
+//! light's soft shadows were traced for.
 
-use bevy::math::{Vec2, Vec3};
+use bevy::math::{Quat, Vec2, Vec3};
 
+use super::component::DynamicLight;
 use super::kinds::LightType;
 use crate::shared::{ChannelFlags, GpuLight};
 
 /// Below this solid angle (or plane angle, for tubes) the shape counts as a point.
 const MIN_ANGLE: f32 = 1.0e-6;
+/// `1 − cos(θ / 2)` for the largest rotation θ (0.01 rad) that still matches a bake.
+const SHAPE_ROTATION_TOLERANCE: f32 = 1.25e-5;
+/// The largest size change in meters that still matches a bake.
+const SHAPE_SIZE_TOLERANCE: f32 = 1.0e-3;
+
+/// What an area light's baked soft shadows were traced for: its type, orientation and size. A
+/// baked light whose shape no longer matches is lit as realtime, like a light that moved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AreaLightShape {
+    /// [`LightType::Rectangle`] or [`LightType::Tube`].
+    pub kind: LightType,
+    pub rotation: Quat,
+    /// Width and height; a tube's height is 0.
+    pub size: Vec2,
+}
+
+impl AreaLightShape {
+    /// The shape of `light` turned by `rotation`; `None` unless it is a rectangle or tube.
+    pub fn of(light: &DynamicLight, rotation: Quat) -> Option<Self> {
+        light.light_type.is_area().then(|| Self {
+            kind: light.light_type,
+            rotation,
+            size: light.half_extents() * 2.0,
+        })
+    }
+
+    /// Half extents along the local X and Y axes.
+    pub fn half_extents(&self) -> Vec2 {
+        self.size * 0.5
+    }
+
+    /// The shape centered at `center`, with the axes [`super::pack`] gives the shaders.
+    pub fn at(&self, center: Vec3) -> AreaShape {
+        AreaShape {
+            center,
+            x: self.rotation * Vec3::X,
+            y: self.rotation * Vec3::Y,
+            forward: self.rotation * Vec3::NEG_Z,
+            half: self.half_extents(),
+            rectangle: self.kind == LightType::Rectangle,
+        }
+    }
+
+    /// Whether a light shaped like `other` can still use shadows baked for this shape.
+    pub fn matches(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.rotation.dot(other.rotation).abs() >= 1.0 - SHAPE_ROTATION_TOLERANCE
+            && self.size.abs_diff_eq(other.size, SHAPE_SIZE_TOLERANCE)
+    }
+}
 
 /// An area light's shape, from its record.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,9 +76,7 @@ pub struct AreaShape {
 }
 
 impl AreaShape {
-    /// The shape of a rectangle or tube light; `None` for the other types. A record standing
-    /// at one of the light's shadow points finds the center back by `gp3` along X and by the
-    /// float in the `cookie_index` bits along Y.
+    /// The shape of a rectangle or tube light; `None` for the other types.
     pub fn of(light: &GpuLight) -> Option<Self> {
         let kind = LightType::from_bits(ChannelFlags::unpack(light.channel).light_type)?;
         if !kind.is_area() {
@@ -34,11 +84,9 @@ impl AreaShape {
         }
         let forward = Vec3::from(light.forward);
         let up = Vec3::from(light.up);
-        let x = forward.cross(up);
-        let offset = x * light.gp3 + up * f32::from_bits(light.cookie_index);
         Some(Self {
-            center: Vec3::from(light.position) - offset,
-            x,
+            center: Vec3::from(light.position),
+            x: forward.cross(up),
             y: up,
             forward,
             half: Vec2::new(light.gp1, light.gp2),
@@ -52,6 +100,12 @@ impl AreaShape {
         let x = local.dot(self.x).clamp(-self.half.x, self.half.x);
         let y = local.dot(self.y).clamp(-self.half.y, self.half.y);
         self.center + self.x * x + self.y * y
+    }
+
+    /// The point at `uv` in `[0, 1]²` across the shape; a tube only uses `uv.x`.
+    pub fn point_at(&self, uv: Vec2) -> Vec3 {
+        let offset = (uv * 2.0 - 1.0) * self.half;
+        self.center + self.x * offset.x + self.y * offset.y
     }
 
     /// The corners of a rectangle, in order around it.

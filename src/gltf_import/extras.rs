@@ -7,7 +7,6 @@
 //! | `dynlight_type` | `point`, `spot`, `discoball`, `wave`, `interference`, `rotor`, `shock`, `disco`, `rectangle`, `tube` |
 //! | `dynlight_color` | `[r, g, b]` sRGB 0–1 |
 //! | `dynlight_size` | `[width, height]` of a rectangle, `[length]` of a tube, in meters |
-//! | `dynlight_shadow_points` | 1 to 16: points a rectangle or tube is baked from |
 //! | `dynlight_intensity`, `dynlight_radius`, `dynlight_falloff` | numbers |
 //! | `dynlight_inner_cutoff`, `dynlight_outer_cutoff` | degrees |
 //! | `dynlight_realtime` | bool |
@@ -58,9 +57,6 @@ pub fn parse(json: &str) -> NodeExtras {
         [length] => light.size = Vec2::new(length, 0.0),
         [width, height, ..] => light.size = Vec2::new(width, height),
         [] => {}
-    }
-    if let Some(points) = number(&map, "dynlight_shadow_points") {
-        light.shadow_points = points.round().max(1.0) as u32;
     }
     let fields: [(&str, &mut f32); 5] = [
         ("dynlight_intensity", &mut light.intensity),
@@ -174,11 +170,8 @@ mod tests {
         let panel = panel.light.unwrap();
         assert_eq!(panel.light_type, LightType::Rectangle);
         assert_eq!(panel.size, Vec2::new(1.2, 0.6));
-        assert_eq!(panel.shadow_points, 3);
         let tube = parse(r#"{"dynlight_type": "tube", "dynlight_size": [2]}"#);
         assert_eq!(tube.light.unwrap().size, Vec2::new(2.0, 0.0));
-        let sharp = parse(r#"{"dynlight_type": "tube", "dynlight_shadow_points": 1}"#);
-        assert_eq!(sharp.light.unwrap().shadow_points, 1);
         let shaft = parse(r#"{"dynlight_type": "rectangle", "dynlight_fog": "frustum"}"#);
         assert_eq!(shaft.fog.unwrap().shape, VolumetricShape::Frustum);
     }

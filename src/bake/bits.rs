@@ -133,22 +133,6 @@ impl AtomicBitGrid {
     }
 }
 
-/// A bit grid covering only `rect` of a larger map; reads outside it are unset.
-pub struct RegionBits {
-    pub rect: TexelRect,
-    pub grid: BitGrid,
-}
-
-impl RegionBits {
-    /// Bit at lightmap texel `(x, y)`.
-    pub fn get(&self, x: i64, y: i64) -> bool {
-        self.grid.get_or_false(
-            x - i64::from(self.rect.min_x),
-            y - i64::from(self.rect.min_y),
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,21 +160,5 @@ mod tests {
             plain.set(x, y, true);
         }
         assert_eq!(atomic.into_grid(), plain);
-    }
-
-    #[test]
-    fn regions_offset_reads() {
-        let rect = TexelRect {
-            min_x: 10,
-            min_y: 20,
-            max_x: 12,
-            max_y: 21,
-        };
-        let mut grid = BitGrid::new(rect.width(), rect.height());
-        grid.set(2, 1, true);
-        let region = RegionBits { rect, grid };
-        assert!(region.get(12, 21));
-        assert!(!region.get(13, 21) && !region.get(9, 20));
-        assert!(rect.contains(10, 21) && !rect.contains(10, 22));
     }
 }

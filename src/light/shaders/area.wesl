@@ -3,12 +3,10 @@
 // - Range: like every light type, an area light ends within its radius of its position. The
 //   record's radius is the reach past the shape (the radius minus half the shape's diagonal),
 //   and attenuation uses the distance to the shape's nearest point.
-// - Shadows: a baked area light is a set of records, one per shadow point spread over its
-//   shape, each with an equal share of the light. A record stands at its point (baked shadows
-//   and distance cubes are seen from there, like a point light's) and keeps the offset back to
-//   the shape's center: `gp3` along x, and the float in the `cookie_index` bits along y (area
-//   lights have no cookies). Shadow cubemaps are seen from the center; their terminator fades
-//   with the cosine to the point of the shape the surface faces most.
+// - Shadows: a baked area light is one record at the shape's center. Its baked shadows store the
+//   fraction of the shape each texel sees; distance cubes and shadow cubemaps are seen from the
+//   center, and the realtime shadow's terminator fades with the cosine to the point of the shape
+//   the surface faces most.
 // - Diffuse: the mean cosine over the shape, i.e. the polygon (Lambert) or line form factor
 //   divided by the solid or plane angle the shape covers. It equals a point light's cosine as
 //   the shape shrinks. A rectangle also has a Lambertian emitter's cosine at its nearest point.
@@ -34,8 +32,7 @@ struct AreaShape {
 fn area_shape(light: GpuLight) -> AreaShape {
     let x = cross(light.forward, light.up);
     let rectangle = light_type(light) == LIGHT_TYPE_RECTANGLE;
-    let center = light.position - x * light.gp3 - light.up * bitcast<f32>(light.cookie_index);
-    return AreaShape(center, x, light.up, light.forward, vec2(light.gp1, light.gp2), rectangle);
+    return AreaShape(light.position, x, light.up, light.forward, vec2(light.gp1, light.gp2), rectangle);
 }
 
 fn safe_normalize(v: vec3<f32>) -> vec3<f32> {

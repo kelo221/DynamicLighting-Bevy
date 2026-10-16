@@ -11,7 +11,9 @@
 //! The payload is little-endian; lengths are u64 counts. Sections in order:
 //! settings (flags u32 [bit 0 bounce], dynamic geometry u32 [0 LightingOnly, 1 DistanceCubes,
 //! 2 Angular], pixel density f32, max lightmap size u32, distance cube resolution u32);
-//! lights (count; id u64, origin 3×f32, radius f32, bounce bits per pixel u32 [0 = none]);
+//! lights (count; id u64, origin 3×f32, radius f32, bounce bits per pixel u32 [0 = none], shape
+//! u32 [0 point-like, 1 rectangle, 2 tube], rotation 4×f32 (x y z w), size 2×f32, shadow bits per
+//! texel u32 [1, 2 or 4]);
 //! light BVH (count; 8 words per node); meshes (count; id u64, content hash u64, resolution u32,
 //! words); distance cube words; stats (meshes u32, then triangles, texels, rays, lights removed,
 //! bounce rays, triangle words as u64).
@@ -22,10 +24,10 @@ mod types;
 use std::fmt;
 use std::io::{Read, Write};
 
-use bevy::math::Vec3;
+use bevy::math::{Quat, Vec2, Vec3};
 use flate2::{Compression, GzBuilder, read::GzDecoder};
 
-use crate::light::BounceCompression;
+use crate::light::{AreaLightShape, BounceCompression, LightType};
 use crate::shared::{BakeId, DynamicGeometryMode};
 
 use super::light_bvh::LightBvhNode;
@@ -33,9 +35,12 @@ use codec::{Reader, Writer};
 pub use types::{BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings};
 
 pub const MAGIC: [u8; 8] = *b"DYNLIGHT";
-/// Bumped on every layout change; loaders reject other versions.
-pub const FORMAT_VERSION: u32 = 1;
+/// Bumped on every layout change; loaders reject other versions. Version 2 added each light's
+/// area shape and shadow bits per texel.
+pub const FORMAT_VERSION: u32 = 2;
 const HEADER_BYTES: usize = 24;
+/// Bytes per light record.
+const LIGHT_BYTES: usize = 60;
 
 /// Why a `.dynlight` file couldn't be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,6 +144,19 @@ fn encode_payload(scene: &BakedScene) -> Vec<u8> {
         }
         w.f32(light.radius);
         w.u32(light.bounce_compression.map_or(0, |c| c.bits_per_pixel()));
+        let (kind, rotation, size) = match light.area {
+            None => (0, Quat::IDENTITY, Vec2::ZERO),
+            Some(area) => (
+                if area.kind == LightType::Tube { 2 } else { 1 },
+                area.rotation,
+                area.size,
+            ),
+        };
+        w.u32(kind);
+        for value in rotation.to_array().into_iter().chain(size.to_array()) {
+            w.f32(value);
+        }
+        w.u32(light.shadow_bits_per_texel);
     }
 
     w.words(bytemuck::cast_slice(&scene.light_bvh));
@@ -188,7 +206,7 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
         distance_cube_resolution: r.u32()?,
     };
 
-    let light_count = r.count(28)?;
+    let light_count = r.count(LIGHT_BYTES)?;
     let mut lights = Vec::with_capacity(light_count);
     for _ in 0..light_count {
         let id = BakeId(r.u64()?);
@@ -202,11 +220,32 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
             4 => Some(BounceCompression::Bits4),
             _ => return Err(FormatError::Invalid("bounce compression")),
         };
+        let kind = match r.u32()? {
+            0 => None,
+            1 => Some(LightType::Rectangle),
+            2 => Some(LightType::Tube),
+            _ => return Err(FormatError::Invalid("light shape")),
+        };
+        let rotation = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+        let size = Vec2::new(r.f32()?, r.f32()?);
+        if !(rotation.is_finite() && size.is_finite()) {
+            return Err(FormatError::Invalid("light shape"));
+        }
+        let shadow_bits_per_texel = r.u32()?;
+        if ![1, 2, 4].contains(&shadow_bits_per_texel) {
+            return Err(FormatError::Invalid("shadow bits per texel"));
+        }
         lights.push(BakedLight {
             id,
             origin,
             radius,
+            area: kind.map(|kind| AreaLightShape {
+                kind,
+                rotation,
+                size,
+            }),
             bounce_compression,
+            shadow_bits_per_texel,
         });
     }
 

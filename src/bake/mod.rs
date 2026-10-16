@@ -6,6 +6,7 @@
 //! their main-world data
 //! (`RenderAssetUsages::MAIN_WORLD`) so the bake can read their vertices.
 
+mod area;
 mod asset;
 mod baker;
 mod bits;
@@ -26,6 +27,7 @@ mod progress;
 mod random;
 mod seams;
 mod settings;
+mod shadow_grid;
 mod shadows;
 mod snapshot;
 mod systems;
@@ -39,17 +41,15 @@ use bevy::transform::TransformSystems;
 
 pub use asset::{DynLightBake, DynLightBakeLoader, DynLightBakeLoaderError};
 pub use baker::bake;
-pub use distance_cubes::{DISTANCE_CUBE_BIAS, DISTANCE_CUBE_RESOLUTION};
+pub use distance_cubes::DISTANCE_CUBE_RESOLUTION;
 pub use format::{
     BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, FORMAT_VERSION, FormatError,
     decode, encode,
 };
-pub use input::{
-    AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions, PointOf,
-};
+pub use input::{AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
 pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
 pub use progress::{BakeProgress, BakeStage};
-pub use settings::{BakeSettings, BakeStatic};
+pub use settings::{BakeSettings, BakeStatic, PREVIEW_AREA_LIGHT_SAMPLES};
 pub use snapshot::{BakeAlphaMask, SnapshotError};
 pub use systems::{
     BakeFailure, BakeFinished, BakePreset, BakeReport, BakeRequest, BakeStatus, bake_options,

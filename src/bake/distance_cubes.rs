@@ -4,8 +4,9 @@
 //! Henry renders these with a GPU camera; here every texel is a closest-hit ray from the light
 //! through the texel center ([`crate::shared::cube`] conventions, faces `+X −X +Y −Y +Z −Z`).
 //! Values are meters (a miss stores the light radius), packed as two f16 per word: texel `2i`
-//! in the low half of word `i`, texel `2i + 1` in the high half. `DistanceCubes` mode adds
-//! Henry's +0.25 m bias here so the shader doesn't have to; `Angular` stores exact distances.
+//! in the low half of word `i`, texel `2i + 1` in the high half. Distances are exact in every
+//! mode: the `DistanceCubes` filter adds Henry's +0.25 m bias in the shader, so area lights can
+//! read true blocker distances. An area light's cube is seen from its center.
 
 use half::f16;
 use rayon::prelude::*;
@@ -19,9 +20,6 @@ use super::progress::BakeProgress;
 
 /// Texels per side of a distance cube face.
 pub const DISTANCE_CUBE_RESOLUTION: u32 = 64;
-/// Bias added to stored distances in `DistanceCubes` mode.
-pub const DISTANCE_CUBE_BIAS: f32 = 0.25;
-
 /// Packs two distances into one word, `lower` in bits 0–15.
 pub fn pack_f16_pair(lower: f32, upper: f32) -> u32 {
     u32::from(f16::from_f32(upper).to_bits()) << 16 | u32::from(f16::from_f32(lower).to_bits())
@@ -37,11 +35,6 @@ pub fn bake_distance_cubes(
     if mode == DynamicGeometryMode::LightingOnly {
         return Ok(Vec::new());
     }
-    let bias = if mode == DynamicGeometryMode::DistanceCubes {
-        DISTANCE_CUBE_BIAS
-    } else {
-        0.0
-    };
     let resolution = DISTANCE_CUBE_RESOLUTION;
     let faces: Vec<Vec<u32>> = (0..lights.len() as u32 * CUBE_FACE_COUNT)
         .into_par_iter()
@@ -63,7 +56,6 @@ pub fn bake_distance_cubes(
                             light.alpha_tested(),
                         )
                         .map_or(light.radius, |hit| hit.distance)
-                        + bias
                 })
                 .collect();
             progress.advance(1);
@@ -113,7 +105,7 @@ mod tests {
             illumination: Default::default(),
             transparency: Default::default(),
             bounce: Default::default(),
-            point_of: None,
+            area: None,
         }
     }
 
@@ -153,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn distance_cubes_mode_adds_the_bias_and_lighting_only_bakes_nothing() {
+    fn distance_cubes_mode_stores_exact_distances_and_lighting_only_bakes_nothing() {
         let light = light(4.0);
         let progress = BakeProgress::new();
         let cubes = bake_distance_cubes(
@@ -165,7 +157,7 @@ mod tests {
         .unwrap();
         let (face, x, y) = direction_to_texel(Vec3::NEG_Y, DISTANCE_CUBE_RESOLUTION);
         let value = distance_cube_value(&cubes, 0, texel_index(face, x, y, 64));
-        assert!((value - 1.25).abs() < 0.01);
+        assert!((value - 1.0).abs() < 0.01);
         let none = bake_distance_cubes(
             &[&light],
             &Floor,

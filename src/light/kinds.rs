@@ -76,7 +76,7 @@ pub enum ShadowMode {
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[reflect(Default, Debug, PartialEq, Hash, Clone)]
 pub enum Illumination {
-    /// Direct light only: one shadow bit per texel.
+    /// Direct light only: shadows per texel, no bounce.
     #[default]
     Direct,
     /// Direct light plus one baked bounce off lit surfaces, stored per texel.

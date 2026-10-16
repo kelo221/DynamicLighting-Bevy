@@ -60,9 +60,11 @@ pub fn scene_slots(scene: &BakedScene) -> Vec<BakedSlot> {
         .map(|light| BakedSlot {
             id: light.id,
             origin: light.origin,
+            area: light.area,
             bounce_bits_per_pixel: light
                 .bounce_compression
                 .map_or(NO_BOUNCE_BITS, |compression| compression.bits_per_pixel()),
+            shadow_bits_per_texel: light.shadow_bits_per_texel,
         })
         .collect()
 }
@@ -107,7 +109,7 @@ mod tests {
     use super::*;
     use crate::bake::{BakedLight, BakedMesh, LightBvhNode};
     use crate::baked_lighting::layout::header;
-    use crate::light::BounceCompression;
+    use crate::light::{AreaLightShape, BounceCompression, LightType};
     use crate::shared::BakeId;
 
     fn scene() -> BakedScene {
@@ -119,13 +121,21 @@ mod tests {
                 id: BakeId(1),
                 origin: Vec3::X,
                 radius: 2.0,
+                area: None,
                 bounce_compression: Some(BounceCompression::Bits5),
+                shadow_bits_per_texel: 1,
             },
             BakedLight {
                 id: BakeId(2),
                 origin: Vec3::Y,
                 radius: 3.0,
+                area: Some(AreaLightShape {
+                    kind: LightType::Tube,
+                    rotation: Quat::IDENTITY,
+                    size: Vec2::new(1.0, 0.0),
+                }),
                 bounce_compression: None,
+                shadow_bits_per_texel: 4,
             },
         ];
         scene.light_bvh = vec![LightBvhNode {
@@ -158,17 +168,14 @@ mod tests {
     }
 
     #[test]
-    fn slots_follow_bvh_order_with_bounce_precision() {
-        let slots = scene_slots(&scene());
+    fn slots_follow_bvh_order_with_precision_and_shape() {
+        let scene = scene();
+        let slots = scene_slots(&scene);
         assert_eq!(slots.len(), 2);
-        assert_eq!(
-            (slots[0].id, slots[0].bounce_bits_per_pixel),
-            (BakeId(1), 5)
-        );
-        assert_eq!(
-            (slots[1].id, slots[1].bounce_bits_per_pixel),
-            (BakeId(2), 8)
-        );
+        let precision = |slot: &BakedSlot| (slot.bounce_bits_per_pixel, slot.shadow_bits_per_texel);
+        assert_eq!((slots[0].id, precision(&slots[0])), (BakeId(1), (5, 1)));
+        assert_eq!((slots[1].id, precision(&slots[1])), (BakeId(2), (8, 4)));
         assert_eq!(slots[1].origin, Vec3::Y);
+        assert_eq!((slots[0].area, slots[1].area), (None, scene.lights[1].area));
     }
 }

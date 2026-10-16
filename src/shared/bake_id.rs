@@ -21,16 +21,6 @@ impl BakeId {
         }
         Self(hash.finish())
     }
-
-    /// The id of part `index` of something baked as several entries, such as the shadow points
-    /// of an area light.
-    pub fn part(self, index: u32) -> Self {
-        let mut hash = Fnv1a64::new();
-        hash.write(b"part");
-        hash.write(&self.0.to_le_bytes());
-        hash.write(&index.to_le_bytes());
-        Self(hash.finish())
-    }
 }
 
 /// The id bake data knows a baked mesh or light by: its explicit [`BakeId`], or one derived from
@@ -89,18 +79,6 @@ mod tests {
             BakeId::from_path(["a", "bc"])
         );
         assert_eq!(BakeId::from_path([]), BakeId(Fnv1a64::OFFSET_BASIS));
-    }
-
-    #[test]
-    fn parts_are_stable_and_distinct() {
-        let lamp = BakeId::from_path(["Lamp"]);
-        assert_eq!(lamp.part(1), lamp.part(1));
-        let ids = [lamp, lamp.part(0), lamp.part(1), BakeId(lamp.0 + 1).part(0)];
-        for (i, a) in ids.iter().enumerate() {
-            for b in &ids[i + 1..] {
-                assert_ne!(a, b);
-            }
-        }
     }
 
     #[test]

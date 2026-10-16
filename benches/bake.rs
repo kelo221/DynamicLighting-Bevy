@@ -121,7 +121,7 @@ fn scene(lights_per_side: u32, bounce: bool) -> BakeInput {
                 },
                 transparency: Transparency::Disabled,
                 bounce: BakeBounce::default(),
-                point_of: None,
+                area: None,
             }
         })
         .collect();

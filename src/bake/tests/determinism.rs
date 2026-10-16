@@ -1,8 +1,8 @@
 //! Same input, same bytes: across repeated bakes, thread counts and input order.
 
-use bevy::math::Vec3;
+use bevy::math::{Quat, Vec2, Vec3};
 
-use super::{cuboid, floor, point_light};
+use super::{area_light, cuboid, floor, point_light};
 use crate::bake::input::{BakeError, BakeInput, BakeOptions};
 use crate::bake::progress::BakeProgress;
 use crate::bake::{bake, encode};
@@ -22,6 +22,20 @@ fn room() -> BakeInput {
             point_light(20, Vec3::new(2.0, 1.0, -2.0), 5.0),
             point_light(40, Vec3::new(0.5, 3.0, 0.2), 2.0),
             point_light(50, Vec3::new(-2.5, 0.3, -2.5), 1.5),
+            area_light(
+                60,
+                Vec3::new(0.2, 2.4, -0.3),
+                4.0,
+                Quat::from_rotation_x(-core::f32::consts::FRAC_PI_2),
+                Vec2::new(1.0, 0.6),
+            ),
+            area_light(
+                70,
+                Vec3::new(-1.5, 1.8, 0.8),
+                3.0,
+                Quat::from_rotation_y(0.7),
+                Vec2::new(1.2, 0.0),
+            ),
         ],
     }
 }
@@ -65,7 +79,7 @@ fn outputs_are_sorted_and_lights_follow_the_bvh() {
     let baked = bake(&room(), &options(), &BakeProgress::new()).unwrap();
     let ids: Vec<u64> = baked.meshes.iter().map(|m| m.id.0).collect();
     assert_eq!(ids, [3, 4, 5, 9]);
-    assert_eq!(baked.lights.len(), 5);
+    assert_eq!(baked.lights.len(), 7);
     // Every leaf's lights lie inside it: the light list is in BVH order.
     for node in baked.light_bvh.iter().filter(|n| n.is_leaf()) {
         for light in &baked.lights[node.left_first as usize..][..node.count as usize] {
@@ -75,7 +89,12 @@ fn outputs_are_sorted_and_lights_follow_the_bvh() {
             assert!(Vec3::from(node.aabb_max).cmpge(max - 1e-5).all());
         }
     }
-    assert_eq!(baked.distance_cubes.len(), 5 * 12_288);
+    assert_eq!(baked.distance_cubes.len(), 7 * 12_288);
+    let soft = baked
+        .lights
+        .iter()
+        .filter(|light| light.shadow_bits_per_texel == 4);
+    assert_eq!(soft.count(), 2, "the panel and the tube store soft shadows");
     assert!(baked.stats.rays > 0 && baked.stats.texels > 0);
     assert_eq!(baked.stats.meshes, 4);
 }

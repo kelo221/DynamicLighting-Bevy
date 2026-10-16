@@ -3,88 +3,79 @@
 use bevy::math::Vec3;
 
 use super::{cuboid, floor, point_light};
-use crate::bake::bits::{BitGrid, RegionBits, TexelRect};
+use crate::bake::bits::TexelRect;
 use crate::bake::input::{BakeInput, BakeOptions};
 use crate::bake::mesh_builder::{PreparedMesh, crop_rect};
 use crate::bake::mirror::TriangleView;
 use crate::bake::progress::BakeProgress;
-use crate::bake::shadows::crop_shadow_bits;
+use crate::bake::shadow_grid::{ShadowGrid, ShadowRegion};
+use crate::bake::shadows::crop_shadows;
 use crate::bake::triangle_words::{TriangleLight, TriangleRecord, serialize_triangles};
 use crate::bake::{bake, decode, encode};
 
+fn rect(min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> TexelRect {
+    TexelRect {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    }
+}
+
 #[test]
 fn every_padded_texel_reads_back_through_the_mirror() {
-    // A map region with a pseudo-random bit pattern, cropped for triangles at the map edges
-    // (x = 0, y = 0) and in the middle.
+    // A map region with a pseudo-random pattern, cropped for triangles at the map edges
+    // (x = 0, y = 0) and in the middle; hard (1 bit) and soft (4 bit) shadows.
     let size = 24;
-    let rect = TexelRect {
-        min_x: 0,
-        min_y: 0,
-        max_x: size - 1,
-        max_y: size - 1,
-    };
-    let mut grid = BitGrid::new(size, size);
-    for i in 0..size * size {
-        if crate::effects::splitmix64(u64::from(i)).is_multiple_of(3) {
-            grid.set(i % size, i / size, true);
+    let crops = [rect(0, 0, 4, 2), rect(7, 3, 15, 20), rect(20, 0, 23, 23)];
+    for bits in [1, 4] {
+        let top = (1u64 << bits) - 1;
+        let mut grid = ShadowGrid::new(size, size, bits);
+        for i in 0..size * size {
+            let level = crate::effects::splitmix64(u64::from(i)) % (top + 2);
+            grid.set(i % size, i / size, level.min(top) as u8);
         }
-    }
-    let region = RegionBits { rect, grid };
-    let crops = [
-        TexelRect {
-            min_x: 0,
-            min_y: 0,
-            max_x: 4,
-            max_y: 2,
-        },
-        TexelRect {
-            min_x: 7,
-            min_y: 3,
-            max_x: 15,
-            max_y: 20,
-        },
-        TexelRect {
-            min_x: 20,
-            min_y: 0,
-            max_x: 23,
-            max_y: 23,
-        },
-    ];
-    let records: Vec<TriangleRecord> = crops
-        .iter()
-        .enumerate()
-        .map(|(i, &crop)| TriangleRecord {
-            crop,
-            lights: vec![TriangleLight {
-                light: i as u32 * 3,
-                shadow: Some(crop_shadow_bits(&region, crop).into_words()),
-                bounce: None,
-            }],
-        })
-        .collect();
-    for bounce_layout in [false, true] {
-        let words = serialize_triangles(&records, bounce_layout);
-        for (triangle, crop) in crops.iter().enumerate() {
-            let expected = crop_shadow_bits(&region, *crop);
-            let view = TriangleView::load(&words, triangle as u32, bounce_layout);
-            let entry = view.light(0);
-            assert_eq!(entry.light_index, triangle as u32 * 3);
-            for y in 0..expected.height() {
-                for x in 0..expected.width() {
-                    // Shadow map coordinates of padded texel (x, y), possibly "negative".
-                    let map_x = (crop.min_x + x).wrapping_sub(2);
-                    let map_y = (crop.min_y + y).wrapping_sub(2);
-                    assert_eq!(
-                        view.shadow_bit(&entry, map_x, map_y),
-                        Some(expected.get(x, y)),
-                        "triangle {triangle} texel ({x}, {y})"
-                    );
+        let region = ShadowRegion {
+            rect: rect(0, 0, size - 1, size - 1),
+            grid,
+        };
+        let records: Vec<TriangleRecord> = crops
+            .iter()
+            .enumerate()
+            .map(|(i, &crop)| TriangleRecord {
+                crop,
+                lights: vec![TriangleLight {
+                    light: i as u32 * 3,
+                    shadow: Some(crop_shadows(&region, crop).into_words()),
+                    bounce: None,
+                }],
+            })
+            .collect();
+        for bounce_layout in [false, true] {
+            let words = serialize_triangles(&records, bounce_layout);
+            for (triangle, crop) in crops.iter().enumerate() {
+                let expected = crop_shadows(&region, *crop);
+                let view = TriangleView::load(&words, triangle as u32, bounce_layout);
+                let entry = view.light(0);
+                assert_eq!(entry.light_index, triangle as u32 * 3);
+                let value = |level: u8| f32::from(level) / top as f32;
+                for y in 0..expected.height() {
+                    for x in 0..expected.width() {
+                        // Shadow map coordinates of padded texel (x, y), possibly "negative".
+                        let map_x = (crop.min_x + x).wrapping_sub(2);
+                        let map_y = (crop.min_y + y).wrapping_sub(2);
+                        assert_eq!(
+                            view.shadow_value(&entry, map_x, map_y, bits),
+                            Some(value(expected.get(x, y))),
+                            "{bits} bits, triangle {triangle} texel ({x}, {y})"
+                        );
+                    }
                 }
+                // Interior texels are the map's own values.
+                let (cx, cy) = (crop.min_x + 1, crop.min_y + 1);
+                let own = region.get(i64::from(cx), i64::from(cy));
+                assert_eq!(view.shadow_value(&entry, cx, cy, bits), Some(value(own)));
             }
-            // Interior texels are the map's own bits.
-            let (cx, cy) = (crop.min_x + 1, crop.min_y + 1);
-            let own = region.get(i64::from(cx), i64::from(cy));
-            assert_eq!(view.shadow_bit(&entry, cx, cy), Some(own));
         }
     }
 }

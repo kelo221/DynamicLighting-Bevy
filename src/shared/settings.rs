@@ -67,7 +67,8 @@ pub enum RuntimeQuality {
     High,
 }
 
-/// How meshes without baked data (moving or unbaked meshes) are shadowed by baked lights.
+/// How meshes without baked data (moving or unbaked meshes) are shadowed by baked lights. In
+/// both cube modes, rectangle and tube lights cast soft shadows sized by the blocker distance.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[reflect(Default, Debug, PartialEq, Hash, Clone)]
 pub enum DynamicGeometryMode {

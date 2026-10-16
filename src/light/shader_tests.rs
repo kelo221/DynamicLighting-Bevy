@@ -69,14 +69,16 @@ fn channel_masks_match_the_shader() {
         ("LIGHT_FLAG_SHADOW_CUBEMAP", ChannelFlags::SHADOW_CUBEMAP),
         ("LIGHT_FLAG_COOKIE", ChannelFlags::COOKIE),
         ("LIGHT_BOUNCE_MASK", ChannelFlags::BOUNCE_MASK),
-        ("LIGHT_GROUP_SHIFT", ChannelFlags::GROUP_SHIFT),
+        ("LIGHT_SHADOW_MASK", ChannelFlags::SHADOW_MASK),
     ] {
         let line = format!("const {name}: u32 = {value}u;");
         assert!(SHARED_TYPES.1.contains(&line), "{line} is missing");
     }
-    let read = format!(
-        "(light.channel & LIGHT_BOUNCE_MASK) >> {}u)",
-        ChannelFlags::BOUNCE_SHIFT
-    );
-    assert!(SHARED_TYPES.1.contains(&read), "{read} is missing");
+    for (mask, shift) in [
+        ("LIGHT_BOUNCE_MASK", ChannelFlags::BOUNCE_SHIFT),
+        ("LIGHT_SHADOW_MASK", ChannelFlags::SHADOW_SHIFT),
+    ] {
+        let read = format!("(light.channel & {mask}) >> {shift}u)");
+        assert!(SHARED_TYPES.1.contains(&read), "{read} is missing");
+    }
 }

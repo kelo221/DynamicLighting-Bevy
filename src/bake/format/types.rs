@@ -2,7 +2,7 @@
 
 use bevy::math::Vec3;
 
-use crate::light::BounceCompression;
+use crate::light::{AreaLightShape, BounceCompression};
 use crate::shared::{BakeId, DynamicGeometryMode};
 
 use super::super::light_bvh::LightBvhNode;
@@ -31,8 +31,8 @@ pub struct BakedSettings {
     /// Any light baked bounce lighting: every triangle light entry is 3 words
     /// (`DL_BOUNCE_LAYOUT`) instead of 2.
     pub bounce: bool,
-    /// The dynamic geometry mode the distance cubes were baked for. `DistanceCubes` adds Henry's
-    /// +0.25 m bias to every stored distance; `Angular` stores exact distances.
+    /// The dynamic geometry mode the distance cubes were baked for, which selects the shader
+    /// filter. Stored distances are exact in every mode.
     pub dynamic_geometry: DynamicGeometryMode,
     /// Texels per meter used for the shadow maps.
     pub pixel_density: f32,
@@ -54,15 +54,20 @@ impl Default for BakedSettings {
 }
 
 /// A baked light. The runtime matches it to a `DynamicLight` by `id`, and treats the light as
-/// moved (realtime, unshadowed) while its position differs from `origin`.
+/// moved (realtime, unshadowed) while its position differs from `origin` or, for area lights,
+/// its shape differs from `area`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BakedLight {
     pub id: BakeId,
     pub origin: Vec3,
     pub radius: f32,
+    /// The shape an area light's soft shadows were traced for; `None` for point-like lights.
+    pub area: Option<AreaLightShape>,
     /// The storage precision of this light's bounce texels (channel bits 17–19), or `None`
     /// when the light has no baked bounce.
     pub bounce_compression: Option<BounceCompression>,
+    /// Bits per shadow texel (channel bits 20–22): 1 for hard shadows, 4 for soft ones.
+    pub shadow_bits_per_texel: u32,
 }
 
 /// One static mesh's baked data.

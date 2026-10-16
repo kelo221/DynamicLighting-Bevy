@@ -1,10 +1,10 @@
 //! Area-light records: the shape packed into `GpuLight`, the radius around the position, and the
-//! records of shadow points lighting like the whole light.
+//! shape a bake traces soft shadows for.
 
 use bevy::math::{Quat, Vec2, Vec3};
 use bevy::transform::components::Transform;
 
-use super::area::AreaShape;
+use super::area::{AreaLightShape, AreaShape};
 use super::{DynamicLight, LightPose, PackContext, mirror, pack};
 use crate::shared::GpuLight;
 
@@ -83,46 +83,23 @@ fn area_lights_need_a_radius_beyond_their_shape() {
 }
 
 #[test]
-fn shadow_point_records_keep_the_shape_where_the_light_is() {
+fn baked_shapes_match_the_packed_record() {
     let transform = Transform::from_xyz(1.0, 3.0, -2.0).with_rotation(Quat::from_rotation_y(0.8));
     let pose = LightPose {
         position: transform.translation,
         rotation: transform.rotation,
     };
-    for light in [
-        DynamicLight::tube(2.0),
-        DynamicLight::rectangle(1.6, 0.4),
-        DynamicLight::rectangle(0.4, 1.6),
-    ] {
-        let whole = pack(&light, pose, PackContext::default());
-        let points: Vec<_> = light
-            .shadow_point_layout(pose.position, pose.rotation)
-            .collect();
-        assert_eq!(points.len(), 3);
-        let records: Vec<GpuLight> = points
-            .iter()
-            .map(|point| {
-                let context = PackContext {
-                    point_offset: point.offset,
-                    share: 1.0 / 3.0,
-                    ..Default::default()
-                };
-                pack(&light, pose, context)
-            })
-            .collect();
-        for (point, record) in points.iter().zip(&records) {
-            assert!(Vec3::from(record.position).abs_diff_eq(point.position, 1e-5));
-            let shape = AreaShape::of(record).unwrap();
-            assert!(shape.center.abs_diff_eq(pose.position, 1e-5), "{light:?}");
-        }
-        // Together the records light the scene like the whole light.
-        for world in [Vec3::new(1.5, 0.0, -1.0), Vec3::new(-0.5, 1.0, -3.0)] {
-            let sum: f32 = records.iter().map(|r| mirror::radiance(r, world)).sum();
-            let expected = mirror::radiance(&whole, world);
-            assert!(
-                (sum - expected).abs() < 1e-4 * expected.max(1.0),
-                "{sum} {expected}"
-            );
-        }
+    for light in [DynamicLight::tube(2.0), DynamicLight::rectangle(1.6, 0.4)] {
+        let record = pack(&light, pose, PackContext::default());
+        let baked = AreaLightShape::of(&light, pose.rotation).expect("an area light");
+        let shape = baked.at(pose.position);
+        let packed = AreaShape::of(&record).unwrap();
+        assert!(shape.center.abs_diff_eq(packed.center, 1e-6));
+        assert!(shape.x.abs_diff_eq(packed.x, 1e-5), "{light:?}");
+        assert!(shape.y.abs_diff_eq(packed.y, 1e-5));
+        assert!(shape.forward.abs_diff_eq(packed.forward, 1e-5));
+        assert_eq!(shape.half, packed.half);
+        assert_eq!(shape.rectangle, packed.rectangle);
     }
+    assert!(AreaLightShape::of(&DynamicLight::point(), Quat::IDENTITY).is_none());
 }

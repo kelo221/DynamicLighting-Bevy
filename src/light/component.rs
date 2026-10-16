@@ -19,8 +19,7 @@ pub struct DynamicLight {
     pub intensity: f32,
     /// Distance in meters from the light's position where the light ends completely. Area
     /// lights are measured from their position too: past their shape they reach `radius` minus
-    /// half the shape's diagonal ([`Self::shape_reach`]). Their shadow points away from the
-    /// position bake a little further, to cover the same lit region.
+    /// half the shape's diagonal ([`Self::shape_reach`]).
     pub radius: f32,
     /// Extra decay within the radius for an artistic look, such as a bright desk lamp. 0 is
     /// physically based; 1 roughly matches the falloff to the radius.
@@ -46,13 +45,9 @@ pub struct DynamicLight {
     pub disco_vertical_speed: f32,
     /// Rectangle: width (local X) and height (local Y) of the panel in meters. Tube: length
     /// (local X); `y` is unused. Also the start of frustum fog. Zero makes an area light a point.
+    /// Baked area lights get soft shadows traced over this shape; moving, turning or resizing
+    /// one drops it to realtime lighting until the next bake.
     pub size: Vec2,
-    /// Rectangle and tube: how many points the bake traces shadows from (1 to 16), spread over
-    /// a panel so each has a column and a row of its own, or evenly along a tube. Each point is
-    /// baked like a point light, with hard 1-bit shadows; together they soften shadow edges in
-    /// steps, one per point. Moving, turning or resizing the light moves the points and drops
-    /// it to realtime lighting until the next bake.
-    pub shadow_points: u32,
     pub shadows: ShadowMode,
     pub illumination: Illumination,
     pub transparency: Transparency,
@@ -81,7 +76,6 @@ impl Default for DynamicLight {
             rotor_center: 0.1,
             disco_vertical_speed: 1.0,
             size: Vec2::ZERO,
-            shadow_points: 3,
             shadows: ShadowMode::Raytraced,
             illumination: Illumination::Direct,
             transparency: Transparency::Disabled,

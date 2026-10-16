@@ -1,4 +1,5 @@
 use super::*;
+use crate::light::{AreaLightShape, LightType};
 
 fn sample() -> BakedScene {
     BakedScene {
@@ -14,13 +15,33 @@ fn sample() -> BakedScene {
                 id: BakeId(42),
                 origin: Vec3::new(1.0, -2.5, 3.25),
                 radius: 6.0,
+                area: Some(AreaLightShape {
+                    kind: LightType::Rectangle,
+                    rotation: Quat::from_rotation_x(-0.5),
+                    size: Vec2::new(1.6, 0.4),
+                }),
                 bounce_compression: Some(BounceCompression::Bits5),
+                shadow_bits_per_texel: 4,
             },
             BakedLight {
                 id: BakeId(7),
                 origin: Vec3::ZERO,
                 radius: 0.5,
+                area: None,
                 bounce_compression: None,
+                shadow_bits_per_texel: 1,
+            },
+            BakedLight {
+                id: BakeId(9),
+                origin: Vec3::Y,
+                radius: 3.0,
+                area: Some(AreaLightShape {
+                    kind: LightType::Tube,
+                    rotation: Quat::IDENTITY,
+                    size: Vec2::new(2.0, 0.0),
+                }),
+                bounce_compression: None,
+                shadow_bits_per_texel: 2,
             },
         ],
         light_bvh: vec![LightBvhNode {
@@ -80,6 +101,14 @@ fn unknown_versions_are_rejected_clearly() {
         }
     );
     assert!(error.to_string().contains("re-bake"));
+    bytes[8..12].copy_from_slice(&1u32.to_le_bytes());
+    assert!(
+        matches!(
+            decode(&bytes),
+            Err(FormatError::UnsupportedVersion { found: 1, .. })
+        ),
+        "version 1 bakes have no light shapes and need a re-bake"
+    );
 }
 
 #[test]
@@ -116,6 +145,23 @@ fn invalid_payload_values_are_rejected() {
         decode_payload(&payload),
         Err(FormatError::Invalid("dynamic geometry mode"))
     );
+    // The first light's shape follows 20 bytes of settings, the light count and 28 bytes of id,
+    // origin, radius and bounce precision.
+    let shape = 20 + 8 + 28;
+    let mut payload = encode_payload(&sample());
+    payload[shape] = 7;
+    assert_eq!(
+        decode_payload(&payload),
+        Err(FormatError::Invalid("light shape"))
+    );
+    for bits in [0, 3, 8] {
+        let mut payload = encode_payload(&sample());
+        payload[shape + 28] = bits;
+        assert_eq!(
+            decode_payload(&payload),
+            Err(FormatError::Invalid("shadow bits per texel"))
+        );
+    }
     let mut payload = encode_payload(&sample());
     payload.push(0);
     assert_eq!(

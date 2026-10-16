@@ -32,8 +32,7 @@ pub struct GpuLight {
     pub shimmer_modifier: f32,
     pub volumetric_intensity: f32,
     pub volumetric_visibility: f32,
-    /// Spot lights: the cookie's layer. Area lights, which take no cookies: the bits of the
-    /// `f32` offset along `up` from the shape's center to the record's shadow point.
+    /// Spot lights: the cookie's layer.
     pub cookie_index: u32,
     pub shadow_cubemap_index: u32,
     /// Linear RGB.
@@ -66,7 +65,7 @@ impl GpuLight {
     };
 }
 
-/// The fields packed into [`GpuLight::channel`]. Bits 0–4 and 12–14 are unused.
+/// The fields packed into [`GpuLight::channel`]. Bits 0–4, 12–14 and 23–31 are unused.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChannelFlags {
     /// Bit 5: evaluated without baked shadows.
@@ -81,10 +80,9 @@ pub struct ChannelFlags {
     pub cookie: bool,
     /// Bits 17–19: bounce bits per pixel, 1 to 8, stored minus one.
     pub bounce_bits_per_pixel: u32,
-    /// Bits 20–31: the shadow points of a baked area light whose records fill consecutive
-    /// slots share their first slot plus one here, so the shaders shade the light once and only
-    /// add up the points' shadows. 0 for every other record.
-    pub group: u32,
+    /// Bits 20–22: baked shadow bits per texel, 1 to 8, stored minus one. 1 is Henry's hard
+    /// shadow bit; area lights store levels of soft visibility.
+    pub shadow_bits_per_texel: u32,
 }
 
 impl ChannelFlags {
@@ -97,9 +95,8 @@ impl ChannelFlags {
     pub const COOKIE: u32 = 1 << 16;
     pub const BOUNCE_SHIFT: u32 = 17;
     pub const BOUNCE_MASK: u32 = 0b111 << Self::BOUNCE_SHIFT;
-    pub const GROUP_SHIFT: u32 = 20;
-    /// The largest [`Self::group`]: slot 4094 plus one.
-    pub const MAX_GROUP: u32 = (1 << 12) - 1;
+    pub const SHADOW_SHIFT: u32 = 20;
+    pub const SHADOW_MASK: u32 = 0b111 << Self::SHADOW_SHIFT;
 
     /// Packs the flags; out-of-range values are masked to their field width.
     pub fn pack(self) -> u32 {
@@ -116,7 +113,8 @@ impl ChannelFlags {
         }
         let bounce = self.bounce_bits_per_pixel.clamp(1, 8) - 1;
         channel |= (bounce << Self::BOUNCE_SHIFT) & Self::BOUNCE_MASK;
-        channel | ((self.group & Self::MAX_GROUP) << Self::GROUP_SHIFT)
+        let shadow = self.shadow_bits_per_texel.clamp(1, 8) - 1;
+        channel | ((shadow << Self::SHADOW_SHIFT) & Self::SHADOW_MASK)
     }
 
     pub fn unpack(channel: u32) -> Self {
@@ -127,7 +125,7 @@ impl ChannelFlags {
             shadow_cubemap: channel & Self::SHADOW_CUBEMAP != 0,
             cookie: channel & Self::COOKIE != 0,
             bounce_bits_per_pixel: 1 + ((channel & Self::BOUNCE_MASK) >> Self::BOUNCE_SHIFT),
-            group: channel >> Self::GROUP_SHIFT,
+            shadow_bits_per_texel: 1 + ((channel & Self::SHADOW_MASK) >> Self::SHADOW_SHIFT),
         }
     }
 }
@@ -205,11 +203,12 @@ mod tests {
             shadow_cubemap: true,
             cookie: true,
             bounce_bits_per_pixel: 6,
-            group: ChannelFlags::MAX_GROUP,
+            shadow_bits_per_texel: 8,
         };
         let channel = flags.pack();
         assert_eq!(channel & 0b11111, 0, "bits 0-4 stay unused");
         assert_eq!(channel & (0b111 << 12), 0, "bits 12-14 stay unused");
+        assert_eq!(channel >> 23, 0, "bits 23-31 stay unused");
         assert_eq!(ChannelFlags::unpack(channel), flags);
     }
 
@@ -221,12 +220,14 @@ mod tests {
         assert_eq!(ChannelFlags::SHADOW_CUBEMAP, 32_768);
         assert_eq!(ChannelFlags::COOKIE, 65_536);
         assert_eq!(ChannelFlags::BOUNCE_MASK, 917_504);
+        assert_eq!(ChannelFlags::SHADOW_MASK, 7_340_032);
         let spot = ChannelFlags {
             light_type: 1,
             bounce_bits_per_pixel: 8,
+            shadow_bits_per_texel: 4,
             ..Default::default()
         };
-        assert_eq!(spot.pack(), (1 << 6) | (7 << 17));
+        assert_eq!(spot.pack(), (1 << 6) | (7 << 17) | (3 << 20));
     }
 
     #[test]
@@ -235,14 +236,14 @@ mod tests {
             light_type: 0xFFFF,
             shimmer: 0xFF,
             bounce_bits_per_pixel: 0,
-            group: u32::MAX,
+            shadow_bits_per_texel: 99,
             ..Default::default()
         };
         let unpacked = ChannelFlags::unpack(flags.pack());
         assert_eq!(unpacked.light_type, 15);
         assert_eq!(unpacked.shimmer, 3);
         assert_eq!(unpacked.bounce_bits_per_pixel, 1);
-        assert_eq!(unpacked.group, ChannelFlags::MAX_GROUP);
+        assert_eq!(unpacked.shadow_bits_per_texel, 8);
     }
 
     #[test]

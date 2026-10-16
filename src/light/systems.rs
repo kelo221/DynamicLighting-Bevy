@@ -7,7 +7,7 @@ use super::budget::{RealtimeCandidate, select_realtime};
 use super::buffer::{BakedLightSlots, LightAttachments, PackedLights};
 use super::component::DynamicLight;
 use super::pack::{PackContext, pack};
-use super::placement::{LightPlacement, point_group, pose_of};
+use super::placement::{LightPlacement, pose_of};
 use crate::effects::LightEffectState;
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, RuntimeQuality,
@@ -49,11 +49,9 @@ pub(super) fn pack_lights(
         effect_intensity: effect.map_or(1.0, LightEffectState::intensity),
         realtime: true,
         bounce_bits_per_pixel: 8,
+        shadow_bits_per_texel: 1,
         cookie_index: attachments.cookies.get(&entity).copied(),
         shadow_cubemap_index: attachments.shadow_cubemaps.get(&entity).copied(),
-        point_offset: Vec2::ZERO,
-        share: 1.0,
-        group: 0,
     };
 
     let mut candidates = Vec::new();
@@ -62,22 +60,16 @@ pub(super) fn pack_lights(
             continue;
         }
         let pose = pose_of(transform);
-        if let Some(points) = placement.points_of(entity) {
-            // An area light baked from several points fills one slot per point.
-            let share = 1.0 / points.len() as f32;
-            let group = point_group(points);
-            for point in points {
-                let context = PackContext {
-                    realtime: false,
-                    bounce_bits_per_pixel: slots.slots[point.slot].bounce_bits_per_pixel,
-                    point_offset: point.offset,
-                    share,
-                    group,
-                    ..context(entity, effect)
-                };
-                packed.lights[point.slot] = pack(light, pose, context);
-                packed.baked[point.slot] = Some(entity);
-            }
+        if let Some(slot) = placement.slot_of(entity) {
+            let baked = &slots.slots[slot];
+            let context = PackContext {
+                realtime: false,
+                bounce_bits_per_pixel: baked.bounce_bits_per_pixel,
+                shadow_bits_per_texel: baked.shadow_bits_per_texel,
+                ..context(entity, effect)
+            };
+            packed.lights[slot] = pack(light, pose, context);
+            packed.baked[slot] = Some(entity);
         } else {
             candidates.push(RealtimeCandidate {
                 key: (entity, pose),

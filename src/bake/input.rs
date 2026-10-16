@@ -6,7 +6,7 @@ use std::fmt;
 
 use bevy::math::{Vec2, Vec3};
 
-use crate::light::{BounceCompression, Illumination, Transparency};
+use crate::light::{AreaLightShape, BounceCompression, Illumination, Transparency};
 use crate::shared::{BakeId, DynamicGeometryMode};
 
 use super::settings::BakeSettings;
@@ -97,18 +97,9 @@ pub struct BakeLight {
     pub illumination: Illumination,
     pub transparency: Transparency,
     pub bounce: BakeBounce,
-    /// Set on the shadow points of an area light baked from several points. A light's points
-    /// get consecutive slots, in index order, so the shaders can shade the light once.
-    pub point_of: Option<PointOf>,
-}
-
-/// The area light a [`BakeLight`] is a shadow point of.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PointOf {
-    /// The area light's own id.
-    pub light: BakeId,
-    /// Which of its points this is.
-    pub index: u32,
+    /// Rectangle and tube lights: the shape centered at [`Self::position`] that soft shadows
+    /// are traced to. `None` traces hard shadows from the position.
+    pub area: Option<AreaLightShape>,
 }
 
 /// The bounce settings the tracer reads, from [`crate::light::LightBounce`].
@@ -146,7 +137,9 @@ pub struct BakeOptions {
     pub skip_bounce: bool,
     /// Side of the per-light photon cube faces used for bounce. Henry renders 1024².
     pub photon_cube_resolution: u32,
-    /// Seed for every random choice (bounce directions, dithering).
+    /// Rays per texel to an area light where its corners and center disagree.
+    pub area_light_samples: u32,
+    /// Seed for every random choice (bounce directions, dithering, area light samples).
     pub seed: u64,
 }
 
@@ -169,6 +162,7 @@ impl BakeOptions {
             dynamic_geometry,
             skip_bounce: false,
             photon_cube_resolution: 512,
+            area_light_samples: settings.area_light_samples,
             seed,
         }
     }
@@ -276,18 +270,15 @@ impl BakeLight {
         if !(self.radius.is_finite() && self.radius > 0.0) {
             return Err(invalid("radius must be positive and finite"));
         }
+        if let Some(area) = self.area {
+            if !area.size.is_finite() || area.size.cmplt(Vec2::ZERO).any() {
+                return Err(invalid("area light size must be finite and not negative"));
+            }
+            if !area.rotation.is_finite() || !area.rotation.is_normalized() {
+                return Err(invalid("area light rotation must be a unit quaternion"));
+            }
+        }
         Ok(())
-    }
-
-    /// The area light this light is a point of, or its own id.
-    pub fn group(&self) -> BakeId {
-        self.point_of.map_or(self.id, |point| point.light)
-    }
-
-    /// The baker's light order: an area light's points together and in index order, every
-    /// other light by id.
-    pub fn order_key(&self) -> (BakeId, u32, BakeId) {
-        (self.group(), self.point_of.map_or(0, |p| p.index), self.id)
     }
 
     /// Whether the tracer bakes bounce lighting for this light.
@@ -316,6 +307,11 @@ impl BakeOptions {
         if self.photon_cube_resolution == 0 {
             return Err(BakeError::InvalidOptions(
                 "the photon cube resolution must be positive".into(),
+            ));
+        }
+        if self.area_light_samples == 0 {
+            return Err(BakeError::InvalidOptions(
+                "area lights need at least one sample".into(),
             ));
         }
         Ok(())

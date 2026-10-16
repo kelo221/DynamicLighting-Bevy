@@ -1,7 +1,7 @@
 //! Snapshots the ECS into plain [`BakeInput`]: world-space static meshes and baked lights.
 //!
 //! Meshes are entities with [`BakeStatic`], [`Mesh3d`] and [`GlobalTransform`]; lights are
-//! every [`DynamicLight`] that isn't `realtime`, area lights as one light per shadow point.
+//! every [`DynamicLight`] that isn't `realtime`, area lights with their shape.
 //! Entities without a [`BakeId`] get one derived from their `Name` path (root first) plus, for
 //! meshes, the mesh asset path.
 
@@ -12,11 +12,11 @@ use bevy::mesh::{MeshAccessError, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
-use crate::light::{DynamicLight, shadow_point_id};
+use crate::light::{AreaLightShape, DynamicLight};
 use crate::shared::{BakeId, mesh_content_hash};
 
 use super::identity::{Candidate, NamePaths, assign_ids};
-use super::input::{AlphaTexture, BakeBounce, BakeInput, BakeLight, BakeMesh, PointOf};
+use super::input::{AlphaTexture, BakeBounce, BakeInput, BakeLight, BakeMesh};
 use super::settings::BakeStatic;
 
 /// Base color alpha for transparent baked shadows. Put it on a [`BakeStatic`] mesh that has UV0;
@@ -123,30 +123,24 @@ impl SceneSnapshot<'_, '_> {
             candidates.push(Candidate::light(&self.paths, entity, id.copied(), position));
             baked.push((light, position, rotation));
         }
-        // An area light is baked as one point light per shadow point.
-        let mut lights = Vec::new();
         let ids = assign_ids(&candidates, "light", true);
-        for ((light, position, rotation), id) in baked.into_iter().zip(ids) {
-            let count = light.shadow_point_count();
-            for point in light.shadow_point_layout(position, rotation) {
-                lights.push(BakeLight {
-                    id: shadow_point_id(id, point.index, count),
-                    position: point.position,
-                    radius: point.radius,
-                    illumination: light.illumination,
-                    transparency: light.transparency,
-                    bounce: BakeBounce {
-                        samples: light.bounce.samples.max(2),
-                        intensity: light.bounce.intensity,
-                        compression: light.bounce.compression,
-                    },
-                    point_of: (count > 1).then_some(PointOf {
-                        light: id,
-                        index: point.index,
-                    }),
-                });
-            }
-        }
+        let lights = baked
+            .into_iter()
+            .zip(ids)
+            .map(|((light, position, rotation), id)| BakeLight {
+                id,
+                position,
+                radius: light.radius,
+                illumination: light.illumination,
+                transparency: light.transparency,
+                bounce: BakeBounce {
+                    samples: light.bounce.samples.max(2),
+                    intensity: light.bounce.intensity,
+                    compression: light.bounce.compression,
+                },
+                area: AreaLightShape::of(light, rotation),
+            })
+            .collect();
         Ok(BakeInput { meshes, lights })
     }
 

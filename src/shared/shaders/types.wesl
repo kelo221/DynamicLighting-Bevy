@@ -17,7 +17,6 @@ struct GpuLight {
     shimmer_modifier: f32,
     volumetric_intensity: f32,
     volumetric_visibility: f32,
-    // Area lights: the bits of the f32 offset along `up` from the shape's center to the record.
     cookie_index: u32,
     shadow_cubemap_index: u32,
     bounce_color: vec3<f32>,
@@ -57,7 +56,7 @@ const LIGHT_SHIMMER_MASK: u32 = 3072u;
 const LIGHT_FLAG_SHADOW_CUBEMAP: u32 = 32768u;
 const LIGHT_FLAG_COOKIE: u32 = 65536u;
 const LIGHT_BOUNCE_MASK: u32 = 917504u;
-const LIGHT_GROUP_SHIFT: u32 = 20u;
+const LIGHT_SHADOW_MASK: u32 = 7340032u;
 
 const LIGHT_TYPE_POINT: u32 = 0u;
 const LIGHT_TYPE_SPOT: u32 = 64u;
@@ -117,8 +116,8 @@ fn light_bounce_bits_per_pixel(light: GpuLight) -> u32 {
     return 1u + ((light.channel & LIGHT_BOUNCE_MASK) >> 17u);
 }
 
-// Records with the same non-zero group are the shadow points of one baked area light, in
-// consecutive slots: the first slot plus one. 0 for every other record.
-fn light_group(light: GpuLight) -> u32 {
-    return light.channel >> LIGHT_GROUP_SHIFT;
+// Baked shadow bits per texel, 1 to 8: 1 for Henry's hard shadows, more for the soft
+// visibility of area lights.
+fn light_shadow_bits_per_texel(light: GpuLight) -> u32 {
+    return 1u + ((light.channel & LIGHT_SHADOW_MASK) >> 20u);
 }

@@ -31,7 +31,7 @@ pub fn bake(
 
     let positions: Vec<_> = lights.iter().map(|l| l.position).collect();
     let radii: Vec<_> = lights.iter().map(|l| l.radius).collect();
-    let light_bvh = build_light_bvh(&positions, &radii, &light_groups(&lights));
+    let light_bvh = build_light_bvh(&positions, &radii);
     let lights: Vec<&BakeLight> = light_bvh.order.iter().map(|&i| lights[i]).collect();
     let bounce_in_scene = lights.iter().any(|light| light.bakes_bounce(options));
 
@@ -79,7 +79,7 @@ pub fn bake(
         bevy::log::warn!(
             "dynlight bake: mesh {:#018x} has {} triangles lit by more than {MAX_TRIANGLE_LIGHTS} \
              baked lights (up to {}); shaders read only the first {MAX_TRIANGLE_LIGHTS}, so the \
-             others leave dark seams. Split large triangles or lower area lights' shadow points",
+             others leave dark seams. Split large triangles or use fewer overlapping lights",
             output.mesh.id.0,
             output.crowded.triangles,
             output.crowded.most_lights
@@ -122,6 +122,8 @@ pub fn bake(
                 id: light.id,
                 origin: light.position,
                 radius: light.radius,
+                area: light.area,
+                shadow_bits_per_texel: light.shadow_bits_per_texel(),
                 bounce_compression: light.bakes_bounce(options).then(|| {
                     light
                         .bounce
@@ -166,16 +168,5 @@ fn sorted_lights(lights: &[BakeLight]) -> Result<Vec<&BakeLight>, BakeError> {
     for light in &sorted {
         light.validate()?;
     }
-    sorted.sort_by_key(|light| light.order_key());
     Ok(sorted)
-}
-
-/// A group number per light, shared by the points of one area light.
-fn light_groups(lights: &[&BakeLight]) -> Vec<u32> {
-    let mut groups = Vec::with_capacity(lights.len());
-    for (k, light) in lights.iter().enumerate() {
-        let next = k > 0 && light.group() != lights[k - 1].group();
-        groups.push(groups.last().map_or(0, |&group| group + u32::from(next)));
-    }
-    groups
 }

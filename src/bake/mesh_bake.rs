@@ -1,10 +1,12 @@
-//! One mesh's bake (Henry's `Raytrace`): associate lights with triangles, trace a shadow ray per
-//! texel and light, then hand over to bounce, optimization, seams and serialization.
+//! One mesh's bake (Henry's `Raytrace`): associate lights with triangles, trace shadow rays per
+//! texel and light (one to a point light, several over an area light), then hand over to bounce,
+//! optimization, seams and serialization.
 
 use bevy::math::Vec3;
 use rayon::prelude::*;
 
-use super::bits::{AtomicBitGrid, BitGrid, RegionBits, TexelRect};
+use super::area::texel_visibility;
+use super::bits::{AtomicBitGrid, BitGrid, TexelRect};
 use super::bounce::{self, PhotonCube};
 use super::format::BakedMesh;
 use super::geometry::{Aabb, approx_eq, sphere_intersects_triangle};
@@ -14,8 +16,10 @@ use super::mesh_builder::{PreparedMesh, crop_rect};
 use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::{Occluders, RayCaster};
 use super::progress::BakeProgress;
+use super::random;
+use super::shadow_grid::{AtomicShadowGrid, ShadowRegion, level};
 use super::shadows;
-use super::texels::triangle_texels;
+use super::texels::{SurfaceTexel, triangle_texels};
 use super::triangle_words::{TriangleRecord, serialize_triangles};
 
 /// Henry's tolerance for surfaces facing slightly away from a light.
@@ -129,14 +133,14 @@ impl Crowding {
 }
 
 /// Henry's light association: lights whose sphere touches the triangle, skipping lights the
-/// (flat-shaded) triangle faces away from, unless the light bakes bounce.
+/// (flat-shaded) triangle faces away from, unless the light bakes bounce. An area light's sphere
+/// holds its shape and everything it reaches past it.
 fn associate(scene: &Scene, prepared: &PreparedMesh, triangle: usize) -> TriangleSetup {
     let [a, b, c] = prepared.vertices(triangle);
     let [n1, n2, n3] = prepared.normals(triangle);
     let face_normal = (b - a).cross(c - a).normalize_or_zero();
     let valid = face_normal != Vec3::ZERO;
     let flat = approx_eq(n1, n2, 1e-5) && approx_eq(n2, n3, 1e-5);
-    let center = (a + b + c) / 3.0;
 
     let mut candidates = Vec::new();
     scene
@@ -146,11 +150,12 @@ fn associate(scene: &Scene, prepared: &PreparedMesh, triangle: usize) -> Triangl
         .into_iter()
         .filter(|&slot| {
             let light = scene.lights[slot as usize];
-            if valid && flat && !light.bakes_bounce(scene.options) {
-                let direction = (light.position - center).normalize_or_zero();
-                if face_normal.dot(direction) <= NDOTL_TOLERANCE {
-                    return false;
-                }
+            if valid
+                && flat
+                && !light.bakes_bounce(scene.options)
+                && !light.may_face([a, b, c], face_normal)
+            {
+                return false;
             }
             sphere_intersects_triangle(light.position, light.radius, a, b, c)
         })
@@ -183,13 +188,13 @@ fn light_regions(setups: &[TriangleSetup], light_count: usize) -> LightRegions {
 
 struct Traced {
     visited: BitGrid,
-    bits: Vec<RegionBits>,
+    bits: Vec<ShadowRegion>,
     texels: u64,
     rays: u64,
 }
 
 /// Henry's `RaycastTriangle`: per texel inside the triangle and per associated light, range and
-/// facing early-outs, then a shadow ray from just above the surface; a miss lights the texel.
+/// facing early-outs, then shadow rays from just above the surface; a miss lights the texel.
 fn trace(
     scene: &Scene,
     prepared: &PreparedMesh,
@@ -198,10 +203,13 @@ fn trace(
 ) -> Traced {
     let size = prepared.resolution;
     let visited = AtomicBitGrid::new(size, size);
-    let grids: Vec<AtomicBitGrid> = regions
+    let grids: Vec<AtomicShadowGrid> = regions
         .rects
         .iter()
-        .map(|(_, rect)| AtomicBitGrid::new(rect.width(), rect.height()))
+        .map(|&(light, rect)| {
+            let bits = scene.lights[light as usize].shadow_bits_per_texel();
+            AtomicShadowGrid::new(rect.width(), rect.height(), bits)
+        })
         .collect();
 
     let (texels, rays) = setups
@@ -224,32 +232,23 @@ fn trace(
                 let light = scene.lights[light_slot as usize];
                 let index = regions.slot[light_slot as usize] as usize;
                 let (grid, rect) = (&grids[index], regions.rects[index].1);
-                let radius_sqr = light.radius * light.radius;
-                let alpha_test = light.alpha_tested();
                 for texel in &texels {
-                    let to_light = light.position - texel.position;
-                    let distance_sqr = to_light.length_squared();
-                    if distance_sqr > radius_sqr {
-                        continue;
-                    }
-                    let distance = distance_sqr.sqrt();
-                    let lit = if distance > 0.0 {
-                        let direction = to_light / distance;
-                        if texel.normal.dot(direction) <= NDOTL_TOLERANCE {
-                            continue;
-                        }
-                        rays += 1;
-                        let origin = texel.position + offset;
-                        !scene
-                            .occluders
-                            .occluded(origin, direction, distance, alpha_test)
-                    } else {
-                        true
+                    let origin = texel.position + offset;
+                    let occluded = |direction, distance| {
+                        let caster = &scene.occluders;
+                        caster.occluded(origin, direction, distance, light.alpha_tested())
                     };
+                    let traced = if light.area.is_some() {
+                        area_texel(scene, prepared, light, texel, occluded)
+                    } else {
+                        point_texel(light, texel, occluded)
+                    };
+                    let Some((lit, traced_rays)) = traced else {
+                        continue;
+                    };
+                    rays += u64::from(traced_rays);
                     visited.set(texel.x, texel.y);
-                    if lit {
-                        grid.set(texel.x - rect.min_x, texel.y - rect.min_y);
-                    }
+                    grid.raise(texel.x - rect.min_x, texel.y - rect.min_y, lit);
                 }
             }
             (texels.len() as u64, rays)
@@ -261,7 +260,7 @@ fn trace(
         bits: grids
             .into_iter()
             .zip(&regions.rects)
-            .map(|(grid, (_, rect))| RegionBits {
+            .map(|(grid, (_, rect))| ShadowRegion {
                 rect: *rect,
                 grid: grid.into_grid(),
             })
@@ -269,6 +268,58 @@ fn trace(
         texels,
         rays,
     }
+}
+
+/// One texel's hard shadow from a point-like light: its level (0 or 1) and rays traced, or `None`
+/// when the light is out of range or behind the texel.
+fn point_texel(
+    light: &BakeLight,
+    texel: &SurfaceTexel,
+    occluded: impl Fn(Vec3, f32) -> bool,
+) -> Option<(u8, u32)> {
+    let to_light = light.position - texel.position;
+    let distance_sqr = to_light.length_squared();
+    if distance_sqr > light.radius * light.radius {
+        return None;
+    }
+    let distance = distance_sqr.sqrt();
+    if distance == 0.0 {
+        return Some((1, 0));
+    }
+    let direction = to_light / distance;
+    if texel.normal.dot(direction) <= NDOTL_TOLERANCE {
+        return None;
+    }
+    Some((u8::from(!occluded(direction, distance)), 1))
+}
+
+/// One texel's soft shadow from an area light, as a level and rays traced. Samples are seeded
+/// per (mesh, light, texel).
+fn area_texel(
+    scene: &Scene,
+    prepared: &PreparedMesh,
+    light: &BakeLight,
+    texel: &SurfaceTexel,
+    occluded: impl Fn(Vec3, f32) -> bool,
+) -> Option<(u8, u32)> {
+    let shape = light.area_shape()?;
+    let mut rng = random::stream(&[
+        scene.options.seed,
+        prepared.mesh.id.0,
+        light.id.0,
+        u64::from(texel.x),
+        u64::from(texel.y),
+    ]);
+    let visibility = texel_visibility(
+        &shape,
+        light.shape_reach(),
+        (texel.position, texel.normal),
+        scene.options.area_light_samples,
+        &mut rng,
+        occluded,
+    )?;
+    let lit = level(visibility.fraction, light.shadow_bits_per_texel());
+    Some((lit, visibility.rays))
 }
 
 #[cfg(test)]

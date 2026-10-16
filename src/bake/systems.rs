@@ -18,7 +18,7 @@ use super::asset::{DynLightBake, HeadlessBakes};
 use super::format::{BakeStats, BakedScene, encode};
 use super::input::{BakeError, BakeInput, BakeOptions};
 use super::progress::BakeProgress;
-use super::settings::BakeSettings;
+use super::settings::{BakeSettings, PREVIEW_AREA_LIGHT_SAMPLES};
 use super::snapshot::{SceneSnapshot, SnapshotError};
 
 /// Henry's two bake menus. The resolution choice is [`BakeSettings::max_lightmap_size`].
@@ -134,7 +134,10 @@ pub fn bake_options(
 ) -> BakeOptions {
     let mut options =
         BakeOptions::from_settings(settings, lighting.dynamic_geometry, lighting.seed);
-    options.skip_bounce = preset == BakePreset::Preview;
+    if preset == BakePreset::Preview {
+        options.skip_bounce = true;
+        options.area_light_samples = options.area_light_samples.min(PREVIEW_AREA_LIGHT_SAMPLES);
+    }
     options
 }
 

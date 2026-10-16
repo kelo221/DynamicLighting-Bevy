@@ -1,5 +1,6 @@
 //! CPU mirror of the shadow filters in `shaders/triangles.wesl` (Henry's `shadow_sample_*` in
-//! `DynamicTriangle`). Tests check the row reads against the texel-by-texel reads they replace.
+//! `DynamicTriangle`). Tests check the row reads against the texel-by-texel reads they replace,
+//! for one-bit shadows and the soft levels of area lights.
 
 use bevy::math::{IVec2, UVec2, Vec2};
 
@@ -8,42 +9,76 @@ pub const QUALITY_INTEGRATED: u32 = 0;
 pub const QUALITY_LOW: u32 = 1;
 pub const QUALITY_HIGH: u32 = 3;
 
-/// One light's shadow bits on one triangle: grid texel `(x, y)` is bit `x + y · width`.
-/// Words past the end read as zero, like a robust GPU buffer read.
+/// One light's shadows on one triangle: grid texel `(x, y)` is texel `x + y · width` of the
+/// words, `2^log_bits` bits each and `32 >> log_bits` per word, low bits first. Words past the
+/// end read as zero, like a robust GPU buffer read.
 #[derive(Clone, Copy, Debug)]
-pub struct ShadowBits<'a> {
+pub struct ShadowTexels<'a> {
     pub words: &'a [u32],
     /// The padded grid width, `bounds.z`.
     pub width: u32,
     /// The lightmap texel of grid texel (0, 0), `bounds.xy`.
     pub origin: UVec2,
+    /// [`log_bits`] of the light's shadow bits per texel.
+    pub log_bits: u32,
 }
 
-impl ShadowBits<'_> {
+/// `shadow_log_bits`: 0, 1 or 2 for 1, 2 or 4 shadow bits per texel.
+pub fn log_bits(bits_per_texel: u32) -> u32 {
+    bits_per_texel.max(1).ilog2().min(2)
+}
+
+impl ShadowTexels<'_> {
     fn word(&self, index: u32) -> u32 {
         self.words.get(index as usize).copied().unwrap_or(0)
     }
 
-    /// `shadow_row`: eight bits from grid texel `uv` rightward.
-    pub fn row(&self, uv: IVec2) -> u32 {
-        let start = uv.y.max(0) * self.width as i32 + uv.x;
-        let index = start.max(0) as u32;
-        let shift = index % 32;
-        let mut bits = self.word(index / 32) >> shift;
-        if shift > 24 {
-            bits |= self.word(index / 32 + 1) << (32 - shift);
-        }
-        if start < 0 {
-            let before = (-start).min(8) as u32;
-            bits = (bits << before) | ((bits & 1) * ((1 << before) - 1));
-        }
-        bits & 0xff
+    /// The largest level of a texel.
+    pub fn top(&self) -> u32 {
+        (1 << (1 << self.log_bits)) - 1
     }
 
-    /// One texel with the addressing of [`Self::row`], read on its own.
+    /// `shadow_row`: eight texels from grid texel `uv` rightward, texel `k` at bit `k · bits`.
+    pub fn row(&self, uv: IVec2) -> u32 {
+        let bits = 1 << self.log_bits;
+        let word_log = 5 - self.log_bits;
+        let start = uv.y.max(0) * self.width as i32 + uv.x;
+        let index = start.max(0) as u32;
+        let word = index >> word_log;
+        let shift = (index & ((1 << word_log) - 1)) << self.log_bits;
+        let mut row = self.word(word) >> shift;
+        if shift + 8 * bits > 32 {
+            row |= self.word(word + 1) << (32 - shift);
+        }
+        if start < 0 {
+            let before = ((-start).min(8) as u32) << self.log_bits;
+            let fill = (u32::MAX / self.top()) >> (32 - before);
+            let moved = if before < 32 { row << before } else { 0 };
+            row = moved | ((row & self.top()) * fill);
+        }
+        if bits < 4 {
+            row & ((1 << (8 * bits)) - 1)
+        } else {
+            row
+        }
+    }
+
+    /// One texel's level with the addressing of [`Self::row`], read on its own.
     pub fn texel(&self, uv: IVec2) -> f32 {
         let index = (uv.y.max(0) * self.width as i32 + uv.x).max(0) as u32;
-        ((self.word(index / 32) >> (index % 32)) & 1) as f32
+        let word_log = 5 - self.log_bits;
+        let shift = (index & ((1 << word_log) - 1)) << self.log_bits;
+        ((self.word(index >> word_log) >> shift) & self.top()) as f32
+    }
+
+    /// `row_level`: the level of texel `x` of a row.
+    fn level(&self, row: u32, x: u32) -> f32 {
+        ((row >> (x << self.log_bits)) & self.top()) as f32
+    }
+
+    fn binomial(&self, row: u32, x: u32) -> f32 {
+        let t = |x| self.level(row, x);
+        t(x) + t(x + 4) + 4.0 * (t(x + 1) + t(x + 3)) + 6.0 * t(x + 2)
     }
 
     fn corner(&self, pixel: Vec2) -> IVec2 {
@@ -53,11 +88,12 @@ impl ShadowBits<'_> {
 
     /// `baked_shadow` for an entry with shadow data, at lightmap texel coordinates `pixel`.
     pub fn shadow(&self, pixel: Vec2, quality: u32) -> f32 {
-        match quality {
+        let levels = match quality {
             QUALITY_INTEGRATED => self.integrated(pixel),
             QUALITY_LOW => self.box3(pixel),
             _ => self.bilinear(pixel, quality >= QUALITY_HIGH),
-        }
+        };
+        levels / self.top() as f32
     }
 
     fn integrated(&self, pixel: Vec2) -> f32 {
@@ -65,8 +101,8 @@ impl ShadowBits<'_> {
         let corner = self.corner(pixel);
         let top = self.row(corner);
         let bottom = self.row(corner + IVec2::Y);
-        let left = Vec2::new(bit(top, 0), bit(bottom, 0));
-        let right = Vec2::new(bit(top, 1), bit(bottom, 1));
+        let left = Vec2::new(self.level(top, 0), self.level(bottom, 0));
+        let right = Vec2::new(self.level(top, 1), self.level(bottom, 1));
         let c = left.lerp(right, f.x);
         c.x + (c.y - c.x) * f.y
     }
@@ -78,10 +114,12 @@ impl ShadowBits<'_> {
             .wrapping_sub(self.origin)
             .as_ivec2()
             - IVec2::ONE;
-        let count: u32 = (0..3)
-            .map(|y| (self.row(uv + IVec2::new(0, y)) & 7).count_ones())
-            .sum();
-        count as f32 / 9.0
+        let mut sum = 0.0;
+        for y in 0..3 {
+            let row = self.row(uv + IVec2::new(0, y));
+            sum += self.level(row, 0) + self.level(row, 1) + self.level(row, 2);
+        }
+        sum / 9.0
     }
 
     fn bilinear(&self, pixel: Vec2, gaussian: bool) -> f32 {
@@ -92,7 +130,7 @@ impl ShadowBits<'_> {
             for (y, line) in across.iter_mut().enumerate() {
                 let row = self.row(corner + IVec2::new(-3, y as i32 - 3));
                 for (x, value) in line.iter_mut().enumerate() {
-                    *value = binomial(row, x as u32);
+                    *value = self.binomial(row, x as u32);
                 }
             }
             for (y, line) in map.iter_mut().enumerate() {
@@ -106,23 +144,12 @@ impl ShadowBits<'_> {
             for (y, line) in map.iter_mut().enumerate() {
                 let row = self.row(corner + IVec2::new(-1, y as i32 - 1));
                 for (x, value) in line.iter_mut().enumerate() {
-                    *value = bit(row, x as u32);
+                    *value = self.level(row, x as u32);
                 }
             }
         }
         blend(&map, (pixel - 0.5).fract())
     }
-}
-
-fn bit(row: u32, x: u32) -> f32 {
-    ((row >> x) & 1) as f32
-}
-
-fn binomial(row: u32, x: u32) -> f32 {
-    bit(row, x)
-        + bit(row, x + 4)
-        + 4.0 * (bit(row, x + 1) + bit(row, x + 3))
-        + 6.0 * bit(row, x + 2)
 }
 
 /// Four overlapping 3×3 sums of a 4×4 map, blended bilinearly, over 9.
@@ -144,10 +171,10 @@ mod tests {
     use crate::effects::EffectRng;
 
     /// The filters as they read one texel at a time before the row reads.
-    fn texel_by_texel(bits: &ShadowBits, pixel: Vec2, quality: u32) -> f32 {
+    fn texel_by_texel(bits: &ShadowTexels, pixel: Vec2, quality: u32) -> f32 {
         let corner = bits.corner(pixel);
         let f = (pixel - 0.5).fract();
-        match quality {
+        let levels = match quality {
             QUALITY_INTEGRATED => {
                 let t = |x, y| bits.texel(corner + IVec2::new(x, y));
                 let c = Vec2::new(t(0, 0), t(0, 1)).lerp(Vec2::new(t(1, 0), t(1, 1)), f.x);
@@ -189,21 +216,31 @@ mod tests {
                 }
                 blend(&map, f)
             }
+        };
+        levels / bits.top() as f32
+    }
+
+    fn texels(words: &[u32], width: u32, log_bits: u32) -> ShadowTexels<'_> {
+        ShadowTexels {
+            words,
+            width,
+            origin: UVec2::ZERO,
+            log_bits,
         }
     }
 
     #[test]
     fn row_reads_match_texel_reads_everywhere() {
         let mut rng = EffectRng::new(7, 11);
-        for width in [5u32, 7, 13, 31, 32, 33, 40] {
+        for (log_bits, width) in (0..3).flat_map(|b| [5u32, 7, 13, 31, 32, 33, 40].map(|w| (b, w)))
+        {
             let height = 9u32;
-            let words: Vec<u32> = (0..(width * height).div_ceil(32) + 1)
+            let words: Vec<u32> = (0..((width * height) << log_bits).div_ceil(32) + 1)
                 .map(|_| rng.next_u32() & rng.next_u32())
                 .collect();
-            let bits = ShadowBits {
-                words: &words,
-                width,
+            let bits = ShadowTexels {
                 origin: UVec2::new(3, 5),
+                ..texels(&words, width, log_bits)
             };
             // Every footprint over the triangle's texels and the padding around them.
             for i in 0..2000 {
@@ -214,7 +251,8 @@ mod tests {
                 for quality in 0..4 {
                     let rows = bits.shadow(pixel, quality);
                     let texels = texel_by_texel(&bits, pixel, quality);
-                    assert_eq!(rows, texels, "{width} {pixel} {quality}");
+                    assert_eq!(rows, texels, "{log_bits} {width} {pixel} {quality}");
+                    assert!((0.0..=1.0).contains(&rows), "{rows}");
                 }
             }
         }
@@ -223,27 +261,45 @@ mod tests {
     #[test]
     fn reads_above_and_before_the_grid_repeat_its_first_texels() {
         let words = [0b1011_0001u32, 0];
-        let bits = ShadowBits {
-            words: &words,
-            width: 8,
-            origin: UVec2::ZERO,
-        };
+        let bits = texels(&words, 8, 0);
         assert_eq!(bits.row(IVec2::new(0, -2)), bits.row(IVec2::ZERO));
         // Two texels before the first: copies of texel 0, then texels 0 to 5.
         assert_eq!(bits.row(IVec2::new(-2, 0)), 0b1100_0111);
         // A run past the right side continues in the next row, as Henry's index does.
         assert_eq!(bits.row(IVec2::new(6, 0)) & 0b11, 0b10);
+        // Four-bit levels: texel k is nibble k.
+        let words = [0x7654_3215u32, 0xfedc_ba98];
+        let levels = texels(&words, 16, 2);
+        assert_eq!(levels.row(IVec2::ZERO), 0x7654_3215);
+        assert_eq!(levels.row(IVec2::new(-2, 0)), 0x5432_1555);
+        assert_eq!(levels.row(IVec2::new(-20, 0)), 0x5555_5555);
+        assert_eq!(levels.row(IVec2::new(0, -3)), 0x7654_3215);
     }
 
     #[test]
     fn runs_across_a_word_boundary_join_both_words() {
         let words = [0xf000_0000u32, 0x0000_0005];
-        let bits = ShadowBits {
-            words: &words,
-            width: 64,
-            origin: UVec2::ZERO,
-        };
+        let bits = texels(&words, 64, 0);
         assert_eq!(bits.row(IVec2::new(28, 0)), 0b0101_1111);
         assert_eq!(bits.row(IVec2::new(24, 0)), 0xf0);
+        let words = [0x7654_3210u32, 0xfedc_ba98];
+        assert_eq!(texels(&words, 16, 2).row(IVec2::new(3, 0)), 0xa987_6543);
+        assert_eq!(texels(&words, 32, 1).row(IVec2::new(13, 0)), 0xa61d);
+    }
+
+    #[test]
+    fn levels_scale_to_fractions() {
+        assert_eq!(
+            (log_bits(1), log_bits(2), log_bits(4), log_bits(8)),
+            (0, 1, 2, 2)
+        );
+        let words = [0x0000_00f5u32; 4];
+        // Texel 0 is level 5 of 15, texel 1 fully lit; the Low tier averages its 3×3 box.
+        let levels = texels(&words, 8, 2);
+        assert_eq!(levels.texel(IVec2::ZERO), 5.0);
+        assert_eq!(
+            levels.shadow(Vec2::new(0.5, 0.5), QUALITY_INTEGRATED),
+            5.0 / 15.0
+        );
     }
 }

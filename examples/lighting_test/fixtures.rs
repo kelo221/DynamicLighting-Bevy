@@ -109,7 +109,6 @@ fn spawn_panel(
             // How fast the fog shaft widens.
             outer_cutoff: 12.0,
             shadows: ShadowMode::Realtime,
-            shadow_points: 16,
             ..DynamicLight::rectangle(PANEL_SIZE.x, PANEL_SIZE.y)
         },
         LightEffect::new(LightEffectKind::FluorescentStarter),

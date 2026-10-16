@@ -4,6 +4,7 @@
 //!
 //! Shader modules: `dynlight::dynamic_geometry::shaders::{light_bvh, distance_cubes}`.
 
+pub mod mirror;
 #[cfg(test)]
 pub(crate) mod shader_tests;
 

@@ -75,6 +75,12 @@ fn main() -> AppExit {
         max_lightmap_size: 256,
         ..default()
     });
+    // Smooth penumbras under the ceiling panel; Preview bakes cap the samples.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.insert_resource(BakeSettings {
+        area_light_samples: 128,
+        ..default()
+    });
     if let Some(frames) = argument("--frames").and_then(|value| value.parse().ok()) {
         app.insert_resource(ExitAfterFrames {
             frames,

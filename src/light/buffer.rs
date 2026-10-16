@@ -6,6 +6,7 @@ use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
+use super::area::AreaLightShape;
 use crate::shared::{BakeId, GpuLight, GpuLightGlobals};
 
 /// The light buffer every `DynLitMaterial` binds. Its layout is the WESL `DynamicLights`: the
@@ -24,8 +25,12 @@ pub struct BakedSlot {
     pub id: BakeId,
     /// Where the light was baked; a light that moved away is evaluated as realtime instead.
     pub origin: Vec3,
+    /// The shape an area light's soft shadows were traced for; `None` for point-like lights.
+    pub area: Option<AreaLightShape>,
     /// Bits per pixel of the light's bounce data, 1 to 8.
     pub bounce_bits_per_pixel: u32,
+    /// Bits per texel of the light's baked shadows: 1, or more for soft area-light shadows.
+    pub shadow_bits_per_texel: u32,
 }
 
 /// Texture-array slots assigned to lights by other slices before packing.

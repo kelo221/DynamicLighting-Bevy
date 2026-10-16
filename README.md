@@ -2,7 +2,7 @@
 
 Baked per-texel shadows with live light evaluation for [Bevy](https://bevy.org) 0.20: a port of Henry de Jongh's [Dynamic Lighting](https://github.com/Henry00IS/DynamicLighting) for Unity.
 
-A CPU raytracer bakes, for every static triangle, which lights reach it and a 1-bit shadow mask per texel. At runtime a custom material evaluates each of those lights live (color, intensity, effects, light types, cookies, shimmer) and multiplies by the baked shadow bits, so baked lights can still flicker, pulse and change color. Moving objects, realtime lights, bounce lighting, realtime shadows and volumetric fog are layered on top.
+A CPU raytracer bakes, for every static triangle, which lights reach it and a shadow mask per texel (1 bit, or 4 bits of soft visibility for area lights). At runtime a custom material evaluates each of those lights live (color, intensity, effects, light types, cookies, shimmer) and multiplies by the baked shadow bits, so baked lights can still flicker, pulse and change color. Moving objects, realtime lights, bounce lighting, realtime shadows and volumetric fog are layered on top.
 
 The crate is its own lighting system. It never uses Bevy's lights (`PointLight`, `SpotLight`, `DirectionalLight`, ambient light, environment maps, shadow maps) or `bevy_pbr`'s lighting shaders.
 
@@ -23,7 +23,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 
 **New in dynlight**
 
-- **Area lights.** Rectangle and tube lights keep his rules: each is baked as `shadow_points` ordinary point lights (3 by default, up to 16), spread over a panel so each has a column and a row of its own, or along a tube, each with 1-bit shadows from a fixed position. At runtime the shader adds up the points' shadows and shades the whole shape once, so shadows soften in steps on every side and harden where objects touch the ground. Moving, turning or resizing a baked area light moves its points, so it falls back to realtime lighting until the next bake.
+- **Area lights.** Rectangle and tube lights are shaded from their shape and bake soft shadows: each texel stores how much of the shape it sees in 4 bits (16 levels) instead of Henry's single shadow bit, so penumbras are smooth and harden where objects touch the ground. Moving objects get soft shadows from the light's distance cube, with penumbras that widen with the distance to the blocker. Otherwise they follow his rules: one light at a fixed position with a `radius`, and moving, turning or resizing a baked area light falls back to realtime lighting until the next bake.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
 - **Platforms and tools:** bakes in memory and in the browser (WebGPU), a triangle-ID fallback for GPUs without primitive indices, debug views (lighting only, light count), and a CPU reference of the shader math that is checked against GPU readback.

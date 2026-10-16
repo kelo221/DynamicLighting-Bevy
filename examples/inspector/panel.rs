@@ -128,15 +128,6 @@ fn panel() -> impl Scene {
                 light.size = Vec2::new(width, width * 0.5);
             })
             --
-            @label("Baked shadow points (rectangle, tube)")
-            --
-            @FeathersSlider { @min: 1.0, @max: 16.0 }
-            SliderValue(3.0)
-            SliderPrecision(0)
-            on(|change: On<ValueChange<f32>>, mut light: Light, mut commands: Commands| {
-                light.shadow_points = slide(&change, &mut commands).round() as u32;
-            })
-            --
             @label("Falloff")
             --
             @FeathersSlider { @max: 4.0 }

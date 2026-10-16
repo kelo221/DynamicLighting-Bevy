@@ -5,12 +5,11 @@ mod bounce;
 mod determinism;
 mod footprint;
 mod layout;
-mod light_bvh;
 mod occluder;
 
-use bevy::math::{Vec2, Vec3};
+use bevy::math::{Quat, Vec2, Vec3};
 
-use crate::light::{Illumination, Transparency};
+use crate::light::{AreaLightShape, Illumination, LightType, Transparency};
 use crate::shared::{BakeId, mesh_content_hash};
 
 use super::input::{BakeBounce, BakeLight, BakeMesh};
@@ -89,6 +88,23 @@ pub fn point_light(id: u64, position: Vec3, radius: f32) -> BakeLight {
         illumination: Illumination::Direct,
         transparency: Transparency::Disabled,
         bounce: BakeBounce::default(),
-        point_of: None,
+        area: None,
+    }
+}
+
+/// A rectangle (`size.y > 0`) or tube light turned by `rotation`.
+pub fn area_light(id: u64, position: Vec3, radius: f32, rotation: Quat, size: Vec2) -> BakeLight {
+    let kind = if size.y > 0.0 {
+        LightType::Rectangle
+    } else {
+        LightType::Tube
+    };
+    BakeLight {
+        area: Some(AreaLightShape {
+            kind,
+            rotation,
+            size,
+        }),
+        ..point_light(id, position, radius)
     }
 }

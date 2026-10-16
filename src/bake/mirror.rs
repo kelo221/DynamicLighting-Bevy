@@ -1,5 +1,5 @@
 //! CPU mirror of the shader side that reads baked data: Henry's `DynamicTriangle` (load,
-//! set-active-light, shadow bit and bounce reads; `S/DynamicLighting.cginc` 608–962) and the
+//! set-active-light, shadow and bounce reads; `S/DynamicLighting.cginc` 608–962) and the
 //! distance cube fetch. Tests run it over serialized words to prove the layout round-trips; the
 //! WESL port must compute the same indices.
 
@@ -58,25 +58,36 @@ impl<'a> TriangleView<'a> {
         }
     }
 
-    /// `shadow_sample(uv - bounds.xy)` at lightmap texel `(x, y)`, with the shader's wrapping
-    /// `u32` math. `None` when the entry has no shadow data (`is_occlusion_available` false).
-    pub fn shadow_bit(&self, entry: &LightEntry, x: u32, y: u32) -> Option<bool> {
+    /// The grid index of lightmap texel `(x, y)`, with the shader's wrapping `u32` math.
+    fn grid_index(&self, x: u32, y: u32) -> u32 {
+        let local_x = x.wrapping_sub(self.bounds[0]);
+        let local_y = y.wrapping_sub(self.bounds[1]);
+        local_y.wrapping_mul(self.bounds[2]).wrapping_add(local_x)
+    }
+
+    /// The shadow at lightmap texel `(x, y)` for a light with `bits` per texel (channel bits
+    /// 20–22): how much light reaches it, 0 to 1. `None` when the entry has no shadow data
+    /// (`is_occlusion_available` false).
+    pub fn shadow_value(&self, entry: &LightEntry, x: u32, y: u32, bits: u32) -> Option<f32> {
         if entry.shadow_offset == 0 {
             return None;
         }
-        let local_x = x.wrapping_sub(self.bounds[0]);
-        let local_y = y.wrapping_sub(self.bounds[1]);
-        let index = local_y.wrapping_mul(self.bounds[2]).wrapping_add(local_x);
-        let word = self.words[(entry.shadow_offset + index / 32) as usize];
-        Some(word & (1 << (index % 32)) != 0)
+        let index = self.grid_index(x, y);
+        let texels = 32 / bits;
+        let mask = (1u32 << bits) - 1;
+        let word = self.words[(entry.shadow_offset + index / texels) as usize];
+        Some(((word >> ((index % texels) * bits)) & mask) as f32 / mask as f32)
+    }
+
+    /// [`Self::shadow_value`] of a one-bit (hard) shadow: whether the texel is lit.
+    pub fn shadow_bit(&self, entry: &LightEntry, x: u32, y: u32) -> Option<bool> {
+        self.shadow_value(entry, x, y, 1).map(|value| value > 0.5)
     }
 
     /// `bounce_sample` at lightmap texel `(x, y)`: the stored (square-rooted) value in `[0, 1]`.
     /// `bits_per_pixel` comes from the light's channel bits 17–19.
     pub fn bounce_texel(&self, entry: &LightEntry, x: u32, y: u32, bits_per_pixel: u32) -> f32 {
-        let local_x = x.wrapping_sub(self.bounds[0]);
-        let local_y = y.wrapping_sub(self.bounds[1]);
-        let index = local_y.wrapping_mul(self.bounds[2]).wrapping_add(local_x);
+        let index = self.grid_index(x, y);
         let pixels = 32 / bits_per_pixel;
         let mask = (1u32 << bits_per_pixel) - 1;
         let value = self.words[(entry.bounce_offset + index / pixels) as usize];
@@ -134,5 +145,33 @@ mod tests {
         // 8 bits per pixel: pixel index 5 is byte 1 of the second word.
         let (x, y) = (5u32.wrapping_add(view.bounds[0]), view.bounds[1]);
         assert_eq!(view.bounce_texel(&entry, x, y, 8), 6.0 / 255.0);
+    }
+
+    #[test]
+    fn soft_shadows_read_back_as_fractions() {
+        let crop = TexelRect {
+            min_x: 0,
+            min_y: 0,
+            max_x: 1,
+            max_y: 1,
+        };
+        // Padded 6×6 grid of 4-bit levels; lightmap texel (0, 0) is local (2, 2).
+        let mut grid = crate::bake::shadow_grid::ShadowGrid::new(6, 6, 4);
+        grid.set(2, 2, 15);
+        grid.set(3, 2, 5);
+        let triangles = [TriangleRecord {
+            crop,
+            lights: vec![TriangleLight {
+                light: 0,
+                shadow: Some(grid.into_words()),
+                bounce: None,
+            }],
+        }];
+        let words = serialize_triangles(&triangles, false);
+        let view = TriangleView::load(&words, 0, false);
+        let entry = view.light(0);
+        assert_eq!(view.shadow_value(&entry, 0, 0, 4), Some(1.0));
+        assert_eq!(view.shadow_value(&entry, 1, 0, 4), Some(5.0 / 15.0));
+        assert_eq!(view.shadow_value(&entry, 0, 1, 4), Some(0.0));
     }
 }

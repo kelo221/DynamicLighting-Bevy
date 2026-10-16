@@ -7,7 +7,7 @@ use crate::effects::LightEffectState;
 use crate::light::{DynamicLight, LightType};
 
 /// Draws each light's radius as a sphere in its color, dimmed by its current effect intensity,
-/// its shape, and the points an area light's baked shadows come from.
+/// and its shape.
 #[derive(Resource, Reflect, Clone, Debug, Default, PartialEq)]
 #[reflect(Resource, Default, Debug, Clone, PartialEq)]
 pub struct LightGizmos {
@@ -45,13 +45,6 @@ pub(super) fn draw_light_gizmos(
                 gizmos.line(position - x, position + x, full);
             }
             _ => {}
-        }
-        if light.shadow_point_count() > 1 {
-            let (_, rotation, _) = transform.to_scale_rotation_translation();
-            for point in light.shadow_point_layout(position, rotation) {
-                let at_point = Isometry3d::from_translation(point.position);
-                gizmos.cross(at_point, 0.06, dimmed);
-            }
         }
     }
 }
