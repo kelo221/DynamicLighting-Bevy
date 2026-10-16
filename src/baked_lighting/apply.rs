@@ -60,6 +60,7 @@ pub fn scene_slots(scene: &BakedScene) -> Vec<BakedSlot> {
         .map(|light| BakedSlot {
             id: light.id,
             origin: light.origin,
+            radius: light.radius,
             area: light.area,
             bounce_bits_per_pixel: light
                 .bounce_compression

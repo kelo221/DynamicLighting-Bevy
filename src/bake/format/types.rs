@@ -54,8 +54,8 @@ impl Default for BakedSettings {
 }
 
 /// A baked light. The runtime matches it to a `DynamicLight` by `id`, and treats the light as
-/// moved (realtime, unshadowed) while its position differs from `origin` or, for area lights,
-/// its shape differs from `area`.
+/// moved (realtime, unshadowed) while its position differs from `origin`, its radius is larger
+/// than `radius` or, for area lights, its shape differs from `area`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BakedLight {
     pub id: BakeId,

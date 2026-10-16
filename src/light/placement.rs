@@ -1,6 +1,7 @@
 //! Whether a light uses its baked data this frame: the bake knows it, it stands where it was
-//! baked and, for area lights, it keeps the shape it was baked with. Point-like lights may turn
-//! freely. Packing and the shadow cubemap pass both read this.
+//! baked, its radius hasn't grown past the baked one and, for area lights, it keeps the shape it
+//! was baked with. Point-like lights may turn freely. Packing and the shadow cubemap pass both
+//! read this.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::platform::collections::HashMap;
@@ -16,8 +17,8 @@ use crate::shared::{BakeId, ResolvedBakeId};
 const MOVED_DISTANCE: f32 = 1.0e-3;
 
 /// On lights that use their baked shadows this frame. A light loses it when it is marked
-/// realtime, the active bake doesn't know it, it moved away from where it was baked, or its area
-/// light shape changed.
+/// realtime, the active bake doesn't know it, it moved away from where it was baked, its radius
+/// grew past the baked one, or its area light shape changed.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BakedInPlace;
 
@@ -60,14 +61,17 @@ impl SlotIndex {
     }
 }
 
-/// Whether `light` at `pose` still matches what `slot` was baked for.
+/// Whether `light` at `pose` still matches what `slot` was baked for. A smaller radius still
+/// matches: the baked data covers more than the light now reaches.
 fn still_baked(slot: &BakedSlot, light: &DynamicLight, pose: LightPose) -> bool {
     let same_shape = match (slot.area, AreaLightShape::of(light, pose.rotation)) {
         (None, None) => true,
         (Some(baked), Some(now)) => baked.matches(&now),
         _ => false,
     };
-    same_shape && slot.origin.distance(pose.position) <= MOVED_DISTANCE
+    same_shape
+        && slot.origin.distance(pose.position) <= MOVED_DISTANCE
+        && light.radius <= slot.radius + MOVED_DISTANCE
 }
 
 type PlacedLight<'a> = (
@@ -137,6 +141,7 @@ mod tests {
         let slot = |id, origin, area: Option<AreaLightShape>| BakedSlot {
             id,
             origin,
+            radius: light.radius,
             area,
             bounce_bits_per_pixel: 8,
             shadow_bits_per_texel: if area.is_some() { 4 } else { 1 },
@@ -218,5 +223,24 @@ mod tests {
             slot_used(&tube_slots, &thicker, Some(BakeId(1)), home),
             Some(1)
         );
+    }
+
+    #[test]
+    fn lights_stay_baked_only_while_their_radius_does_not_grow() {
+        let home = pose(Vec3::Y, Quat::from_rotation_x(-0.5));
+        for light in [DynamicLight::point(), DynamicLight::rectangle(1.0, 0.5)] {
+            let slots = baked(&light, home);
+            let used = |radius: f32| {
+                let resized = DynamicLight {
+                    radius,
+                    ..light.clone()
+                };
+                slot_used(&slots, &resized, Some(BakeId(1)), home)
+            };
+            assert_eq!(used(light.radius), Some(1));
+            assert_eq!(used(light.radius * 0.5), Some(1), "shrunk");
+            assert_eq!(used(light.radius + 0.5e-3), Some(1), "within the tolerance");
+            assert_eq!(used(light.radius * 1.5), None, "grown");
+        }
     }
 }

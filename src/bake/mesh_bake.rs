@@ -5,7 +5,7 @@
 use bevy::math::Vec3;
 use rayon::prelude::*;
 
-use super::area::texel_visibility;
+use super::area::{AreaSampling, texel_visibility};
 use super::bits::{AtomicBitGrid, BitGrid, TexelRect};
 use super::bounce::{self, PhotonCube};
 use super::format::BakedMesh;
@@ -314,7 +314,10 @@ fn area_texel(
         &shape,
         light.shape_reach(),
         (texel.position, texel.normal),
-        scene.options.area_light_samples,
+        AreaSampling {
+            samples: scene.options.area_light_samples,
+            minimum: scene.options.area_light_min_samples,
+        },
         &mut rng,
         occluded,
     )?;

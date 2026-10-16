@@ -139,6 +139,8 @@ pub struct BakeOptions {
     pub photon_cube_resolution: u32,
     /// Rays per texel to an area light where its corners and center disagree.
     pub area_light_samples: u32,
+    /// Of those, the rays every texel takes before it may count as fully lit or shadowed.
+    pub area_light_min_samples: u32,
     /// Seed for every random choice (bounce directions, dithering, area light samples).
     pub seed: u64,
 }
@@ -163,6 +165,7 @@ impl BakeOptions {
             skip_bounce: false,
             photon_cube_resolution: 512,
             area_light_samples: settings.area_light_samples,
+            area_light_min_samples: settings.area_light_min_samples,
             seed,
         }
     }

@@ -30,6 +30,7 @@ mod settings;
 mod shadow_grid;
 mod shadows;
 mod snapshot;
+mod spread;
 mod systems;
 #[cfg(test)]
 mod tests;

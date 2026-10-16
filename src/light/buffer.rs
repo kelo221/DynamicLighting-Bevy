@@ -25,6 +25,9 @@ pub struct BakedSlot {
     pub id: BakeId,
     /// Where the light was baked; a light that moved away is evaluated as realtime instead.
     pub origin: Vec3,
+    /// The radius the light was baked with. The triangle light lists, the light BVH and the
+    /// distance cube end there, so a light that grows past it is evaluated as realtime instead.
+    pub radius: f32,
     /// The shape an area light's soft shadows were traced for; `None` for point-like lights.
     pub area: Option<AreaLightShape>,
     /// Bits per pixel of the light's bounce data, 1 to 8.

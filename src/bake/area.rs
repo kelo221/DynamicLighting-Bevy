@@ -9,12 +9,14 @@ use crate::light::area::AreaShape;
 
 use super::input::BakeLight;
 use super::mesh_bake::NDOTL_TOLERANCE;
+use super::spread::spread;
 
 /// Shadow bits per texel of area lights: 16 levels of visibility.
 pub const AREA_SHADOW_BITS: u32 = 4;
 /// Shape points probed before deciding whether a texel lies in a penumbra: a rectangle's corners
-/// and center, a tube's ends and middle. The part of a shape an occluder hides is convex, and in
-/// a penumbra it almost always covers a corner, an end or the middle.
+/// and center, a tube's ends and middle. In a penumbra an occluder usually hides one of them, but
+/// a thin one (a pole, a railing) can pass between them all; [`AreaSampling::minimum`] catches
+/// those.
 const RECTANGLE_PROBES: [Vec2; 5] = [
     Vec2::new(0.0, 0.0),
     Vec2::new(1.0, 0.0),
@@ -30,11 +32,6 @@ const TUBE_PROBES: [Vec2; 3] = [
 /// Shadow rays stop this far short of the shape, so a light mounted flush on a surface doesn't
 /// shadow itself.
 const END_GAP: f32 = 1.0e-3;
-/// Steps of the sample sequences: Roberts' R2 sequence (`1/g`, `1/g²` with g the plastic
-/// number) over rectangles, the golden ratio along tubes. Both spread any number of points
-/// evenly over the shape.
-const R2_STEP: Vec2 = Vec2::new(0.754_877_7, 0.569_840_3);
-const GOLDEN_STEP: f32 = 0.618_034;
 
 impl BakeLight {
     /// The world-space shape of an area light.
@@ -84,20 +81,29 @@ pub struct TexelVisibility {
     pub rays: u32,
 }
 
+/// Shadow rays per texel to points spread over an area light.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AreaSampling {
+    /// Rays where the texel may lie in a penumbra.
+    pub samples: u32,
+    /// The first rays of those that every texel takes after the probes (at most `samples`).
+    pub minimum: u32,
+}
+
 /// How much of `shape` reaches a texel at `position` with unit `normal`.
 ///
-/// Shadow rays first go to the probe points; when they all agree the texel is fully lit or fully
-/// shadowed. Otherwise `samples` rays go to points spread over the shape, the sequence shifted by
-/// `rng`, each weighted by the light that part of the shape sends: receiver cosine (with Henry's
-/// facing tolerance) × emitter cosine / distance². `None` when the texel is farther than `reach`
-/// from the shape (or `reach` isn't positive), the shape is below its horizon, or it is behind a
-/// rectangle.
+/// Shadow rays first go to the probe points, then to the first `sampling.minimum` points spread
+/// over the shape ([`spread`], shifted by `rng`); when they all agree the texel is fully lit or
+/// fully shadowed. Otherwise the spread continues to `sampling.samples` points, each weighted by
+/// the light that part of the shape sends: receiver cosine (with Henry's facing tolerance) ×
+/// emitter cosine / distance². `None` when the texel is farther than `reach` from the shape (or
+/// `reach` isn't positive), the shape is below its horizon, or it is behind a rectangle.
 /// `occluded(direction, distance)` traces one ray from the texel.
 pub fn texel_visibility(
     shape: &AreaShape,
     reach: f32,
     (position, normal): (Vec3, Vec3),
-    samples: u32,
+    sampling: AreaSampling,
     rng: &mut EffectRng,
     mut occluded: impl FnMut(Vec3, f32) -> bool,
 ) -> Option<TexelVisibility> {
@@ -114,29 +120,35 @@ pub fn texel_visibility(
         Some((weight, !occluded(direction, (distance - END_GAP).max(0.0))))
     };
 
-    let (probes, step) = if shape.rectangle {
-        (&RECTANGLE_PROBES[..], R2_STEP)
+    let probes = if shape.rectangle {
+        &RECTANGLE_PROBES[..]
     } else {
-        (&TUBE_PROBES[..], Vec2::new(GOLDEN_STEP, 0.0))
+        &TUBE_PROBES[..]
     };
     let (mut any_lit, mut any_blocked) = (false, false);
     for (_, lit) in probes.iter().filter_map(|&uv| trace(uv)) {
         any_lit |= lit;
         any_blocked |= !lit;
     }
-    let mut fraction = (any_lit != any_blocked).then_some(if any_lit { 1.0 } else { 0.0 });
-    if fraction.is_none() {
-        let mut uv = Vec2::new(rng.next_f32(), rng.next_f32());
-        let (mut lit, mut total) = (0.0, 0.0);
-        for _ in 0..samples {
-            if let Some((weight, unblocked)) = trace(uv) {
-                total += weight;
-                lit += if unblocked { weight } else { 0.0 };
-            }
-            uv = (uv + step).fract();
+    // The probes only decide whether to sample; the lit share comes from the evenly spread points.
+    let offset = Vec2::new(rng.next_f32(), rng.next_f32());
+    let (mut lit, mut total) = (0.0, 0.0);
+    for taken in 0..sampling.samples {
+        if taken == sampling.minimum && any_lit != any_blocked {
+            break;
         }
-        fraction = (total > 0.0).then(|| lit / total);
+        if let Some((weight, unblocked)) = trace(spread(taken, offset, shape.rectangle)) {
+            total += weight;
+            lit += if unblocked { weight } else { 0.0 };
+            any_lit |= unblocked;
+            any_blocked |= !unblocked;
+        }
     }
+    let fraction = if any_lit != any_blocked {
+        Some(if any_lit { 1.0 } else { 0.0 })
+    } else {
+        (total > 0.0).then(|| lit / total)
+    };
     fraction.map(|fraction| TexelVisibility { fraction, rays })
 }
 
@@ -188,15 +200,34 @@ mod tests {
         .at(Vec3::ZERO)
     }
 
+    /// 32 samples after `minimum`; `blocks` tests the point a ray reaches on the shape.
+    fn visibility_with(
+        shape: &AreaShape,
+        texel: (Vec3, Vec3),
+        minimum: u32,
+        blocks: impl Fn(Vec3) -> bool,
+    ) -> Option<TexelVisibility> {
+        let mut rng = random::stream(&[1, 2, 3]);
+        let sampling = AreaSampling {
+            samples: 32,
+            minimum,
+        };
+        texel_visibility(
+            shape,
+            10.0,
+            texel,
+            sampling,
+            &mut rng,
+            |direction, distance| blocks(texel.0 + direction * distance),
+        )
+    }
+
     fn visibility(
         shape: &AreaShape,
         texel: (Vec3, Vec3),
         blocks: impl Fn(Vec3) -> bool,
     ) -> Option<TexelVisibility> {
-        let mut rng = random::stream(&[1, 2, 3]);
-        texel_visibility(shape, 10.0, texel, 32, &mut rng, |direction, distance| {
-            blocks(texel.0 + direction * distance)
-        })
+        visibility_with(shape, texel, 0, blocks)
     }
 
     #[test]
@@ -227,6 +258,30 @@ mod tests {
         assert_eq!((covered.fraction, covered.rays), (0.0, 5));
         let lit_tube = visibility(&tube(2.0), below, |_| false).unwrap();
         assert_eq!((lit_tube.fraction, lit_tube.rays), (1.0, 3));
+        // The minimum samples come on top of the probes, and no more follow when all agree.
+        let open = visibility_with(&panel(), below, 16, |_| false).unwrap();
+        assert_eq!((open.fraction, open.rays), (1.0, 5 + 16));
+        let covered = visibility_with(&tube(2.0), below, 16, |_| true).unwrap();
+        assert_eq!((covered.fraction, covered.rays), (0.0, 3 + 16));
+        let capped = visibility_with(&panel(), below, 100, |_| false).unwrap();
+        assert_eq!((capped.fraction, capped.rays), (1.0, 5 + 32));
+    }
+
+    #[test]
+    fn minimum_samples_catch_occluders_between_the_probes() {
+        // A bar across the panel's depth hides 15% of its width but none of the probes; 16
+        // spread points see any bar wider than 2/16.
+        let below = (Vec3::new(0.0, -2.0, 0.0), Vec3::Y);
+        let bar = |point: Vec3| (-0.7..-0.4).contains(&point.x);
+        let probes_only = visibility(&panel(), below, bar).unwrap();
+        assert_eq!((probes_only.fraction, probes_only.rays), (1.0, 5));
+        let spread = visibility_with(&panel(), below, 16, bar).unwrap();
+        assert_eq!(spread.rays, 5 + 32, "a penumbra takes every sample");
+        assert!(
+            spread.fraction > 0.7 && spread.fraction < 0.95,
+            "{}",
+            spread.fraction
+        );
     }
 
     #[test]
@@ -256,7 +311,12 @@ mod tests {
         assert!(visibility(&shape, above, |_| false).is_some());
         let mut rng = random::stream(&[0]);
         let beyond = (Vec3::new(3.5, 0.0, 0.0), Vec3::NEG_X);
-        let mut reach = |reach| texel_visibility(&shape, reach, beyond, 8, &mut rng, |_, _| false);
+        let sampling = AreaSampling {
+            samples: 8,
+            minimum: 0,
+        };
+        let mut reach =
+            |reach| texel_visibility(&shape, reach, beyond, sampling, &mut rng, |_, _| false);
         assert!(reach(1.6).is_some() && reach(1.4).is_none());
         assert!(
             reach(-2.0).is_none(),

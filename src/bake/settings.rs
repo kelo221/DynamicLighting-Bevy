@@ -21,12 +21,16 @@ pub struct BakeSettings {
     /// Bounce storage precision for lights that don't choose their own.
     pub bounce_compression: BounceCompression,
     /// Shadow rays per penumbra texel for rectangle and tube lights; more give smoother
-    /// penumbras at a higher bake cost (texels fully lit or fully shadowed take 3 to 5 rays).
-    /// Preview bakes use at most [`PREVIEW_AREA_LIGHT_SAMPLES`].
+    /// penumbras at a higher bake cost. Preview bakes use at most [`PREVIEW_AREA_LIGHT_SAMPLES`].
     pub area_light_samples: u32,
+    /// Of those, the rays every texel in reach of an area light takes, after the 3 to 5 probe
+    /// rays to its corners, ends and center, before it may count as fully lit or fully shadowed.
+    /// They catch thin occluders, such as poles and railings, that pass between the probes. 0
+    /// trusts the probes alone, as Preview bakes do.
+    pub area_light_min_samples: u32,
 }
 
-/// Area light samples per texel in Preview bakes.
+/// Area light samples per texel in Preview bakes, which also skip the minimum samples.
 pub const PREVIEW_AREA_LIGHT_SAMPLES: u32 = 32;
 
 impl Default for BakeSettings {
@@ -36,6 +40,7 @@ impl Default for BakeSettings {
             max_lightmap_size: 2048,
             bounce_compression: BounceCompression::Bits8,
             area_light_samples: 64,
+            area_light_min_samples: 16,
         }
     }
 }
