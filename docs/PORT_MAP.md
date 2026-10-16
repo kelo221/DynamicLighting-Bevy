@@ -187,8 +187,8 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/realtime_shadows/shaders/shadow_kernel.wesl` | `S/Operations/GaussianBlur.shader:19-30` (kernel 3, spread 1, SmoShaders) | none | Ported, widened to 5 taps at σ = 1.5 (PLAN §12), and up to 11 taps at σ 4 for area lights (New); weights computed from σ and normalized over the taps |
 | `src/realtime_shadows/shaders/shadow_moments.wesl` | `S/Operations/ShadowDepth.shader:42-46`; `S/Operations/GaussianBlur.shader:41-65` (horizontal pass, SmoShaders) | none | Ported; distance moments reconstructed from the reverse-Z depth prepass, fused with the horizontal blur |
 | `src/realtime_shadows/shaders/vsm.wesl` | `S/Generators/LightProcessor.cginc:122-136`; `S/Internal/Common.cginc:280-289` (`linstep`, `ReduceLightBleeding`) | none | Ported; NaN guard on the variance (PLAN §7.2); a smooth terminator on the true cosine (for area lights, to the point of the shape the surface faces most) replaces the `1 − NdotL` bleeding term (PLAN §12) |
-| `src/realtime_shadows/tests.rs` | none | none | New; caster tracking in an app: material, texture and render-layer edits redraw, unrelated asset events don't |
-| `src/realtime_shadows/tracking.rs` | none | none | New; shadow casters that moved, appeared, disappeared, animate, or changed render layers, mesh or material, and incomplete renderings |
+| `src/realtime_shadows/tests.rs` | none | none | New; caster tracking in an app: material, texture and render-layer edits redraw, unrelated asset events don't, and only real moves do (not a transform set to its old value; also for casters without bounds) |
+| `src/realtime_shadows/tracking.rs` | none | none | New; shadow casters that moved (transform compared with the last one seen), appeared, disappeared, animate, or changed render layers, mesh or material, and incomplete renderings |
 
 ### `cookies/`
 

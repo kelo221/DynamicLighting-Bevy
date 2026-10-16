@@ -36,10 +36,16 @@ impl ShadowFeedback {
     }
 }
 
-/// The last known bounds of every shadow caster, so a caster that moves or disappears is also
-/// reported where it was.
+/// The last known transform of every shadow caster, and its bounds while it is visible, so a
+/// caster that moves or disappears is also reported where it was.
 #[derive(Resource, Default)]
-pub(super) struct CasterBounds(EntityHashMap<CasterChange>);
+pub(super) struct CasterBounds(EntityHashMap<Seen>);
+
+#[derive(Clone, Copy)]
+struct Seen {
+    transform: GlobalTransform,
+    bounds: Option<CasterChange>,
+}
 
 /// Casters whose material or textures changed, reported by the material trackers in
 /// `materials.rs` for [`track_casters`] to pick up.
@@ -64,16 +70,18 @@ type CasterItem<'a> = (
     &'a InheritedVisibility,
     Has<BakedReceiver>,
 );
-type Changed3d = (
+type Edited = (
     With<Mesh3d>,
     Or<(
-        Changed<GlobalTransform>,
         Changed<Mesh3d>,
         Changed<Aabb>,
         Changed<InheritedVisibility>,
         Changed<RenderLayers>,
     )>,
 );
+/// Systems that set a transform every frame mark it changed even while it stays put, so these
+/// casters only count when their transform differs from the last one seen.
+type Moved = (With<Mesh3d>, Changed<GlobalTransform>);
 /// Skinned meshes move with their joints and morph targets change shape, both without a
 /// transform change of their own.
 type Animated = (
@@ -118,9 +126,25 @@ fn current(caster: Caster, settle: &mut u32) -> Option<CasterChange> {
     Some(bounds(transform, aabb, baked))
 }
 
+/// Reports a caster where it was and where it is now, and remembers where it is.
+fn report(
+    caster: Caster,
+    known: &mut CasterBounds,
+    list: &mut Vec<CasterChange>,
+    settle: &mut u32,
+) {
+    let (entity, transform, ..) = caster;
+    list.extend(known.0.get(&entity).and_then(|seen| seen.bounds));
+    let bounds = current(caster, settle);
+    list.extend(bounds);
+    let transform = *transform;
+    known.0.insert(entity, Seen { transform, bounds });
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn track_casters(
-    changed: Query<CasterItem, Changed3d>,
+    edited: Query<CasterItem, Edited>,
+    moved: Query<CasterItem, Moved>,
     animated: Query<CasterItem, Animated>,
     casters: Query<CasterItem, With<Mesh3d>>,
     remeshed: Query<Entity, (With<Mesh3d>, AssetChanged<Mesh3d>)>,
@@ -145,18 +169,16 @@ pub(super) fn track_casters(
     }
 
     for entity in removed.read() {
-        if let Some(old) = known.0.remove(&entity) {
-            list.push(old);
-        }
+        list.extend(known.0.remove(&entity).and_then(|seen| seen.bounds));
     }
-    for caster in &changed {
-        let entity = caster.0;
-        if let Some(old) = known.0.remove(&entity) {
-            list.push(old);
-        }
-        if let Some(new) = current(caster, settle) {
-            known.0.insert(entity, new);
-            list.push(new);
+    for caster in &edited {
+        report(caster, &mut known, list, settle);
+    }
+    for caster in &moved {
+        let (entity, transform, ..) = caster;
+        let seen = known.0.get(&entity).map(|seen| seen.transform);
+        if seen != Some(*transform) {
+            report(caster, &mut known, list, settle);
         }
     }
     for caster in &animated {

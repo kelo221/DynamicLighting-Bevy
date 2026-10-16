@@ -145,6 +145,63 @@ fn material_edits_and_texture_loads_report_the_caster() {
     settle(&mut app);
 }
 
+/// Marks the caster's transform changed without changing it, as a system that sets it every
+/// frame does.
+fn rewrite_transform(app: &mut App, caster: Entity) {
+    if let Some(mut transform) = app.world_mut().get_mut::<GlobalTransform>(caster) {
+        transform.set_changed();
+    }
+}
+
+#[test]
+fn only_real_moves_report_the_caster() {
+    let mut app = app();
+    let (caster, ..) = spawn_caster(&mut app);
+    settle(&mut app);
+    rewrite_transform(&mut app, caster);
+    assert_eq!(frame(&mut app), (false, false), "set to where it was");
+
+    let moved = Transform::from_xyz(0.0, 0.0, 2.0);
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(GlobalTransform::from(moved));
+    assert_eq!(frame(&mut app), (true, false), "moved");
+    settle(&mut app);
+
+    // Turning about its own center keeps the bounding sphere but not the shadow.
+    let center = Vec3::new(0.5, 0.5, 2.5);
+    let turned = moved.with_rotation(Quat::from_rotation_y(0.5));
+    let turned = turned.with_translation(center - turned.rotation * Vec3::splat(0.5));
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(GlobalTransform::from(turned));
+    assert_eq!(frame(&mut app), (true, false), "turned in place");
+    settle(&mut app);
+    rewrite_transform(&mut app, caster);
+    assert_eq!(frame(&mut app), (false, false), "set to where it was");
+}
+
+#[test]
+fn casters_without_bounds_render_every_face_only_when_they_move() {
+    let mut app = app();
+    let (caster, ..) = spawn_caster(&mut app);
+    app.world_mut().entity_mut(caster).remove::<Aabb>();
+    assert_eq!(frame(&mut app), (false, true), "could be anywhere");
+    // Its new mesh and material are reported for a few frames; the cube planning would count
+    // the frames of every face down, here they are cleared by hand.
+    let quiet = (0..10).any(|_| {
+        app.world_mut().resource_mut::<CasterChanges>().settle = 0;
+        frame(&mut app) == (false, false)
+    });
+    assert!(quiet, "the new caster is still reported");
+    rewrite_transform(&mut app, caster);
+    assert_eq!(frame(&mut app), (false, false), "set to where it was");
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(GlobalTransform::from_xyz(1.0, 0.0, 0.0));
+    assert_eq!(frame(&mut app), (false, true), "moved");
+}
+
 #[test]
 fn render_layer_changes_report_the_caster() {
     let mut app = app();
