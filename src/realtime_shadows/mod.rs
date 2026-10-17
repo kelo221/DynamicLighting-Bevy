@@ -80,6 +80,7 @@ impl Plugin for RealtimeShadowsPlugin {
         };
         render_app
             .init_resource::<render::ShadowLayerViews>()
+            .init_resource::<render::ShadowFaceBindGroups>()
             .init_resource::<DrawFunctions<phase::ShadowFace3d>>()
             .add_render_command::<phase::ShadowFace3d, phase::Reported<DrawPrepass>>()
             .add_render_command::<phase::ShadowFace3d, phase::Reported<DrawDepthOnlyPrepass>>()
@@ -90,6 +91,7 @@ impl Plugin for RealtimeShadowsPlugin {
                 Render,
                 (
                     render::prepare_layer_views.in_set(RenderSystems::PrepareResources),
+                    render::prepare_face_bind_groups.in_set(RenderSystems::PrepareBindGroups),
                     queue::queue_shadow_faces.in_set(RenderSystems::QueueMeshes),
                 ),
             )

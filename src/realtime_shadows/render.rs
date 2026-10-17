@@ -12,12 +12,12 @@ use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::ViewBinnedRenderPhases;
 use bevy::render::render_resource::binding_types::{texture_2d, texture_depth_2d, uniform_buffer};
 use bevy::render::render_resource::{
-    BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedRenderPipelineId,
-    ColorTargetState, ColorWrites, Extent3d, FragmentState, LoadOp, Operations, PipelineCache,
-    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
-    RenderPipelineDescriptor, ShaderStages, StoreOp, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureId, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
-    TextureViewDimension,
+    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FragmentState, LoadOp,
+    Operations, PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, StoreOp, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureId, TextureSampleType, TextureUsages, TextureView,
+    TextureViewDescriptor, TextureViewDimension,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::texture::GpuImage;
@@ -40,6 +40,14 @@ pub(super) struct ShadowPipelines {
     variants: Vec<FormatVariant>,
     /// The depth of the face being rendered; faces render one after another.
     depth: TextureView,
+}
+
+impl ShadowPipelines {
+    fn variant(&self, format: Option<TextureFormat>) -> Option<&FormatVariant> {
+        self.variants
+            .iter()
+            .find(|variant| Some(variant.format) == format)
+    }
 }
 
 struct FormatVariant {
@@ -181,6 +189,49 @@ pub(super) fn prepare_layer_views(
     views.format = Some(image.texture_descriptor.format);
 }
 
+/// The bind groups of the face pass. Every face of a frame binds the same depth texture, scratch
+/// texture and uniform buffers, at its own dynamic offsets, so they are made once per frame.
+#[derive(Resource, Default)]
+pub(super) struct ShadowFaceBindGroups {
+    moments: Option<BindGroup>,
+    blur: Option<BindGroup>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_face_bind_groups(
+    face_views: Query<(), With<ShadowFaceUniform>>,
+    pipelines: Res<ShadowPipelines>,
+    layers: Res<ShadowLayerViews>,
+    cache: Res<PipelineCache>,
+    view_uniforms: Res<ViewUniforms>,
+    faces: Res<ComponentUniforms<ShadowFaceUniform>>,
+    device: Res<RenderDevice>,
+    mut groups: ResMut<ShadowFaceBindGroups>,
+) {
+    *groups = ShadowFaceBindGroups::default();
+    if face_views.is_empty() {
+        return;
+    }
+    let Some(variant) = pipelines.variant(layers.format) else {
+        return;
+    };
+    let (Some(view_binding), Some(face_binding)) =
+        (view_uniforms.uniforms.binding(), faces.uniforms().binding())
+    else {
+        return;
+    };
+    groups.moments = Some(device.create_bind_group(
+        "dynlight_shadow_moments",
+        &cache.get_bind_group_layout(&pipelines.moments_layout),
+        &BindGroupEntries::sequential((&pipelines.depth, view_binding, face_binding.clone())),
+    ));
+    groups.blur = Some(device.create_bind_group(
+        "dynlight_shadow_blur",
+        &cache.get_bind_group_layout(&pipelines.blur_layout),
+        &BindGroupEntries::sequential((&variant.scratch, face_binding)),
+    ));
+}
+
 type FaceView = (
     Entity,
     &'static ExtractedView,
@@ -197,47 +248,27 @@ pub(super) fn shadow_face_pass(
     phases: Res<ViewBinnedRenderPhases<ShadowFace3d>>,
     pipelines: Res<ShadowPipelines>,
     layers: Res<ShadowLayerViews>,
+    groups: Res<ShadowFaceBindGroups>,
     cache: Res<PipelineCache>,
-    view_uniforms: Res<ViewUniforms>,
-    faces: Res<ComponentUniforms<ShadowFaceUniform>>,
-    device: Res<RenderDevice>,
     feedback: Res<ShadowFeedback>,
     mut ctx: RenderContext,
 ) {
     let (view_entity, extracted, face, face_index, view_offset) = view.into_inner();
-    let Some(variant) = pipelines
-        .variants
-        .iter()
-        .find(|variant| Some(variant.format) == layers.format)
-    else {
+    let Some(variant) = pipelines.variant(layers.format) else {
         feedback.report_incomplete();
         return;
     };
-    let (Some(moments), Some(blur), Some(target)) = (
+    let (Some(moments), Some(blur), Some(target), Some(moments_group), Some(blur_group)) = (
         cache.get_render_pipeline(variant.moments),
         cache.get_render_pipeline(variant.blur),
         layers.layers.get(face.layer as usize),
+        groups.moments.as_ref(),
+        groups.blur.as_ref(),
     ) else {
         feedback.report_incomplete();
         return;
     };
     let depth = &pipelines.depth;
-    let (Some(view_binding), Some(face_binding)) =
-        (view_uniforms.uniforms.binding(), faces.uniforms().binding())
-    else {
-        feedback.report_incomplete();
-        return;
-    };
-    let moments_group = device.create_bind_group(
-        "dynlight_shadow_moments",
-        &cache.get_bind_group_layout(&pipelines.moments_layout),
-        &BindGroupEntries::sequential((depth, view_binding, face_binding.clone())),
-    );
-    let blur_group = device.create_bind_group(
-        "dynlight_shadow_blur",
-        &cache.get_bind_group_layout(&pipelines.blur_layout),
-        &BindGroupEntries::sequential((&variant.scratch, face_binding)),
-    );
 
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
@@ -275,11 +306,11 @@ pub(super) fn shadow_face_pass(
     let passes = [
         (
             moments,
-            &moments_group,
+            moments_group,
             &variant.scratch,
             &moments_offsets[..],
         ),
-        (blur, &blur_group, target, &[face_offset][..]),
+        (blur, blur_group, target, &[face_offset][..]),
     ];
     for (pipeline, group, target, offsets) in passes {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
