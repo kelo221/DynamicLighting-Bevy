@@ -149,9 +149,35 @@ fn shadow_3x3(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, log_bi
     return sum / 9.0;
 }
 
+// The 3×3 windows of a 4×4 block of one-bit texels, texel (x, y) at bit 4y + x.
+const WINDOW_TL: u32 = 0x0777u;
+const WINDOW_TR: u32 = 0x0EEEu;
+const WINDOW_BL: u32 = 0x7770u;
+const WINDOW_BR: u32 = 0xEEE0u;
+
+// Medium for one-bit shadows: the same four 3×3 sums as `shadow_bilinear`, counted as bits.
+fn shadow_bilinear_bits(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>) -> f32 {
+    let f = fract(pixel - 0.5);
+    let corner = vec2<i32>(footprint_corner(triangle, pixel));
+    var block = 0u;
+    for (var y = 0u; y < 4u; y++) {
+        let row = shadow_row(triangle, entry, corner + vec2(-1, i32(y) - 1), 0u);
+        block |= (row & 0xFu) << (4u * y);
+    }
+    let tl = f32(countOneBits(block & WINDOW_TL));
+    let tr = f32(countOneBits(block & WINDOW_TR));
+    let bl = f32(countOneBits(block & WINDOW_BL));
+    let br = f32(countOneBits(block & WINDOW_BR));
+    let c = mix(vec2(tl, bl), vec2(tr, br), f.x);
+    return mix(c.x, c.y, f.y) / 9.0;
+}
+
 // Medium and high: four overlapping 3×3 averages, blended bilinearly. High reads each of the
 // 4×4 texels through the 5×5 Gaussian (binomial weights, applied across then down).
 fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, gaussian: bool, log_bits: u32) -> f32 {
+    if !gaussian && log_bits == 0u {
+        return shadow_bilinear_bits(triangle, entry, pixel);
+    }
     let f = fract(pixel - 0.5);
     let corner = vec2<i32>(footprint_corner(triangle, pixel));
     var map: array<array<f32, 4>, 4>;

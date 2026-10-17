@@ -124,6 +124,15 @@ impl ShadowTexels<'_> {
 
     fn bilinear(&self, pixel: Vec2, gaussian: bool) -> f32 {
         let corner = self.corner(pixel);
+        if !gaussian && self.log_bits == 0 {
+            let mut block = 0;
+            for y in 0..4 {
+                let row = self.row(corner + IVec2::new(-1, y - 1));
+                block |= (row & 0xF) << (4 * y);
+            }
+            let [tl, tr, bl, br] = window_counts(block).map(|count| count as f32);
+            return blend_sums(tl, tr, bl, br, (pixel - 0.5).fract());
+        }
         let mut map = [[0.0f32; 4]; 4];
         if gaussian {
             let mut across = [[0.0f32; 4]; 8];
@@ -161,8 +170,22 @@ fn blend(map: &[[f32; 4]; 4], f: Vec2) -> f32 {
     let bottom = middle + map[3][1] + map[3][2];
     let bl = bottom + map[1][0] + map[2][0] + map[3][0];
     let br = bottom + map[1][3] + map[2][3] + map[3][3];
+    blend_sums(tl, tr, bl, br, f)
+}
+
+/// The four 3×3 sums blended bilinearly, over 9.
+fn blend_sums(tl: f32, tr: f32, bl: f32, br: f32, f: Vec2) -> f32 {
     let (c0, c1) = (tl + (tr - tl) * f.x, bl + (br - bl) * f.x);
     (c0 + (c1 - c0) * f.y) / 9.0
+}
+
+/// `WINDOW_*` in `triangles.wesl`: the top-left, top-right, bottom-left and bottom-right 3×3
+/// windows of a 4×4 block of one-bit texels, texel (x, y) at bit 4y + x.
+pub const WINDOWS: [u32; 4] = [0x0777, 0x0EEE, 0x7770, 0xEEE0];
+
+/// `shadow_bilinear_bits`: the texels set in each of the four windows of a block.
+pub fn window_counts(block: u32) -> [u32; 4] {
+    WINDOWS.map(|window| (block & window).count_ones())
 }
 
 #[cfg(test)]
@@ -285,6 +308,29 @@ mod tests {
         let words = [0x7654_3210u32, 0xfedc_ba98];
         assert_eq!(texels(&words, 16, 2).row(IVec2::new(3, 0)), 0xa987_6543);
         assert_eq!(texels(&words, 32, 1).row(IVec2::new(13, 0)), 0xa61d);
+    }
+
+    #[test]
+    fn window_bit_counts_equal_the_float_sums_for_every_block() {
+        for block in 0..1u32 << 16 {
+            let mut map = [[0.0f32; 4]; 4];
+            for (y, line) in map.iter_mut().enumerate() {
+                for (x, value) in line.iter_mut().enumerate() {
+                    *value = ((block >> (4 * y + x)) & 1) as f32;
+                }
+            }
+            let middle = map[1][1] + map[1][2] + map[2][1] + map[2][2];
+            let top = middle + map[0][1] + map[0][2];
+            let bottom = middle + map[3][1] + map[3][2];
+            let sums = [
+                top + map[0][0] + map[1][0] + map[2][0],
+                top + map[0][3] + map[1][3] + map[2][3],
+                bottom + map[1][0] + map[2][0] + map[3][0],
+                bottom + map[1][3] + map[2][3] + map[3][3],
+            ];
+            let counts = window_counts(block).map(|count| count as f32);
+            assert_eq!(counts, sums, "block {block:#06x}");
+        }
     }
 
     #[test]

@@ -44,10 +44,12 @@ fn wesl_const(source: &str, name: &str) -> u32 {
         .lines()
         .find_map(|line| line.strip_prefix(&prefix))
         .unwrap_or_else(|| panic!("{name} is not declared"));
-    line.trim_end_matches(';')
-        .trim_end_matches('u')
-        .parse()
-        .unwrap_or_else(|_| panic!("{name} is not a u32 literal"))
+    let literal = line.trim_end_matches(';').trim_end_matches('u');
+    match literal.strip_prefix("0x") {
+        Some(hex) => u32::from_str_radix(hex, 16),
+        None => literal.parse(),
+    }
+    .unwrap_or_else(|_| panic!("{name} is not a u32 literal"))
 }
 
 #[test]
@@ -82,4 +84,13 @@ fn quality_tiers_match_the_mirror() {
     );
     assert_eq!(wesl_const(source, "QUALITY_LOW"), mirror::QUALITY_LOW);
     assert_eq!(wesl_const(source, "QUALITY_HIGH"), mirror::QUALITY_HIGH);
+}
+
+#[test]
+fn one_bit_windows_match_the_mirror() {
+    let names = ["WINDOW_TL", "WINDOW_TR", "WINDOW_BL", "WINDOW_BR"];
+    assert_eq!(
+        names.map(|name| wesl_const(TRIANGLES.1, name)),
+        mirror::WINDOWS
+    );
 }
