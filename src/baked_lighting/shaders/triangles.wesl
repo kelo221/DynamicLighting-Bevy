@@ -112,11 +112,30 @@ fn row_level(row: u32, x: u32, log_bits: u32) -> f32 {
     return f32((row >> (x << log_bits)) & top);
 }
 
-// The 1 4 6 4 1 binomial sum of texels `x` to `x + 4` of a row.
-fn row_binomial(row: u32, x: u32, log_bits: u32) -> f32 {
-    let side = row_level(row, x, log_bits) + row_level(row, x + 4u, log_bits);
-    let near = row_level(row, x + 1u, log_bits) + row_level(row, x + 3u, log_bits);
-    return side + 4.0 * near + 6.0 * row_level(row, x + 2u, log_bits);
+// The levels of texels 0 to 3 of a row.
+fn row_levels(row: u32, log_bits: u32) -> vec4<f32> {
+    return vec4(
+        row_level(row, 0u, log_bits),
+        row_level(row, 1u, log_bits),
+        row_level(row, 2u, log_bits),
+        row_level(row, 3u, log_bits),
+    );
+}
+
+// The 1 4 6 4 1 binomial sums of texels `x` to `x + 4` of a row, for x = 0 to 3.
+fn row_binomials(row: u32, log_bits: u32) -> vec4<f32> {
+    let low = row_levels(row, log_bits);
+    let high = row_levels(row >> (4u << log_bits), log_bits);
+    let side = low + high;
+    let near = vec4(low.yzw, high.x) + vec4(low.w, high.xyz);
+    return side + 4.0 * near + 6.0 * vec4(low.zw, high.xy);
+}
+
+// The binomial sum of five rows of `row_binomials`, down.
+fn column_binomials(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32>) -> vec4<f32> {
+    let side = a + e;
+    let near = b + d;
+    return (side + 4.0 * near + 6.0 * c) / 256.0;
 }
 
 // Where the filters read around texel coordinates `pixel`; the same for every light of the
@@ -192,40 +211,45 @@ fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, at: Footprint, gaus
     if !gaussian && log_bits == 0u {
         return shadow_bilinear_bits(triangle, entry, at);
     }
-    let f = at.f;
     let corner = vec2<i32>(at.corner);
-    var map: array<array<f32, 4>, 4>;
     if gaussian {
         // Rows −3 to +4 around the corner, from column −3.
-        var across: array<array<f32, 4>, 8>;
-        for (var y = 0; y < 8; y++) {
-            let row = shadow_row(triangle, entry, corner + vec2(-3, y - 3), log_bits);
-            for (var x = 0u; x < 4u; x++) {
-                across[y][x] = row_binomial(row, x, log_bits);
-            }
-        }
-        for (var y = 0u; y < 4u; y++) {
-            for (var x = 0u; x < 4u; x++) {
-                let side = across[y][x] + across[y + 4u][x];
-                let near = across[y + 1u][x] + across[y + 3u][x];
-                map[y][x] = (side + 4.0 * near + 6.0 * across[y + 2u][x]) / 256.0;
-            }
-        }
-    } else {
-        for (var y = 0; y < 4; y++) {
-            let row = shadow_row(triangle, entry, corner + vec2(-1, y - 1), log_bits);
-            for (var x = 0u; x < 4u; x++) {
-                map[y][x] = row_level(row, x, log_bits);
-            }
-        }
+        let r = corner + vec2(-3, -3);
+        let a0 = row_binomials(shadow_row(triangle, entry, r, log_bits), log_bits);
+        let a1 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 1), log_bits), log_bits);
+        let a2 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 2), log_bits), log_bits);
+        let a3 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 3), log_bits), log_bits);
+        let a4 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 4), log_bits), log_bits);
+        let a5 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 5), log_bits), log_bits);
+        let a6 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 6), log_bits), log_bits);
+        let a7 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 7), log_bits), log_bits);
+        return blend_rows(
+            column_binomials(a0, a1, a2, a3, a4),
+            column_binomials(a1, a2, a3, a4, a5),
+            column_binomials(a2, a3, a4, a5, a6),
+            column_binomials(a3, a4, a5, a6, a7),
+            at.f,
+        );
     }
-    let middle = map[1][1] + map[1][2] + map[2][1] + map[2][2];
-    let top = middle + map[0][1] + map[0][2];
-    let tl = top + map[0][0] + map[1][0] + map[2][0];
-    let tr = top + map[0][3] + map[1][3] + map[2][3];
-    let bottom = middle + map[3][1] + map[3][2];
-    let bl = bottom + map[1][0] + map[2][0] + map[3][0];
-    let br = bottom + map[1][3] + map[2][3] + map[3][3];
+    let r = corner + vec2(-1, -1);
+    return blend_rows(
+        row_levels(shadow_row(triangle, entry, r, log_bits), log_bits),
+        row_levels(shadow_row(triangle, entry, r + vec2(0, 1), log_bits), log_bits),
+        row_levels(shadow_row(triangle, entry, r + vec2(0, 2), log_bits), log_bits),
+        row_levels(shadow_row(triangle, entry, r + vec2(0, 3), log_bits), log_bits),
+        at.f,
+    );
+}
+
+// The four overlapping 3×3 sums of a 4×4 map given as rows, blended bilinearly, over 9.
+fn blend_rows(m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>, m3: vec4<f32>, f: vec2<f32>) -> f32 {
+    let middle = m1.y + m1.z + m2.y + m2.z;
+    let top = middle + m0.y + m0.z;
+    let tl = top + m0.x + m1.x + m2.x;
+    let tr = top + m0.w + m1.w + m2.w;
+    let bottom = middle + m3.y + m3.z;
+    let bl = bottom + m1.x + m2.x + m3.x;
+    let br = bottom + m1.w + m2.w + m3.w;
     let c = mix(vec2(tl, bl), vec2(tr, br), f.x);
     return mix(c.x, c.y, f.y) / 9.0;
 }
