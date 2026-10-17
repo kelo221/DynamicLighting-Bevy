@@ -25,14 +25,14 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 
 - **Area lights.** Rectangle and tube lights are shaded from their shape and bake soft shadows: each texel stores how much of the shape it sees in 4 bits (16 levels) instead of Henry's single shadow bit, so penumbras are smooth and harden where objects touch the ground. Moving objects get soft shadows from the light's distance cube, with penumbras that widen with the distance to the blocker. Otherwise they follow his rules: one light at a fixed position with a `radius`, and moving, turning or resizing a baked area light falls back to realtime lighting until the next bake.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
-- **Clustered realtime lights.** Henry's shader visits every realtime light at every pixel; dynlight lists the realtime lights per cell of a view-space grid, so 1000 realtime lights take 1.7 ms of GPU time instead of 23 ms (see Performance).
+- **Clustered realtime lights.** Henry's shader visits every realtime light at every pixel; dynlight lists the realtime lights per cell of a view-space grid, so with 1000 realtime lights our lit pass takes 2.0 ms of GPU time, where Henry's whole frame takes 6.1 ms (see Performance).
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
 - **Platforms and tools:** bakes in memory and in the browser (WebGPU), a triangle-ID fallback for GPUs without primitive indices, debug views (lighting only, light count), and a CPU reference of the shader math that is checked against GPU readback.
 
 **Different from Henry's**
 
 - **Bevy instead of Unity.** Nothing uses Unity's lighting, random numbers, Perlin noise or camera rendering. Bake data is matched to entities by their `Name` path (`BakeId`) instead of Unity instance IDs.
-- **Bugs fixed,** e.g. intensity applied twice in Metallic shading, seam padding wrapping across rows, a divide by zero for spot cones with equal cutoffs, and bounce blur passes reading and writing the same texture.
+- **Bugs fixed,** e.g. intensity applied twice in Metallic shading, seam padding wrapping across rows, a divide by zero for spot cones with equal cutoffs, bounce blur passes reading and writing the same texture, and realtime shadows switching off for good after a frame that used every shadow cubemap.
 - **Smoother realtime shadows:** a 5-tap blur at σ 1.5 instead of 3 taps at σ 1, a smooth fade at the terminator instead of the `1 − NdotL` light-bleeding term, and 32-bit moments wherever the GPU can filter them.
 - **Metallic shading** doesn't divide diffuse light by π, so a rough non-metal looks the same under Metallic and Diffuse shading.
 - **Smaller changes:** a baked light counts as moved beyond 1 mm (Henry: 0.01 mm), shadow cubemaps end at the light's radius (Henry: 3× the radius), cubemaps go to the lights nearest the camera, transparent shadows alpha-test the texture directly instead of filtering photon cubes, and `TrackingMode` has no effect.
@@ -119,21 +119,27 @@ The GPU checks need a GPU, so they are skipped by `cargo test`; run them with `c
 
 ## Performance
 
-dynlight against Bevy's own lights in the same scene: the `stress_lights` layout, about 1000 pillars in an 80 m hall. The harness lives outside this repository because it spawns Bevy's `PointLight`s. Release profile, 1920×1080, RTX 4080 SUPER, Vulkan, 512² shadow cubemaps for both, medians of 10 alternating runs (2026-10-17). GPU time is the main lit pass. Frame times near 1.7 ms are limited by the CPU and vary between runs, so GPU time is the steadier comparison.
+dynlight against Bevy's own lights and against Henry's package in Unity, in the same scene: the `stress_lights` layout, about 1000 pillars in an 80 m hall. Both harnesses live outside this repository: one spawns Bevy's `PointLight`s, the other is a Unity project. Unity builds each scene from the harness's scene description and bakes it with Henry's own baker.
 
-| Scene | GPU, dynlight | GPU, Bevy | Frame, dynlight | Frame, Bevy |
-|---|---|---|---|---|
-| 1000 still lights (dynlight: baked shadows; Bevy: no shadows) | 0.86 ms | 1.09 ms | 1.80 ms | 1.71 ms |
-| 100 moving realtime lights, no shadows | 0.23 ms | 0.15 ms | 1.72 ms | 1.72 ms |
-| 1000 moving realtime lights, no shadows | 1.74 ms | 1.11 ms | 2.27 ms | 1.84 ms |
-| 16 of 100 lights with realtime shadows, scene still | 0.22 ms | – | 1.80 ms | 19.0 ms |
-| 16 of 100 lights with realtime shadows, scene moving | – | – | 18.3 ms | 19.4 ms |
+Setup: 1920×1080, 4× MSAA, RTX 4080 SUPER, Direct3D 12 for all three, 512² shadow cubemaps. dynlight and Bevy use the release profile; Unity 6000.6.4f1 uses an IL2CPP release player, the Built-in pipeline and Henry's package at e2a51ad. Each figure is the median of 10 alternating runs (2026-10-17).
 
-- **Baked lights** shade faster than Bevy's lights without shadows, and their shadows cost nothing at runtime. For comparison, Bevy with all 100 lights shadowed took 77–122 ms per frame (three runs).
-- **Realtime lights** are sorted into the cells of a view-space grid, as Bevy does, so a pixel only visits the lights that reach it. At 1000 lights dynlight's pass takes about 1.6× as long as Bevy's.
-- **Realtime shadows** are cached: a cubemap face only redraws where something changed, so a still scene renders none. Bevy's still scene costs as much as its moving one. When everything moves, both redraw all their faces (96 per frame here) and cost about the same.
+| Scene | Frame: dynlight | Frame: Bevy | Frame: Henry | GPU: dynlight | GPU: Bevy | GPU: Henry |
+|---|---|---|---|---|---|---|
+| 1000 still lights (dynlight and Henry: baked shadows; Bevy: no shadows) | 2.06 ms | 2.03 ms | 0.76 ms | 0.93 ms | 1.32 ms | 0.46 ms |
+| 100 moving realtime lights, no shadows | 2.03 ms | 2.02 ms | 0.40 ms | 0.36 ms | 0.25 ms | 0.26 ms |
+| 1000 moving realtime lights, no shadows | 2.55 ms | 2.14 ms | 6.28 ms | 2.04 ms | 1.32 ms | 6.09 ms |
+| 15 of 100 lights with realtime shadows, scene still | 2.09 ms | 22.9 ms | 7.09 ms | 0.35 ms | – | 2.06 ms |
+| 15 of 100 lights with realtime shadows, scene moving | 20.7 ms | 23.0 ms | 7.16 ms | – | – | 2.09 ms |
 
-Baking the 1000-light scene (1047 meshes, 6.3 M texels, 18 M rays) takes 2.0 s. `cargo bench --bench bake` measures the baker on its own (about 27 M shadow rays per second on a 32-thread desktop CPU), and `cargo bench --bench clusters` the per-frame light grid (0.14 ms for 1000 lights).
+The GPU columns don't measure the same thing. dynlight's and Bevy's are the main lit pass alone (wgpu timestamps); the harness doesn't report it while shadows move or for Bevy's shadowed lights. Henry's is Unity's GPU time for the whole frame. The shadow rows use 15 lights because Henry's package turns realtime shadows off for good after a frame that fills all 16 of its cubemaps.
+
+- **Frame time** in dynlight and Bevy is mostly engine overhead. Bevy's frame stays near 2 ms in every scene, also with Bevy's own lights; Unity's player needs about 0.4 ms.
+- **Baked lights** shade faster than Bevy's lights without shadows, and their shadows cost nothing at runtime. Henry's whole frame takes half the GPU time of dynlight's lit pass. We haven't found out why yet.
+- **Realtime lights** are sorted into the cells of a view-space grid, as Bevy does, so a pixel only visits the lights that reach it. Henry's shader visits every realtime light at every pixel, so his 1000-light frame takes three times our lit pass.
+- **Realtime shadows** are cached in dynlight: a cubemap face only redraws where something changed, so a still scene renders none. Bevy's and Henry's still scenes cost as much as their moving ones. When everything moves, all three redraw 90 faces per frame. Unity does that in about 7 ms; Bevy's per-view cost puts dynlight and Bevy at 21–23 ms.
+- **The images match.** Rendered without tonemapping from the same camera, dynlight's and Henry's frames of the stress, light-type and shadow scenes differ on average by 0.01–0.14 of one 8-bit step. At most 0.2% of pixels differ by more than 16 steps, all along pillar edges.
+
+Baking the 1000-light scene (1047 meshes, 6.3 M texels, 18 M rays) takes 1.3 s on a 32-thread desktop CPU; Henry's baker takes 22.2–22.6 s for the same scene in the Unity editor (direct light only for both, 16 texels per metre). `cargo bench --bench bake` measures the baker on its own (about 27 M shadow rays per second), and `cargo bench --bench clusters` the per-frame light grid (0.14 ms for 1000 lights).
 
 ## Development
 
