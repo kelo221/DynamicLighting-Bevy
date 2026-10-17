@@ -16,11 +16,12 @@ struct BvhNode {
     count: u32,
 }
 
-// The node stack of the walk in progress. It lives outside `BvhWalk` because Direct3D's FXC
-// compiler can't write to an array inside a struct at a run-time index; one walk runs at a time.
-var<private> bvh_stack: array<u32, BVH_STACK_SIZE>;
+// The node stack of a walk, declared by the caller as a function variable. It isn't part of
+// `BvhWalk` because Direct3D's FXC compiler can't write to an array inside a struct at a run-time
+// index. It isn't a module-scope `var<private>` either: DXC keeps those in slow scratch memory.
+alias BvhStack = array<u32, BVH_STACK_SIZE>;
 
-// A traversal in progress; advance it with `bvh_next`. Its nodes are on `bvh_stack`.
+// A traversal in progress; advance it with `bvh_next`. Its nodes are on a `BvhStack`.
 struct BvhWalk {
     pointer: u32,
     // Remaining lights of the current leaf.
@@ -51,7 +52,7 @@ fn contains(node: BvhNode, point: vec3<f32>) -> bool {
 }
 
 // Starts at the root; a scene without baked lights has no nodes and yields nothing.
-fn bvh_start() -> BvhWalk {
+fn bvh_start(stack: ptr<function, BvhStack>) -> BvhWalk {
     var walk: BvhWalk;
     walk.pointer = 0u;
     walk.next_light = 0u;
@@ -60,7 +61,7 @@ fn bvh_start() -> BvhWalk {
     let nodes = bvh_node_count();
     walk.budget = nodes;
     if nodes > 0u {
-        bvh_stack[0] = 0u;
+        (*stack)[0] = 0u;
         walk.pointer = 1u;
     }
     return walk;
@@ -68,7 +69,7 @@ fn bvh_start() -> BvhWalk {
 
 // Moves to the next light whose leaf contains `point` and stores its slot in `light`. Returns
 // false once the walk is done.
-fn bvh_next(walk: ptr<function, BvhWalk>, point: vec3<f32>) -> bool {
+fn bvh_next(walk: ptr<function, BvhWalk>, stack: ptr<function, BvhStack>, point: vec3<f32>) -> bool {
     loop {
         if (*walk).next_light < (*walk).end_light {
             (*walk).light = (*walk).next_light;
@@ -80,7 +81,7 @@ fn bvh_next(walk: ptr<function, BvhWalk>, point: vec3<f32>) -> bool {
         }
         (*walk).budget -= 1u;
         (*walk).pointer -= 1u;
-        let node = bvh_node(bvh_stack[(*walk).pointer]);
+        let node = bvh_node((*stack)[(*walk).pointer]);
         if node.count > 0u {
             (*walk).next_light = node.left_first;
             (*walk).end_light = node.left_first + node.count;
@@ -89,7 +90,7 @@ fn bvh_next(walk: ptr<function, BvhWalk>, point: vec3<f32>) -> bool {
         for (var child = 0u; child < 2u; child++) {
             let index = node.left_first + child;
             if (*walk).pointer < BVH_STACK_SIZE && contains(bvh_node(index), point) {
-                bvh_stack[(*walk).pointer] = index;
+                (*stack)[(*walk).pointer] = index;
                 (*walk).pointer += 1u;
             }
         }

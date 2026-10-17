@@ -5,7 +5,9 @@ import dynlight::shared::shaders::types::{
     GpuLight, LightGlobals, GLOBALS_FLAG_LIGHTING_ONLY, light_is_realtime,
     light_bounce_bits_per_pixel, light_shadow_bits_per_texel, light_is_area, light_extent,
 };
-import dynlight::dynamic_geometry::shaders::light_bvh::{bvh_node_count, bvh_start, bvh_next};
+import dynlight::dynamic_geometry::shaders::light_bvh::{
+    BvhStack, bvh_node_count, bvh_start, bvh_next,
+};
 import dynlight::dynamic_geometry::shaders::distance_cubes::{cube_shadow, cube_area_shadow};
 import dynlight::light::shaders::area::area_shape;
 import dynlight::baked_lighting::shaders::baked_data::{Receiver, receiver};
@@ -54,8 +56,9 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
     var unshadowed_baked = globals.baked_count;
     if bvh_node_count() > 0u {
         let shadows = (globals.flags & GLOBALS_FLAG_LIGHTING_ONLY) == 0u;
-        var walk = bvh_start();
-        while bvh_next(&walk, world) {
+        var stack: BvhStack;
+        var walk = bvh_start(&stack);
+        while bvh_next(&walk, &stack, world) {
             if walk.light < globals.baked_count {
                 let light = dynamic_lights.lights[walk.light];
                 add_cube_shadowed(&sum, shading, light, walk.light, surface, globals.time, shadows);

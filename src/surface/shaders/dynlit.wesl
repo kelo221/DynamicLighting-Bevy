@@ -46,9 +46,12 @@ fn fragment(
 @if(VERTEX_COLORS) {
     base *= in.color;
 }
+// Only alpha-masked materials may discard, so the others keep early depth testing.
+@if(MAY_DISCARD) {
     if (material.flags & FLAG_ALPHA_MASK) != 0u && base.a < material.alpha_cutoff {
         discard;
     }
+}
 
     var rgb = base.rgb;
     if (dynamic_lights.globals.flags & GLOBALS_FLAG_DEBUG_LIGHTING) != 0u {
