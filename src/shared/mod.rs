@@ -1,5 +1,6 @@
 //! Small kernel used by two or more slices: stable bake identity, the GPU light record,
-//! scene-wide settings, math helpers, the base WESL types module and the shader variant.
+//! scene-wide settings, math helpers, per-frame shader buffer writes, the base WESL types
+//! module and the shader variant.
 //!
 //! Shaders import the types module as `dynlight::shared::shaders::types` and the generated
 //! variant constants as `dynlight::shared::shaders::variant`.
@@ -13,6 +14,7 @@ pub mod math;
 pub mod mesh_hash;
 mod name_path;
 mod settings;
+mod shader_buffer;
 mod variant;
 #[cfg(test)]
 pub(crate) mod wesl_check;
@@ -30,6 +32,7 @@ pub use settings::{
     DEBUG_LIGHT_COUNT_MAX, DebugView, DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality,
     ShaderFeatures, TrackingMode, TriangleIdSource,
 };
+pub use shader_buffer::{buffer_capacity, frame_shader_buffer, write_shader_buffer};
 pub use variant::{ShaderVariant, VARIANT_SHADER};
 
 pub struct SharedPlugin;

@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
 use super::area::AreaLightShape;
-use crate::shared::{BakeId, GpuLight, GpuLightGlobals};
+use crate::shared::{BakeId, GpuLight, GpuLightGlobals, frame_shader_buffer, write_shader_buffer};
 
 /// The light buffer every `DynLitMaterial` binds. Its layout is the WESL `DynamicLights`: the
 /// [`GpuLightGlobals`] header, then the baked slots, then the realtime lights.
@@ -70,13 +70,17 @@ impl PackedLights {
     /// The buffer contents. Always holds at least one light record, because a WGSL runtime-sized
     /// array can't be bound empty.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = bytemuck::bytes_of(&self.globals).to_vec();
-        if self.lights.is_empty() {
-            bytes.extend_from_slice(bytemuck::bytes_of(&GpuLight::DISABLED));
+        self.parts().concat()
+    }
+
+    /// The buffer contents in two parts: the globals, then the lights.
+    pub fn parts(&self) -> [&[u8]; 2] {
+        let lights = if self.lights.is_empty() {
+            bytemuck::bytes_of(&GpuLight::DISABLED)
         } else {
-            bytes.extend_from_slice(bytemuck::cast_slice(&self.lights));
-        }
-        bytes
+            bytemuck::cast_slice(&self.lights)
+        };
+        [bytemuck::bytes_of(&self.globals), lights]
     }
 }
 
@@ -85,8 +89,7 @@ pub(super) fn create_light_buffer(app: &mut App) {
     let Some(mut buffers) = app.world_mut().get_resource_mut::<Assets<ShaderBuffer>>() else {
         return;
     };
-    let mut buffer = ShaderBuffer::from(PackedLights::default().to_bytes());
-    buffer.label = "dynlight lights".into();
+    let buffer = frame_shader_buffer(&PackedLights::default().to_bytes(), "dynlight lights");
     buffers
         .insert(&LIGHT_BUFFER, buffer)
         .expect("the light buffer handle is a fixed UUID");
@@ -103,8 +106,7 @@ pub(super) fn upload_lights(
     let Some(mut buffer) = buffers.get_mut(&LIGHT_BUFFER) else {
         return;
     };
-    buffer.clear();
-    buffer.extend_from_slice(&packed.to_bytes());
+    write_shader_buffer(&mut buffer, &packed.parts(), 0);
 }
 
 #[cfg(test)]

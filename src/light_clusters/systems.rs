@@ -6,7 +6,7 @@ use bevy::render::storage::ShaderBuffer;
 use super::assign::{ClusterLists, GridOff, build};
 use super::buffer::REALTIME_CLUSTERS;
 use crate::light::PackedLights;
-use crate::shared::DynamicLightingSettings;
+use crate::shared::{DynamicLightingSettings, write_shader_buffer};
 
 /// This frame's cluster lists, and why the grid is off when it is.
 #[derive(Resource, Default, Debug)]
@@ -34,16 +34,15 @@ pub(super) fn build_clusters(
             realtime.len()
         );
     }
-    let clusters = &mut *clusters;
-    match built {
-        Ok(lists) => {
-            clusters.lists = lists;
-            clusters.off = None;
-        }
-        Err(reason) => {
-            clusters.lists = ClusterLists::default();
-            clusters.off = Some(reason);
-        }
+    let (lists, off) = match built {
+        Ok(lists) => (lists, None),
+        Err(reason) => (ClusterLists::default(), Some(reason)),
+    };
+    // Unchanged lists (still lights, still camera) skip the upload.
+    if clusters.lists != lists || clusters.off != off {
+        let clusters = &mut *clusters;
+        clusters.lists = lists;
+        clusters.off = off;
     }
 }
 
@@ -51,12 +50,14 @@ pub(super) fn upload_clusters(
     clusters: Res<RealtimeClusters>,
     buffers: Option<ResMut<Assets<ShaderBuffer>>>,
 ) {
+    if !clusters.is_changed() {
+        return;
+    }
     let Some(mut buffers) = buffers else {
         return;
     };
     let Some(mut buffer) = buffers.get_mut(&REALTIME_CLUSTERS) else {
         return;
     };
-    buffer.clear();
-    buffer.extend_from_slice(&clusters.lists.to_bytes());
+    write_shader_buffer(&mut buffer, &clusters.lists.parts(), ClusterLists::MIN_LEN);
 }

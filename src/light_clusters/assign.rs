@@ -36,14 +36,20 @@ impl ClusterLists {
     /// struct ending in a runtime-sized array as at least one element, rounded up to the
     /// struct's 16-byte alignment, and rejects smaller bindings.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = bytemuck::bytes_of(&self.header).to_vec();
-        bytes.extend_from_slice(bytemuck::cast_slice(&self.words));
-        let padded = bytes
-            .len()
-            .max(GPU_CLUSTER_HEADER_SIZE + 4)
-            .next_multiple_of(16);
-        bytes.resize(padded, 0);
+        let mut bytes = self.parts().concat();
+        bytes.resize(bytes.len().max(Self::MIN_LEN).next_multiple_of(16), 0);
         bytes
+    }
+
+    /// The smallest buffer WGSL binds, before padding to 16 bytes.
+    pub const MIN_LEN: usize = GPU_CLUSTER_HEADER_SIZE + 4;
+
+    /// The buffer contents before the padding: the header, then the words.
+    pub fn parts(&self) -> [&[u8]; 2] {
+        [
+            bytemuck::bytes_of(&self.header),
+            bytemuck::cast_slice(&self.words),
+        ]
     }
 
     /// The realtime lights a cell lists.
