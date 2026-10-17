@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::bake::{BakedScene, DynLightBake};
 use crate::light::{BakedLightSlots, BakedSlot};
-use crate::shared::DynamicGeometryMode;
+use crate::shared::{DynamicGeometryMode, SceneLoading};
 
 use super::layout::{BakedBuffers, ReceiverInput, SceneInput, flags};
 use super::systems::AppliedBake;
@@ -68,6 +68,23 @@ pub fn scene_slots(scene: &BakedScene) -> Vec<BakedSlot> {
             shadow_bits_per_texel: light.shadow_bits_per_texel,
         })
         .collect()
+}
+
+/// Marks the scene as loading while [`ActiveBake`] names a bake that hasn't loaded and hasn't
+/// failed to. `apply_bake` applies it in the frame it loads.
+pub(super) fn note_bake_loading(
+    active: Res<ActiveBake>,
+    bakes: Res<Assets<DynLightBake>>,
+    server: Option<Res<AssetServer>>,
+    mut loading: ResMut<SceneLoading>,
+) {
+    let Some(handle) = &active.0 else {
+        return;
+    };
+    let failed = server.is_some_and(|server| server.load_state(handle).is_failed());
+    if bakes.get(handle).is_none() && !failed {
+        loading.0 = true;
+    }
 }
 
 /// Applies [`ActiveBake`] when it changes or its asset (re)loads.

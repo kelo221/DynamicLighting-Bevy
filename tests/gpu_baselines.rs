@@ -53,6 +53,19 @@ fn lighting_test_triangle_ids_match_the_overview() {
     );
 }
 
+/// `FeatureSelection::Automatic` must compile every path the scene uses, so the frame is the
+/// same as with every path compiled in.
+#[test]
+#[ignore = "needs a GPU"]
+fn lighting_test_automatic_features_match_the_overview() {
+    check_against(
+        "lighting_test_automatic_features",
+        "lighting_test_overview",
+        "lighting_test",
+        &["--bake", "--auto-features", "--camera", OVERVIEW],
+    );
+}
+
 /// Direct3D 12 without `dxcompiler.dll` falls back to the old FXC compiler, which rejects some
 /// shaders that DXC and Vulkan accept (an array inside a struct written at a run-time index).
 #[cfg(windows)]

@@ -7,6 +7,7 @@
 
 mod bake_id;
 pub mod cube;
+mod feature_choice;
 mod feature_use;
 mod globals;
 mod gpu_light;
@@ -23,14 +24,14 @@ use bevy::prelude::*;
 use bevy::shader::{Shader, load_shader_library};
 
 pub use bake_id::{BakeId, ResolvedBakeId};
-pub use feature_use::ShaderFeaturesInUse;
+pub use feature_use::{LitShaderFeatures, SceneLoading, ShaderFeaturesInUse};
 pub use globals::{GPU_LIGHT_GLOBALS_SIZE, GpuLightGlobals};
 pub use gpu_light::{ChannelFlags, GPU_LIGHT_SIZE, GpuLight};
 pub use mesh_hash::{hash_mesh, mesh_content_hash};
 pub use name_path::NamePaths;
 pub use settings::{
-    DEBUG_LIGHT_COUNT_MAX, DebugView, DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality,
-    ShaderFeatures, TrackingMode, TriangleIdSource,
+    DEBUG_LIGHT_COUNT_MAX, DebugView, DynamicGeometryMode, DynamicLightingSettings,
+    FeatureSelection, RuntimeQuality, ShaderFeatures, TrackingMode, TriangleIdSource,
 };
 pub use shader_buffer::{buffer_capacity, frame_shader_buffer, write_shader_buffer};
 pub use variant::{ShaderVariant, VARIANT_SHADER};

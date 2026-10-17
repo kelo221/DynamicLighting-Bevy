@@ -5,11 +5,14 @@
 //! The variant is a generated WESL module, `dynlight::shared::shaders::variant`, of constants.
 //! Replacing it makes Bevy recompile every pipeline that imports it, so changing a variant
 //! setting stalls those meshes for the compile (a second or more); meant for settings menus.
+//! While there is no module, as when `FeatureSelection::Automatic` waits for the scene, lit
+//! pipelines wait for it.
 
 use bevy::asset::uuid_handle;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 
+use super::feature_use::{LitShaderFeatures, choose_features};
 use super::settings::{DynamicLightingSettings, RuntimeQuality, ShaderFeatures};
 
 /// The generated variant module.
@@ -25,6 +28,8 @@ pub struct ShaderVariant {
 }
 
 impl ShaderVariant {
+    /// The variant of `settings` with all of its `shader_features`, as
+    /// [`FeatureSelection::Fixed`](super::settings::FeatureSelection::Fixed) compiles it.
     pub fn new(settings: &DynamicLightingSettings) -> Self {
         Self {
             quality: settings.quality,
@@ -53,34 +58,58 @@ impl ShaderVariant {
     }
 }
 
-/// The variant in [`VARIANT_SHADER`].
+/// The variant in [`VARIANT_SHADER`]; `None` while there is none, so lit pipelines wait.
 #[derive(Resource)]
-struct CompiledVariant(ShaderVariant);
+struct CompiledVariant(Option<ShaderVariant>);
 
-/// Installs the variant module for the current settings and replaces it when they change.
+/// Installs the variant module for the current settings and [`LitShaderFeatures`], and replaces
+/// it when they change.
 pub(super) fn plugin(app: &mut App) {
-    let variant = ShaderVariant::new(app.world().resource::<DynamicLightingSettings>());
-    let mut shaders = app.world_mut().resource_mut::<Assets<Shader>>();
-    shaders
-        .insert(VARIANT_SHADER.id(), variant.shader())
-        .expect("UUID asset ids always insert");
+    let settings = app.world().resource::<DynamicLightingSettings>();
+    let features = app.world().resource::<LitShaderFeatures>().0;
+    let variant = features.map(|features| ShaderVariant {
+        quality: settings.quality,
+        features,
+    });
+    if let Some(variant) = variant {
+        let mut shaders = app.world_mut().resource_mut::<Assets<Shader>>();
+        shaders
+            .insert(VARIANT_SHADER.id(), variant.shader())
+            .expect("UUID asset ids always insert");
+    }
     app.insert_resource(CompiledVariant(variant)).add_systems(
-        PostUpdate,
-        update_variant.run_if(resource_changed::<DynamicLightingSettings>),
+        Last,
+        update_variant.after(choose_features).run_if(
+            resource_changed::<DynamicLightingSettings>
+                .or_eager(resource_changed::<LitShaderFeatures>),
+        ),
     );
 }
 
 fn update_variant(
     settings: Res<DynamicLightingSettings>,
+    features: Res<LitShaderFeatures>,
     mut compiled: ResMut<CompiledVariant>,
     mut shaders: ResMut<Assets<Shader>>,
 ) -> Result {
-    let variant = ShaderVariant::new(&settings);
-    if variant != compiled.0 {
-        info!("dynlight: shader variant {variant:?}, recompiling the lit shaders");
-        shaders.insert(VARIANT_SHADER.id(), variant.shader())?;
-        compiled.0 = variant;
+    let variant = features.0.map(|features| ShaderVariant {
+        quality: settings.quality,
+        features,
+    });
+    if variant == compiled.0 {
+        return Ok(());
     }
+    match variant {
+        Some(variant) => {
+            info!("dynlight: shader variant {variant:?}, compiling the lit shaders");
+            shaders.insert(VARIANT_SHADER.id(), variant.shader())?;
+        }
+        None => {
+            info!("dynlight: the lit shaders wait for the scene to choose their features");
+            shaders.remove(VARIANT_SHADER.id());
+        }
+    }
+    compiled.0 = variant;
     Ok(())
 }
 

@@ -62,9 +62,12 @@ impl Plugin for BakedLightingPlugin {
         if app.world().contains_resource::<Assets<DynLightBake>>() {
             app.add_systems(
                 PostUpdate,
-                apply::apply_bake
-                    .before(systems::upload_bake)
-                    .before(systems::tag_receivers)
+                (
+                    apply::apply_bake
+                        .before(systems::upload_bake)
+                        .before(systems::tag_receivers),
+                    apply::note_bake_loading,
+                )
                     .in_set(BakedLightingSystems),
             );
         }

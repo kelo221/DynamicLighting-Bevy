@@ -1,11 +1,12 @@
 //! Baking the test scene: native `--bake` (or B) writes `assets/lighting_test.dynlight`;
 //! an existing bake is applied at startup. Browser runs automatically bake a small in-memory
-//! Preview (shadows only, no bounce). `--triangle-ids` forces the primitive-index fallback.
+//! Preview (shadows only, no bounce). `--triangle-ids` forces the primitive-index fallback, and
+//! `--auto-features` compiles only the shader features the scene uses.
 
 use bevy::prelude::*;
 use dynlight::bake::{BakeFinished, BakePreset, BakeStatus};
 use dynlight::baked_lighting::ActiveBake;
-use dynlight::shared::{DynamicLightingSettings, TriangleIdSource};
+use dynlight::shared::{DynamicLightingSettings, FeatureSelection, TriangleIdSource};
 
 use crate::baking::PendingBake;
 use crate::{WARM_UP_SECONDS, WarmUp, baking, support};
@@ -20,10 +21,22 @@ pub fn plugin(app: &mut App) {
             ready_at: f32::INFINITY,
         });
     }
-    if support::args().any(|arg| arg == "--triangle-ids") {
+    let triangle_ids = support::args().any(|arg| arg == "--triangle-ids");
+    let automatic = support::args().any(|arg| arg == "--auto-features");
+    if triangle_ids || automatic {
+        let defaults = DynamicLightingSettings::default();
         app.insert_resource(DynamicLightingSettings {
-            triangle_ids: TriangleIdSource::VertexAttribute,
-            ..default()
+            triangle_ids: if triangle_ids {
+                TriangleIdSource::VertexAttribute
+            } else {
+                defaults.triangle_ids
+            },
+            feature_selection: if automatic {
+                FeatureSelection::Automatic
+            } else {
+                defaults.feature_selection
+            },
+            ..defaults
         });
     }
     app.add_plugins(baking::plugin)

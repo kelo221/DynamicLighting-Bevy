@@ -110,6 +110,17 @@ app.insert_resource(DynamicLightingSettings {
 
 Changing either setting at runtime recompiles the lit shaders, which takes a second or more. If the scene uses a path that is switched off for 3 seconds, a warning names it.
 
+Or let dynlight pick the paths the scene uses, the way Henry's package sets its shader keywords when a scene loads:
+
+```rust,ignore
+app.insert_resource(DynamicLightingSettings {
+    feature_selection: FeatureSelection::Automatic,
+    ..default()
+});
+```
+
+The lit shader then waits until the scene's bake is applied and compiles once with only the paths in use (at most `shader_features`). A path first needed later, such as the first spot light spawned in a scene of point lights, is added then, and the recompile hides lit meshes for a second or more. Applying another bake chooses again. It suits scenes whose kinds of lights and meshes are known when they load.
+
 ### Platforms
 
 - **Primitive indices:** baked shadows are looked up by triangle. On GPUs with wgpu's `PRIMITIVE_INDEX` feature (desktop Vulkan, DX12, Metal) this is free. Elsewhere, baked meshes are de-indexed when they load and carry a triangle-ID vertex attribute instead. `DynamicLightingSettings::triangle_ids` forces either path.
@@ -146,10 +157,10 @@ Setup: 1920×1080, 4× MSAA, RTX 4080 SUPER, Direct3D 12 for all three, 512² sh
 | 15 of 100 lights with realtime shadows, scene still | 1.88 ms | 22.9 ms | 7.09 ms | 0.36 ms | – | 2.06 ms |
 | 15 of 100 lights with realtime shadows, scene moving | 19.8 ms | 22.9 ms | 7.16 ms | – | – | 2.09 ms |
 
-The GPU columns don't measure the same thing. dynlight's and Bevy's are the main lit pass alone (wgpu timestamps); the harness doesn't report it while shadows move or for Bevy's shadowed lights. Henry's is Unity's GPU time for the whole frame. The shadow rows use 15 lights because Henry's package turns realtime shadows off for good after a frame that fills all 16 of its cubemaps.
+The GPU columns don't measure the same thing. dynlight's and Bevy's are the main lit pass alone (wgpu timestamps); the harness doesn't report it while shadows move or for Bevy's shadowed lights. Henry's is Unity's GPU time for the whole frame. The shadow rows use 15 lights because Henry's package turns realtime shadows off for good after a frame that fills all 16 of its cubemaps. Bevy doesn't sort opaque draws front to back, and its draw order changes from build to build, so the same scene can shade up to 30% more fragments in another build of either engine; the lit-pass numbers carry that uncertainty. A `DepthPrepass` on the camera makes each pixel shade once.
 
 - **Frame time** in dynlight and Bevy is mostly engine overhead: about 1.9 ms for dynlight and 2.0–2.2 ms for Bevy's own lights. dynlight saves a little by not running Bevy's GPU light clustering, which it doesn't need. Unity's player needs about 0.4 ms.
-- **Baked lights** shade faster than Bevy's lights without shadows, and their shadows cost nothing at runtime. Like Henry's package, dynlight compiles its lit shader for the quality tier and the material's shading model. Switching off the lighting paths this scene doesn't use (`shader_features`, see Usage) brings the pass to 0.45 ms, level with Henry's 0.46 ms for the whole frame.
+- **Baked lights** shade faster than Bevy's lights without shadows, and their shadows cost nothing at runtime. Like Henry's package, dynlight compiles its lit shader for the quality tier and the material's shading model. Switching off the lighting paths this scene doesn't use (`shader_features`, or `FeatureSelection::Automatic`, which picks the same paths here; see Usage) brings the pass to 0.45 ms, level with Henry's 0.46 ms for the whole frame.
 - **Realtime lights** are sorted into the cells of a view-space grid, as Bevy does, so a pixel only visits the lights that reach it. Henry's shader visits every realtime light at every pixel, so his 1000-light frame takes four times our lit pass.
 - **Realtime shadows** are cached in dynlight: a cubemap face only redraws where something changed, so a still scene renders none. Bevy's and Henry's still scenes cost as much as their moving ones. When everything moves, all three redraw 90 faces per frame. Unity does that in about 7 ms; Bevy's per-view cost puts dynlight at 19.8 ms and Bevy at 22.9 ms.
 - **The images match.** Rendered without tonemapping from the same camera, dynlight's and Henry's frames of the stress, light-type and shadow scenes differ on average by 0.01–0.14 of one 8-bit step. At most 0.2% of pixels differ by more than 16 steps, all along pillar edges.

@@ -21,8 +21,11 @@ pub struct DynamicLightingSettings {
     /// Compiled into the lit shader: changing it recompiles the lit pipelines, which stalls lit
     /// meshes for a second or more.
     pub quality: RuntimeQuality,
-    /// The lighting paths compiled into the lit shader; see [`ShaderFeatures`].
+    /// The lighting paths compiled into the lit shader; see [`ShaderFeatures`]. With
+    /// [`FeatureSelection::Automatic`], the most that may be compiled in.
     pub shader_features: ShaderFeatures,
+    /// Whether the lit shader gets all of [`Self::shader_features`] or only those the scene uses.
+    pub feature_selection: FeatureSelection,
     pub dynamic_geometry: DynamicGeometryMode,
     pub tracking: TrackingMode,
     pub triangle_ids: TriangleIdSource,
@@ -40,6 +43,7 @@ impl Default for DynamicLightingSettings {
             shadow_cubemap_budget: 16,
             quality: RuntimeQuality::default(),
             shader_features: ShaderFeatures::ALL,
+            feature_selection: FeatureSelection::Fixed,
             dynamic_geometry: DynamicGeometryMode::default(),
             tracking: TrackingMode::default(),
             triangle_ids: TriangleIdSource::default(),
@@ -117,6 +121,43 @@ impl ShaderFeatures {
             ("bounce", self.bounce),
         ]
     }
+
+    /// The features on in `self` or in `other`.
+    pub fn union(self, other: Self) -> Self {
+        self.zip(other, |a, b| a || b)
+    }
+
+    /// The features on in both `self` and `other`.
+    pub fn intersection(self, other: Self) -> Self {
+        self.zip(other, |a, b| a && b)
+    }
+
+    fn zip(self, other: Self, f: impl Fn(bool, bool) -> bool) -> Self {
+        Self {
+            light_patterns: f(self.light_patterns, other.light_patterns),
+            area_lights: f(self.area_lights, other.area_lights),
+            realtime_lights: f(self.realtime_lights, other.realtime_lights),
+            realtime_shadows: f(self.realtime_shadows, other.realtime_shadows),
+            unbaked_meshes: f(self.unbaked_meshes, other.unbaked_meshes),
+            bounce: f(self.bounce, other.bounce),
+        }
+    }
+}
+
+/// How the lit shader's [`ShaderFeatures`] are chosen.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[reflect(Default, Debug, PartialEq, Hash, Clone)]
+pub enum FeatureSelection {
+    /// Compile all of `DynamicLightingSettings::shader_features`.
+    #[default]
+    Fixed,
+    /// Compile only the features of `shader_features` the scene uses, the way Henry's package
+    /// sets its shader keywords when a scene loads. The lit shader waits until the scene's bake
+    /// is applied and then compiles once, so lit meshes appear when it is done. A feature first
+    /// needed later is switched on then, which recompiles the lit shader: lit meshes disappear
+    /// for a second or more. Applying another bake chooses again. Meant for scenes whose kinds
+    /// of lights and meshes are known when they load.
+    Automatic,
 }
 
 impl Default for ShaderFeatures {

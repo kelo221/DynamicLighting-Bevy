@@ -12,7 +12,7 @@ use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
 
-use crate::shared::DynamicLightingSettings;
+use crate::shared::{DynamicLightingSettings, SceneLoading};
 
 use super::asset::{DynLightBake, HeadlessBakes};
 use super::format::{BakeStats, BakedScene, encode};
@@ -105,6 +105,13 @@ struct BakeOutput {
 impl BakeStatus {
     pub fn is_running(&self) -> bool {
         self.running.is_some()
+    }
+
+    /// Marks the scene as loading while a bake runs: its lights are realtime until it applies.
+    pub(super) fn note_loading(status: Res<Self>, mut loading: ResMut<SceneLoading>) {
+        if status.is_running() {
+            loading.0 = true;
+        }
     }
 
     /// Progress of the running bake.

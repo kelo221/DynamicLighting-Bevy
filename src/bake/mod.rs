@@ -82,7 +82,12 @@ impl Plugin for BakePlugin {
                 PostUpdate,
                 (
                     identity::resolve_bake_ids.in_set(BakeSystems::ResolveIds),
-                    (systems::finish_bakes, systems::start_bakes).chain(),
+                    (
+                        systems::finish_bakes,
+                        systems::start_bakes,
+                        BakeStatus::note_loading,
+                    )
+                        .chain(),
                 )
                     .after(TransformSystems::Propagate),
             );
