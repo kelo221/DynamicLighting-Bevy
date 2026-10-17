@@ -1,7 +1,8 @@
 //! The face pass, run for each face view: its casters are drawn into a depth texture shared by
 //! all faces, depth becomes variance moments with a horizontal blur into a scratch texture, then
 //! a vertical blur writes the face's layer of the cube array (Henry's two Gaussian blur blits).
-//! Both blurs read their width from the face uniform.
+//! Both blurs read their width from the face uniform. A face with no casters only clears its
+//! layer.
 
 use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
@@ -13,11 +14,11 @@ use bevy::render::render_phase::ViewBinnedRenderPhases;
 use bevy::render::render_resource::binding_types::{texture_2d, texture_depth_2d, uniform_buffer};
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d, FragmentState, LoadOp,
-    Operations, PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
-    RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, StoreOp, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureId, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, TextureViewDimension,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, CommandEncoder, Extent3d, FragmentState,
+    LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StoreOp,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureId, TextureSampleType,
+    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
 use bevy::render::texture::GpuImage;
@@ -240,6 +241,9 @@ type FaceView = (
     &'static ViewUniformOffset,
 );
 
+/// What a face without casters ends up as: moments (1, 1), the light's radius everywhere.
+const UNSHADOWED: LinearRgba = LinearRgba::new(1.0, 1.0, 0.0, 1.0);
+
 /// Renders one face. When it can't, it tells the main world to render the cubes again.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn shadow_face_pass(
@@ -254,14 +258,28 @@ pub(super) fn shadow_face_pass(
     mut ctx: RenderContext,
 ) {
     let (view_entity, extracted, face, face_index, view_offset) = view.into_inner();
+    let Some(target) = layers.layers.get(face.layer as usize) else {
+        feedback.report_incomplete();
+        return;
+    };
+    let phase = phases.get(&extracted.retained_view_entity);
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    // The depth, moments and blur passes of an empty face only turn cleared depth into
+    // `UNSHADOWED`, so the layer is cleared to it instead.
+    let Some(phase) = phase.filter(|phase| !phase.is_empty()) else {
+        let time_span = diagnostics.time_span(ctx.command_encoder(), "dynlight_shadow_face");
+        color_pass(ctx.command_encoder(), target, UNSHADOWED, None);
+        time_span.end(ctx.command_encoder());
+        return;
+    };
     let Some(variant) = pipelines.variant(layers.format) else {
         feedback.report_incomplete();
         return;
     };
-    let (Some(moments), Some(blur), Some(target), Some(moments_group), Some(blur_group)) = (
+    let (Some(moments), Some(blur), Some(moments_group), Some(blur_group)) = (
         cache.get_render_pipeline(variant.moments),
         cache.get_render_pipeline(variant.blur),
-        layers.layers.get(face.layer as usize),
         groups.moments.as_ref(),
         groups.blur.as_ref(),
     ) else {
@@ -270,8 +288,6 @@ pub(super) fn shadow_face_pass(
     };
     let depth = &pipelines.depth;
 
-    let diagnostics = ctx.diagnostic_recorder();
-    let diagnostics = diagnostics.as_deref();
     let time_span = diagnostics.time_span(ctx.command_encoder(), "dynlight_shadow_face");
     {
         let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
@@ -289,9 +305,7 @@ pub(super) fn shadow_face_pass(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        if let Some(phase) = phases.get(&extracted.retained_view_entity)
-            && let Err(error) = phase.render(&mut pass, world, view_entity)
-        {
+        if let Err(error) = phase.render(&mut pass, world, view_entity) {
             error!(
                 "dynlight shadows: face {} failed to draw: {error:?}",
                 face.layer
@@ -313,22 +327,42 @@ pub(super) fn shadow_face_pass(
         (blur, blur_group, target, &[face_offset][..]),
     ];
     for (pipeline, group, target, offsets) in passes {
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("dynlight_shadow_face"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations::default(),
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        color_pass(
+            encoder,
+            target,
+            LinearRgba::NONE,
+            Some((pipeline, group, offsets)),
+        );
+    }
+    time_span.end(ctx.command_encoder());
+}
+
+/// Clears `target` to `clear`, then draws a fullscreen triangle with `draw` if given.
+fn color_pass(
+    encoder: &mut CommandEncoder,
+    target: &TextureView,
+    clear: LinearRgba,
+    draw: Option<(&RenderPipeline, &BindGroup, &[u32])>,
+) {
+    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        label: Some("dynlight_shadow_face"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Clear(clear.into()),
+                store: StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    if let Some((pipeline, group, offsets)) = draw {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, offsets);
         pass.draw(0..3, 0..1);
     }
-    time_span.end(ctx.command_encoder());
 }
