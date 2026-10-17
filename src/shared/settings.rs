@@ -81,6 +81,8 @@ pub struct ShaderFeatures {
     pub realtime_shadows: bool,
     /// Meshes without bake data, such as moving meshes. Off: they only get ambient light.
     pub unbaked_meshes: bool,
+    /// Baked bounce light. Off: baked lights add only their direct light.
+    pub bounce: bool,
 }
 
 impl ShaderFeatures {
@@ -90,6 +92,7 @@ impl ShaderFeatures {
         realtime_lights: true,
         realtime_shadows: true,
         unbaked_meshes: true,
+        bounce: true,
     };
     pub const NONE: Self = Self {
         light_patterns: false,
@@ -97,16 +100,21 @@ impl ShaderFeatures {
         realtime_lights: false,
         realtime_shadows: false,
         unbaked_meshes: false,
+        bounce: false,
     };
 
+    /// The number of features in [`Self::list`].
+    pub const COUNT: usize = 6;
+
     /// `(name, enabled)` of every feature, for messages and the variant module.
-    pub fn list(&self) -> [(&'static str, bool); 5] {
+    pub fn list(&self) -> [(&'static str, bool); Self::COUNT] {
         [
             ("light_patterns", self.light_patterns),
             ("area_lights", self.area_lights),
             ("realtime_lights", self.realtime_lights),
             ("realtime_shadows", self.realtime_shadows),
             ("unbaked_meshes", self.unbaked_meshes),
+            ("bounce", self.bounce),
         ]
     }
 }

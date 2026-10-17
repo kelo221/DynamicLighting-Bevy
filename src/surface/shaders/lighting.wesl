@@ -9,7 +9,7 @@ import dynlight::dynamic_geometry::shaders::light_bvh::{
     BvhStack, bvh_node_count, bvh_start, bvh_next,
 };
 import dynlight::shared::shaders::variant::{
-    QUALITY, FEATURE_REALTIME_LIGHTS, FEATURE_UNBAKED_MESHES,
+    QUALITY, FEATURE_REALTIME_LIGHTS, FEATURE_UNBAKED_MESHES, FEATURE_BOUNCE,
 };
 import dynlight::dynamic_geometry::shaders::distance_cubes::{cube_shadow, cube_area_shadow};
 import dynlight::light::shaders::area::area_shape;
@@ -162,7 +162,7 @@ fn add_baked(
     if !geometry.in_range {
         return;
     }
-    let has_bounce = entry.bounce != 0u && QUALITY != QUALITY_INTEGRATED;
+    let has_bounce = FEATURE_BOUNCE && entry.bounce != 0u && QUALITY != QUALITY_INTEGRATED;
     if !has_bounce && geometry.ndotl == 0.0 {
         return;
     }

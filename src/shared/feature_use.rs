@@ -23,8 +23,8 @@ impl Default for ShaderFeaturesInUse {
 /// Since when each switched-off feature has been in use, and which were reported.
 #[derive(Resource, Default, Debug)]
 pub(super) struct MissingFeatures {
-    since: [Option<f32>; 5],
-    reported: [bool; 5],
+    since: [Option<f32>; ShaderFeatures::COUNT],
+    reported: [bool; ShaderFeatures::COUNT],
 }
 
 impl MissingFeatures {

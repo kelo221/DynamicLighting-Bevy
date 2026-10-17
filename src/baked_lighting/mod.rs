@@ -50,7 +50,7 @@ impl Plugin for BakedLightingPlugin {
             )
             .add_systems(
                 PostUpdate,
-                systems::upload_bake.in_set(BakedLightingSystems),
+                (systems::upload_bake, systems::note_bounce).in_set(BakedLightingSystems),
             );
     }
 

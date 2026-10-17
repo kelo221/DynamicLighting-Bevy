@@ -99,7 +99,7 @@ Shadow maps use the mesh's UV1, or UV0 when there is no UV1; overlapping UVs are
 
 ### Shader variants
 
-The lit shader is compiled for `DynamicLightingSettings::quality` and for the lighting paths in `DynamicLightingSettings::shader_features`: light patterns and cookies, area lights, realtime lights, realtime shadows and meshes without bake data. Everything is on by default. A game that doesn't use some of them can switch them off for a faster shader:
+The lit shader is compiled for `DynamicLightingSettings::quality` and for the lighting paths in `DynamicLightingSettings::shader_features`: light patterns and cookies, area lights, realtime lights, realtime shadows, meshes without bake data, and baked bounce light. Everything is on by default. A game that doesn't use some of them can switch them off for a faster shader:
 
 ```rust,ignore
 app.insert_resource(DynamicLightingSettings {
