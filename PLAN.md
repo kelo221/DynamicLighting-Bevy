@@ -85,12 +85,12 @@ Henry's single `DynamicLight` MonoBehaviour is split into optional components, s
 - **`DynamicLight`** (`light/`, `#[require(Transform, Visibility)]`, `Reflect`):
   - Fields and defaults mirror Henry's `C/Lighting/DynamicLight.cs`: color, intensity 2, radius 4, falloff, `realtime: bool` (Henry's realtime channel), type, shadow mode, illumination, transparency, cutoffs 26°/30°, wave/rotor/disco params, bounce (`LightBounce`: color/modifier/intensity/samples/compression), shimmer + scale + modifier. The cookie handle arrives with the `cookies/` slice in M1.
   - Enums match Henry's: shadow is `Raytraced`/`Realtime`; transparency is `Disabled`/`Enabled`/`EnabledMax`; `Shimmer` is `None`/`Water`/`Random`.
-- **`LightEffect`** (`effects/`): kind + pulse speed/modifier/offset + timestep 1/30. It requires `LightEffectState` (current intensity, fixed-timestep accumulator, per-light RNG seeded from `BakeId` or the entity).
+- **`LightEffect`** (`effects/`): kind + pulse speed/modifier/offset + timestep 1/30. It requires `LightEffectState` (current intensity, fixed-timestep accumulator, per-light RNG seeded from the explicit `BakeId`, else from the `Name` path and local position; never from the entity, whose id shifts when anything is spawned earlier).
 - **`VolumetricLight`** (`fog/`): shape (`Sphere`/`Box`/`ConeZ`/`ConeY`), radius, thickness, intensity, visibility. A light without it has no fog.
 - **`BakeStatic`** (`bake/`): the static flag. It means "casts and receives baked shadows", like Henry's `isStatic` + `shadowCastingMode != Off`.
 - **`BakeId(u64)`:** stable identity for lights and meshes. It is derived from the `Name` path + mesh handle when absent. It replaces Unity's InstanceID ordering and object references, and makes BVH order, mesh mapping and the "light moved from its baked origin" check deterministic.
 - **Resources:** Henry's manager settings are split the same way:
-  - `DynamicLightingSettings` (`shared/`): ambient, realtime light budget (32), shadow cubemap budget, quality tier, dynamic-geometry mode, tracking mode, global random seed. The volumetric budget and debug view are added with their slices.
+  - `DynamicLightingSettings` (`shared/`): ambient, realtime light budget (32), shadow cubemap budget, quality tier, the lighting paths compiled into the lit shader (`shader_features`, §7.3), dynamic-geometry mode, tracking mode, global random seed. The volumetric budget and debug view are added with their slices.
   - `BakeSettings` (`bake/`): pixel density (Henry's default 128 px/m), max lightmap size, default bounce compression.
 - **Presets:** functions that produce Henry's "special lights" (Candle, Fire, Discoball, Rotary Warning, …) with his values (`AlpacaIT.DynamicLighting.Editor/Editor/Interface/SpecialLights/*`).
 - **glTF:** `DynamicLightingGltfPlugin` does the following:
@@ -246,6 +246,12 @@ Henry's runtime keys everything on `SV_PrimitiveID`, which is WGSL `@builtin(pri
 - Debug: `DL_DEBUG_LIGHTING_ONLY`.
 
 These flags are scene-level settings, so changing them re-specializes pipelines. That's fine, because they change rarely.
+
+**How the scene-level switches are compiled (2026-10-17).** Henry compiles one shader variant per keyword combination. Bevy's shader defs are per pipeline key, so a scene-wide switch would have to be copied into every material key. Instead, `shared/variant.rs` generates a WESL module, `dynlight::shared::shaders::variant`, holding `const QUALITY: u32` and one `const FEATURE_*: bool` per entry of `DynamicLightingSettings::shader_features`. The module is an asset under a fixed handle. When the settings change it is replaced, and Bevy's shader cache recompiles every pipeline that imports it. The lit shader branches on the constants (`if QUALITY >= 2u`, `if FEATURE_AREA_LIGHTS && …`), and the backend compilers drop the dead branches as they would `if false`. Per-material switches stay in the material key: `METALLIC_SHADING` (from `ShadingModel::Metallic`) and Bevy's `MAY_DISCARD`.
+
+- The features are `light_patterns` (spot, disco, wave, … masks and cookies), `area_lights`, `realtime_lights`, `realtime_shadows` and `unbaked_meshes`. All are on by default. With one off, its lights or meshes render as if that path weren't there: area lights as points, patterned lights without their mask.
+- `ShaderFeaturesInUse` collects what the scene uses each frame (the light slice from the packed lights, `surface` from meshes without a `BakedReceiver`). When a feature is in use for 3 s while switched off, a warning names it once.
+- `GpuLightGlobals::quality` stays in the buffer for readback checks; the shaders read `QUALITY`.
 
 **Dropped:** ForwardAdd passes, the ShadowCaster pass, Unity lightmaps (`LIGHTMAP_ON`), reflection-probe macros, Unity fog, instancing macros, the legacy transparent shader, and BlitColorDepth.
 
@@ -569,6 +575,8 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
     - Rejected: rewriting the Medium and High shadow filters (`shadow_bilinear`) with `vec4` rows instead of local arrays. High got 0.12 ms faster (1.43 to 1.31 ms), but Medium, the default, 0.03 ms slower, because the unrolled High path raises register pressure for the whole shader. A running-sum loop was slower at both (Medium 1.05, High 1.78 ms). Worth trying again once quality is a shader define, like Henry's keywords.
     - Found on the way: Bevy declares the prepass `FragmentOutput` only for prepasses with color targets, so an alpha-masked `DynLitMaterial` failed to compile in depth-only prepasses, the realtime shadow pass among them. `dynlit_prepass.wesl` now has an output-less entry point for those, as Bevy's own prepass shader does.
     - README remeasured (10 alternating runs): lit pass 0.84 ms against Bevy's 1.31 ms; frames 1.99 ms for both.
+    - Shader variants (§7.3), harness `exp_variant.sh`, 10 alternating runs against the build without them, lit pass medians: Medium 0.81 → 0.69 ms, High 1.45 → 1.35 ms, Metallic 0.91 → 0.85 ms. With only the paths this scene uses (`--lean`: every `shader_features` entry off) 0.54 ms, with a wider spread (0.48–0.64 ms), and an identical image. Frames stay at about 2.1 ms. That leaves Henry's 0.46 ms whole frame close; the `vec4` shadow-filter rewrite above can now be tried for High alone.
+    - Found on the way: lights without an explicit `BakeId` seeded their effect randomness with their entity id, so adding three resources shifted every flicker and failed the baselines. They are now seeded from their `Name` path and position (AGENTS.md, "No entity ids in output").
   - 1000 realtime lights: Henry's shader visits every realtime light at every pixel; his whole frame takes 6.1 ms of GPU time against 2.0 ms for our lit pass.
   - Moving shadows (90 faces per frame): Unity redraws them in about 7 ms per frame, dynlight takes 20.7 ms and Bevy 23.0 ms; the cost is Bevy's per-view schedule run (M18). Henry redraws every face every frame, so his still scene costs the same 7 ms; ours costs 2.1 ms.
   - Bake of the 1000-light scene, direct light only for both: 1.3 s (byte-identical over three runs) against 22.2–22.6 s for Henry's baker in the editor.

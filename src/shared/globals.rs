@@ -22,7 +22,8 @@ pub struct GpuLightGlobals {
     pub baked_count: u32,
     /// Realtime lights, which follow the baked slots.
     pub realtime_count: u32,
-    /// `RuntimeQuality` as a number: 0 integrated graphics, 1 low, 2 medium, 3 high.
+    /// `RuntimeQuality::level`. The lit shader uses the compiled `QUALITY` of the shader
+    /// variant (`shared::variant`) instead; this copy is for readback checks.
     pub quality: u32,
     /// `GpuLightGlobals::FLAG_*` bits.
     pub flags: u32,

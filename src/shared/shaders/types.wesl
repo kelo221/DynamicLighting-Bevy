@@ -31,7 +31,7 @@ struct LightGlobals {
     time: f32,
     baked_count: u32,
     realtime_count: u32,
-    // 0 integrated graphics, 1 low, 2 medium, 3 high.
+    // 0 integrated graphics, 1 low, 2 medium, 3 high. Shaders use the variant's `QUALITY`.
     quality: u32,
     // `GLOBALS_FLAG_*` bits.
     flags: u32,

@@ -6,7 +6,7 @@ import dynlight::surface::shaders::bindings::{
     material, dynamic_lights, metallic_roughness_texture, metallic_roughness_sampler,
     normal_map_texture, normal_map_sampler, occlusion_texture, occlusion_sampler,
     reflection_texture, reflection_sampler, FLAG_METALLIC_ROUGHNESS_TEXTURE,
-    FLAG_OCCLUSION_TEXTURE, FLAG_REFLECTION, FLAG_METALLIC_SHADING,
+    FLAG_OCCLUSION_TEXTURE, FLAG_REFLECTION,
 };
 import dynlight::surface::shaders::brdf::fresnel_schlick_roughness;
 import dynlight::surface::shaders::light_processor::Shading;
@@ -17,6 +17,12 @@ import dynlight::shared::shaders::types::GLOBALS_FLAG_DEBUG_LIGHT_COUNT;
 const MIN_ROUGHNESS: f32 = 0.045;
 // The light count shown as full red; `DEBUG_LIGHT_COUNT_MAX` in `shared::settings`.
 const DEBUG_LIGHT_COUNT_MAX: f32 = 16.0;
+// Metallic or Diffuse shading. A pipeline variant (`DynLitKey`), as Henry's are separate shaders,
+// so Diffuse materials don't pay for the specular path.
+@if(METALLIC_SHADING)
+const SPECULAR: bool = true;
+@else
+const SPECULAR: bool = false;
 
 // The light count debug view: black for no lights, then blue, green, yellow and red at
 // `DEBUG_LIGHT_COUNT_MAX`.
@@ -58,14 +64,13 @@ fn shade(base: vec3<f32>, input: SurfaceInput, uv: vec2<f32>, camera: vec3<f32>)
 }
     roughness = clamp(roughness, MIN_ROUGHNESS, 1.0);
     let view = normalize(camera - input.world);
-    let metallic_shading = (material.flags & FLAG_METALLIC_SHADING) != 0u;
     let f0 = mix(vec3(0.04), base, metallic);
-    let lights = surface_light(input, Shading(view, f0, roughness, metallic, metallic_shading));
+    let lights = surface_light(input, Shading(view, f0, roughness, metallic, SPECULAR));
     if (dynamic_lights.globals.flags & GLOBALS_FLAG_DEBUG_LIGHT_COUNT) != 0u {
         return light_count_color(lights.lights);
     }
     let ambient = dynamic_lights.globals.ambient;
-    if !metallic_shading {
+    if !SPECULAR {
         return base * (ambient + lights.diffuse) * occlusion;
     }
 

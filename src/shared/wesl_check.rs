@@ -92,6 +92,14 @@ pub(crate) fn compile(
     module
 }
 
+/// `(import path, source)` of the generated shader variant module for `variant`.
+pub(crate) fn shared_variant(
+    variant: crate::shared::ShaderVariant,
+) -> (&'static str, &'static str) {
+    let source: &'static str = Box::leak(variant.source().into_boxed_str());
+    ("dynlight::shared::shaders::variant", source)
+}
+
 pub(crate) fn compile_shared_types() -> naga::Module {
     compile(SHARED_TYPES.0, &[SHARED_TYPES], &[])
 }

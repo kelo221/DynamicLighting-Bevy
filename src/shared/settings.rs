@@ -18,7 +18,11 @@ pub struct DynamicLightingSettings {
     pub realtime_cluster_min_lights: u32,
     /// Most lights with realtime shadow cubemaps at once.
     pub shadow_cubemap_budget: u32,
+    /// Compiled into the lit shader: changing it recompiles the lit pipelines, which stalls lit
+    /// meshes for a second or more.
     pub quality: RuntimeQuality,
+    /// The lighting paths compiled into the lit shader; see [`ShaderFeatures`].
+    pub shader_features: ShaderFeatures,
     pub dynamic_geometry: DynamicGeometryMode,
     pub tracking: TrackingMode,
     pub triangle_ids: TriangleIdSource,
@@ -35,6 +39,7 @@ impl Default for DynamicLightingSettings {
             realtime_cluster_min_lights: 8,
             shadow_cubemap_budget: 16,
             quality: RuntimeQuality::default(),
+            shader_features: ShaderFeatures::ALL,
             dynamic_geometry: DynamicGeometryMode::default(),
             tracking: TrackingMode::default(),
             triangle_ids: TriangleIdSource::default(),
@@ -57,6 +62,61 @@ impl DynamicLightingSettings {
     }
 }
 
+/// The lighting paths compiled into the lit shader, all on by default. A path a scene never uses
+/// still costs every lit pixel, because the shader reserves registers for it; switching it off
+/// works like leaving out one of Henry's shader keywords. A light or mesh that needs a path that
+/// is off renders without it, and a warning names the path. Changing these recompiles the lit
+/// pipelines, which stalls lit meshes for a second or more, so set them up front.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[reflect(Default, Debug, PartialEq, Hash, Clone)]
+pub struct ShaderFeatures {
+    /// Spot and discoball cones, cookies and the pattern types (wave, interference, rotor, shock,
+    /// disco). Off: these lights shine like point lights.
+    pub light_patterns: bool,
+    /// Rectangle and tube lights. Off: they shine like point lights at their position.
+    pub area_lights: bool,
+    /// Realtime lights, which include baked lights that moved or grew. Off: they add no light.
+    pub realtime_lights: bool,
+    /// Realtime shadow cubemaps. Off: lights that have one are unshadowed on moving meshes.
+    pub realtime_shadows: bool,
+    /// Meshes without bake data, such as moving meshes. Off: they only get ambient light.
+    pub unbaked_meshes: bool,
+}
+
+impl ShaderFeatures {
+    pub const ALL: Self = Self {
+        light_patterns: true,
+        area_lights: true,
+        realtime_lights: true,
+        realtime_shadows: true,
+        unbaked_meshes: true,
+    };
+    pub const NONE: Self = Self {
+        light_patterns: false,
+        area_lights: false,
+        realtime_lights: false,
+        realtime_shadows: false,
+        unbaked_meshes: false,
+    };
+
+    /// `(name, enabled)` of every feature, for messages and the variant module.
+    pub fn list(&self) -> [(&'static str, bool); 5] {
+        [
+            ("light_patterns", self.light_patterns),
+            ("area_lights", self.area_lights),
+            ("realtime_lights", self.realtime_lights),
+            ("realtime_shadows", self.realtime_shadows),
+            ("unbaked_meshes", self.unbaked_meshes),
+        ]
+    }
+}
+
+impl Default for ShaderFeatures {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
 /// Shadow filtering quality. Meant for an in-game graphics setting.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[reflect(Default, Debug, PartialEq, Hash, Clone)]
@@ -70,6 +130,18 @@ pub enum RuntimeQuality {
     Medium,
     /// Bilinear filtering plus a 5×5 Gaussian.
     High,
+}
+
+impl RuntimeQuality {
+    /// The level shaders compare against: 0 for integrated graphics up to 3 for high.
+    pub const fn level(self) -> u32 {
+        match self {
+            Self::IntegratedGraphics => 0,
+            Self::Low => 1,
+            Self::Medium => 2,
+            Self::High => 3,
+        }
+    }
 }
 
 /// How meshes without baked data (moving or unbaked meshes) are shadowed by baked lights. In

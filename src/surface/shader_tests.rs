@@ -5,7 +5,10 @@ use crate::dynamic_geometry::shader_tests::{DISTANCE_CUBES, LIGHT_BVH};
 use crate::light::shader_tests::{AREA, LIGHT_TYPES, LTC};
 use crate::light_clusters::shader_tests::CLUSTERS;
 use crate::realtime_shadows::shader_tests::VSM;
-use crate::shared::wesl_check::{MATERIAL_CONSTANTS as CONSTANTS, SHARED_TYPES, compile};
+use crate::shared::wesl_check::{
+    MATERIAL_CONSTANTS as CONSTANTS, SHARED_TYPES, compile, shared_variant,
+};
+use crate::shared::{RuntimeQuality, ShaderFeatures, ShaderVariant};
 
 pub(crate) const BINDINGS: (&str, &str) = (
     "dynlight::surface::shaders::bindings",
@@ -32,6 +35,7 @@ pub(crate) fn surface_modules() -> Vec<(&'static str, &'static str)> {
     vec![
         CONSTANTS,
         SHARED_TYPES,
+        shared_variant(ShaderVariant::default()),
         LIGHT_TYPES,
         LTC,
         AREA,
@@ -69,11 +73,30 @@ fn lighting_compiles_and_validates() {
 }
 
 #[test]
+fn lighting_compiles_in_every_variant() {
+    for quality in [
+        RuntimeQuality::IntegratedGraphics,
+        RuntimeQuality::Low,
+        RuntimeQuality::Medium,
+        RuntimeQuality::High,
+    ] {
+        for features in [ShaderFeatures::ALL, ShaderFeatures::NONE] {
+            let mut modules = surface_modules();
+            modules[2] = shared_variant(ShaderVariant { quality, features });
+            compile(SHADE.0, &modules, &[]);
+        }
+    }
+}
+
+#[test]
 fn shading_compiles_with_and_without_uvs() {
     for uvs in [false, true] {
-        let module = compile(SHADE.0, &surface_modules(), &[("VERTEX_UVS_A", uvs)]);
-        assert!(has_function(&module, "shade"));
-        assert!(has_function(&module, "apply_normal_map"));
+        for metallic in [false, true] {
+            let flags = [("VERTEX_UVS_A", uvs), ("METALLIC_SHADING", metallic)];
+            let module = compile(SHADE.0, &surface_modules(), &flags);
+            assert!(has_function(&module, "shade"));
+            assert!(has_function(&module, "apply_normal_map"));
+        }
     }
 }
 

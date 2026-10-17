@@ -18,6 +18,15 @@ import dynlight::surface::shaders::bindings::{
 };
 import dynlight::surface::shaders::brdf::{PI, reflectance};
 import dynlight::realtime_shadows::shaders::vsm::realtime_shadow;
+import dynlight::shared::shaders::variant::{
+    FEATURE_LIGHT_PATTERNS, FEATURE_AREA_LIGHTS, FEATURE_REALTIME_SHADOWS,
+};
+
+// An area light, when area lights are compiled in (`ShaderFeatures`); otherwise every light
+// shines like a point light.
+fn is_area(light: GpuLight) -> bool {
+    return FEATURE_AREA_LIGHTS && light_is_area(light);
+}
 
 struct SurfacePoint {
     world: vec3<f32>,
@@ -47,7 +56,7 @@ struct LightGeometry {
 fn light_geometry(light: GpuLight, surface: SurfacePoint) -> LightGeometry {
     var geometry: LightGeometry;
     geometry.to_center = light.position - surface.world;
-    let area = light_is_area(light);
+    let area = is_area(light);
     if area {
         let shape = area_shape(light);
         geometry.to_center = shape.center - surface.world;
@@ -90,25 +99,27 @@ fn cookie(light: GpuLight, direction: vec3<f32>, theta: f32) -> f32 {
 fn light_mask(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry, time: f32) -> f32 {
     var map = 1.0;
     let kind = light_type(light);
-    if kind == LIGHT_TYPE_SPOT {
-        let theta = spot_theta(light, geometry.direction);
-        if theta <= light.gp2 {
-            return 0.0;
+    if FEATURE_LIGHT_PATTERNS {
+        if kind == LIGHT_TYPE_SPOT {
+            let theta = spot_theta(light, geometry.direction);
+            if theta <= light.gp2 {
+                return 0.0;
+            }
+            map = cone(theta, light.gp1, light.gp2);
+            if light_has_cookie(light) {
+                map *= cookie(light, geometry.direction, theta);
+            }
+        } else if kind == LIGHT_TYPE_DISCOBALL {
+            let theta = discoball_theta(light, geometry.direction);
+            if theta <= light.gp2 {
+                return 0.0;
+            }
+            map = cone(theta, light.gp1, light.gp2);
+        } else if kind != LIGHT_TYPE_POINT && !light_is_area(light) {
+            map = pattern(light, geometry.to_light);
         }
-        map = cone(theta, light.gp1, light.gp2);
-        if light_has_cookie(light) {
-            map *= cookie(light, geometry.direction, theta);
-        }
-    } else if kind == LIGHT_TYPE_DISCOBALL {
-        let theta = discoball_theta(light, geometry.direction);
-        if theta <= light.gp2 {
-            return 0.0;
-        }
-        map = cone(theta, light.gp1, light.gp2);
-    } else if kind != LIGHT_TYPE_POINT && !light_is_area(light) {
-        map = pattern(light, geometry.to_light);
     }
-    if light_has_shadow_cubemap(light) {
+    if FEATURE_REALTIME_SHADOWS && light_has_shadow_cubemap(light) {
         map *= realtime_shadow(light, geometry.to_center, facing_cosine(light, surface, geometry));
     }
     return map * shimmer(light, surface.world, time);
@@ -117,7 +128,7 @@ fn light_mask(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry, t
 // The cosine between the normal and the direction to the part of the light the surface faces
 // most: the light itself, or the point of an area light's shape.
 fn facing_cosine(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry) -> f32 {
-    if light_is_area(light) {
+    if is_area(light) {
         return area_facing_cosine(light, surface.world, surface.normal);
     }
     return dot(surface.normal, geometry.direction);
@@ -127,6 +138,9 @@ fn facing_cosine(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry
 // than the direct cone and fades with the cone size (Henry's `calculate_*_bounce`).
 fn bounce_mask(light: GpuLight, geometry: LightGeometry) -> f32 {
     let kind = light_type(light);
+    if !FEATURE_LIGHT_PATTERNS {
+        return 1.0;
+    }
     if kind == LIGHT_TYPE_SPOT {
         let theta = spot_theta(light, geometry.direction);
         let size = min(1.0, 1.0 - light.gp2);
@@ -182,7 +196,7 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
     // direction points at, and tubes also reflect from it.
     var direction = geometry.direction;
     var scale = 1.0;
-    if light_is_area(light) {
+    if is_area(light) {
         let reflection = reflect(-shading.view, surface.normal);
         let point = area_representative_point(light, surface.world, reflection);
         direction = normalize(point - surface.world);
@@ -191,7 +205,7 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
     let reflected = reflectance(surface.normal, shading.view, direction, shading.roughness, shading.metallic, shading.f0);
     let lambert = max(dot(surface.normal, direction), 0.0);
     var specular = reflected.specular * (PI * lambert * scale);
-    if light_type(light) == LIGHT_TYPE_RECTANGLE {
+    if FEATURE_AREA_LIGHTS && light_type(light) == LIGHT_TYPE_RECTANGLE {
         specular = rectangle_specular(shading, surface, light, specular);
     }
     (*sum).diffuse += strength * reflected.diffuse_weight * (geometry.ndotl * map) + bounce_light;

@@ -238,12 +238,15 @@ impl From<&DynLitMaterial> for DynLitUniform {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DynLitKey {
     pub cull_mode: Option<Face>,
+    /// [`ShadingModel::Metallic`]: the shader's `METALLIC_SHADING` variant.
+    pub metallic: bool,
 }
 
 impl From<&DynLitMaterial> for DynLitKey {
     fn from(material: &DynLitMaterial) -> Self {
         Self {
             cull_mode: material.cull_mode,
+            metallic: material.shading == ShadingModel::Metallic,
         }
     }
 }
@@ -299,6 +302,9 @@ impl Material for DynLitMaterial {
                 fragment.shader_defs.push("TRIANGLE_ID".into());
             } else if primitive_index_supported() {
                 fragment.shader_defs.push("PRIMITIVE_INDEX".into());
+            }
+            if key.bind_group_data.metallic {
+                fragment.shader_defs.push("METALLIC_SHADING".into());
             }
         }
         Ok(())

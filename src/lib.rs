@@ -41,7 +41,9 @@ pub mod prelude {
         DynamicLight, Illumination, LightBounce, LightType, ShadowMode, Shimmer, Transparency,
         sun_light,
     };
-    pub use crate::shared::{BakeId, DynamicLightingSettings, TriangleIdSource};
+    pub use crate::shared::{
+        BakeId, DynamicLightingSettings, RuntimeQuality, ShaderFeatures, TriangleIdSource,
+    };
     pub use crate::surface::{DynLitMaterial, ShadingModel};
 }
 

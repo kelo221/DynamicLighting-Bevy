@@ -3,10 +3,13 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LightGlobals, GLOBALS_FLAG_LIGHTING_ONLY, light_is_realtime,
-    light_bounce_bits_per_pixel, light_shadow_bits_per_texel, light_is_area, light_extent,
+    light_bounce_bits_per_pixel, light_shadow_bits_per_texel, light_extent,
 };
 import dynlight::dynamic_geometry::shaders::light_bvh::{
     BvhStack, bvh_node_count, bvh_start, bvh_next,
+};
+import dynlight::shared::shaders::variant::{
+    QUALITY, FEATURE_REALTIME_LIGHTS, FEATURE_UNBAKED_MESHES,
 };
 import dynlight::dynamic_geometry::shaders::distance_cubes::{cube_shadow, cube_area_shadow};
 import dynlight::light::shaders::area::area_shape;
@@ -15,11 +18,11 @@ import dynlight::baked_lighting::shaders::triangles::{
     Triangle, TriangleLight, QUALITY_INTEGRATED, load_triangle, triangle_light, baked_shadow,
     baked_bounce,
 };
-import dynlight::light_clusters::shaders::clusters::{realtime_span, span_light};
+import dynlight::light_clusters::shaders::clusters::{RealtimeSpan, realtime_span, span_light};
 import dynlight::surface::shaders::bindings::dynamic_lights;
 import dynlight::surface::shaders::light_processor::{
-    LightSum, Shading, SurfacePoint, add_light, add_unshadowed, bounce_mask, light_geometry,
-    light_mask,
+    LightSum, Shading, SurfacePoint, add_light, add_unshadowed, bounce_mask, is_area,
+    light_geometry, light_mask,
 };
 
 // What the lighting loops need to know about a fragment.
@@ -40,7 +43,10 @@ struct SurfaceInput {
 fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
     let record = receiver(input.tag);
     if record.resolution == 0u {
-        return dynamic_surface_light(input.world, input.normal, shading);
+        if FEATURE_UNBAKED_MESHES {
+            return dynamic_surface_light(input.world, input.normal, shading);
+        }
+        return LightSum(vec3(0.0), vec3(0.0), 0u);
     }
     return baked_surface_light(input, record, shading);
 }
@@ -66,7 +72,10 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
         }
         unshadowed_baked = 0u;
     }
-    let span = realtime_span(world, globals.realtime_count);
+    var span = RealtimeSpan(0u, 0u, false);
+    if FEATURE_REALTIME_LIGHTS {
+        span = realtime_span(world, globals.realtime_count);
+    }
     let count = unshadowed_baked + span.count;
     for (var k = 0u; k < count; k++) {
         var slot = k;
@@ -90,7 +99,7 @@ fn add_cube_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: GpuL
     }
     var map = 1.0;
     if shadows {
-        if light_is_area(light) {
+        if is_area(light) {
             let shape = area_shape(light);
             let radius = sqrt(light.radius_sqr) + light_extent(light);
             map = cube_area_shadow(slot, surface.world, surface.normal, shape.center, shape.x, shape.y, shape.half, radius);
@@ -124,6 +133,9 @@ fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) 
             add_baked(&sum, shading, light, surface, triangle, entry, pixel, globals);
         }
     }
+    if !FEATURE_REALTIME_LIGHTS {
+        return sum;
+    }
     let span = realtime_span(input.world, globals.realtime_count);
     for (var k = 0u; k < span.count; k++) {
         let realtime = span_light(span, k);
@@ -150,7 +162,7 @@ fn add_baked(
     if !geometry.in_range {
         return;
     }
-    let has_bounce = entry.bounce != 0u && globals.quality != QUALITY_INTEGRATED;
+    let has_bounce = entry.bounce != 0u && QUALITY != QUALITY_INTEGRATED;
     if !has_bounce && geometry.ndotl == 0.0 {
         return;
     }
@@ -158,7 +170,7 @@ fn add_baked(
     var bounce = 0.0;
     if !light_is_realtime(light) {
         let shadow_bits = light_shadow_bits_per_texel(light);
-        map = baked_shadow(triangle, entry, pixel, globals.quality, shadow_bits);
+        map = baked_shadow(triangle, entry, pixel, QUALITY, shadow_bits);
         if has_bounce {
             bounce = baked_bounce(triangle, entry, pixel, light_bounce_bits_per_pixel(light));
         } else if map == 0.0 {

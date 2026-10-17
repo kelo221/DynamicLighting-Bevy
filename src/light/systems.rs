@@ -129,10 +129,5 @@ pub(super) fn pack_lights(
 }
 
 pub fn quality_level(quality: RuntimeQuality) -> u32 {
-    match quality {
-        RuntimeQuality::IntegratedGraphics => 0,
-        RuntimeQuality::Low => 1,
-        RuntimeQuality::Medium => 2,
-        RuntimeQuality::High => 3,
-    }
+    quality.level()
 }

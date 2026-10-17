@@ -13,6 +13,7 @@ mod area_tests;
 mod budget;
 mod buffer;
 mod component;
+mod features;
 mod kinds;
 pub mod ltc;
 mod ltc_image;
@@ -40,6 +41,7 @@ pub use buffer::{
     BakedLightSlots, BakedSlot, LIGHT_BUFFER, LightAttachments, PackedLights, RealtimeViewer,
 };
 pub use component::DynamicLight;
+pub use features::light_features;
 pub use kinds::{
     BounceCompression, Illumination, LightBounce, LightType, ShadowMode, Shimmer, Transparency,
 };
@@ -94,7 +96,10 @@ impl Plugin for LightPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (systems::pack_lights, buffer::upload_lights)
+                (
+                    systems::pack_lights,
+                    (buffer::upload_lights, features::note_light_features),
+                )
                     .chain()
                     .in_set(LightSystems::Pack),
             );

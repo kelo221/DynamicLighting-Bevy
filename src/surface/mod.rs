@@ -11,6 +11,7 @@ pub mod mirror;
 #[cfg(test)]
 mod shader_tests;
 mod shared_arrays;
+mod unbaked;
 
 use bevy::asset::{AssetPlugin, embedded_asset};
 use bevy::pbr::MaterialPlugin;
@@ -52,7 +53,8 @@ impl Plugin for SurfacePlugin {
                     alpha_mask::sync_alpha_masks,
                     shared_arrays::rebind_shared_arrays,
                 ),
-            );
+            )
+            .add_systems(PostUpdate, unbaked::note_unbaked_meshes);
         }
         if shaders_available(app) {
             load_shader_library!(app, "shaders/bindings.wesl");
