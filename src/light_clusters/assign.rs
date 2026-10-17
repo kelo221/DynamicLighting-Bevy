@@ -3,7 +3,7 @@
 use bevy::math::{UVec3, Vec2, Vec3};
 
 use super::gpu::{GPU_CLUSTER_HEADER_SIZE, GpuClusterHeader};
-use super::grid::{GRID, Grid, Sphere};
+use super::grid::{CellBox, GRID, Grid, Sphere};
 use crate::light::{LightType, RealtimeViewer};
 use crate::shared::{ChannelFlags, GpuLight};
 
@@ -90,21 +90,32 @@ pub fn build(
     let spheres: Vec<Option<Sphere>> = lights.iter().map(light_sphere).collect();
     let grid =
         Grid::new(viewer, spheres.iter().flatten().copied()).ok_or(GridOff::NothingInFront)?;
-    let reach: Vec<_> = spheres
+    let boxes = grid.cell_boxes();
+    let reach: Vec<Option<Reach>> = spheres
         .iter()
-        .map(|sphere| sphere.and_then(|sphere| grid.cells_touched(sphere)))
+        .map(|sphere| {
+            let sphere = (*sphere)?;
+            let (low, high) = grid.cells_touched(sphere)?;
+            Some(Reach {
+                low,
+                high,
+                center: grid.view_point(sphere.center),
+                radius: sphere.radius,
+            })
+        })
         .collect();
 
     let cell_count = GRID.element_product() as usize;
     let mut counts = vec![0u32; cell_count];
     let mut entries = 0usize;
-    for (low, high) in reach.iter().flatten() {
-        let cells = (*high - *low + 1).element_product() as usize;
-        entries += cells;
+    for reach in reach.iter().flatten() {
+        reach.for_each_cell(&boxes, |cell| {
+            counts[cell] += 1;
+            entries += 1;
+        });
         if entries > MAX_ENTRIES {
             return Err(GridOff::TooManyEntries);
         }
-        for_each_cell(*low, *high, |cell| counts[cell] += 1);
     }
 
     let entry_base = 2 * cell_count;
@@ -117,11 +128,11 @@ pub fn build(
         next[cell] = first;
         first += count;
     }
-    for (index, cells) in reach.iter().enumerate() {
-        let Some((low, high)) = cells else {
+    for (index, reach) in reach.iter().enumerate() {
+        let Some(reach) = reach else {
             continue;
         };
-        for_each_cell(*low, *high, |cell| {
+        reach.for_each_cell(&boxes, |cell| {
             let entry = next[cell];
             next[cell] += 1;
             words[entry_base + (entry >> 1) as usize] |= (index as u32) << ((entry & 1) * 16);
@@ -134,12 +145,27 @@ pub fn build(
     })
 }
 
-fn for_each_cell(low: UVec3, high: UVec3, mut visit: impl FnMut(usize)) {
-    for z in low.z..=high.z {
-        for y in low.y..=high.y {
-            let row = (z * GRID.y + y) * GRID.x;
-            for x in low.x..=high.x {
-                visit((row + x) as usize);
+/// The cells a light's sphere reaches: the block of cells around its view-space box, then a
+/// test against each cell's box. The block's corner cells are often out of reach.
+struct Reach {
+    low: UVec3,
+    high: UVec3,
+    /// The sphere in view space.
+    center: Vec3,
+    radius: f32,
+}
+
+impl Reach {
+    fn for_each_cell(&self, boxes: &[CellBox], mut visit: impl FnMut(usize)) {
+        for z in self.low.z..=self.high.z {
+            for y in self.low.y..=self.high.y {
+                let row = (z * GRID.y + y) * GRID.x;
+                for x in self.low.x..=self.high.x {
+                    let cell = (row + x) as usize;
+                    if boxes[cell].reaches(self.center, self.radius) {
+                        visit(cell);
+                    }
+                }
             }
         }
     }

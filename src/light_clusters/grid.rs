@@ -6,7 +6,7 @@
 //! it, so the cells are volumes of the world that every camera can look up. A fragment outside
 //! them (seen by another camera) visits every realtime light.
 
-use bevy::math::{Mat4, UVec3, Vec2, Vec3, Vec4, Vec4Swizzles};
+use bevy::math::{Mat4, UVec2, UVec3, Vec2, Vec3, Vec4, Vec4Swizzles};
 
 use super::gpu::GpuClusterHeader;
 use crate::light::RealtimeViewer;
@@ -27,6 +27,20 @@ const CELL_PADDING: f32 = 1.0e-3;
 pub struct Sphere {
     pub center: Vec3,
     pub radius: f32,
+}
+
+/// The view-space bounding box of a cell, widened by `CELL_PADDING` of its size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellBox {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl CellBox {
+    /// Whether the view-space sphere at `center` with `radius` may reach the cell.
+    pub fn reaches(&self, center: Vec3, radius: f32) -> bool {
+        center.clamp(self.min, self.max).distance_squared(center) <= radius * radius
+    }
 }
 
 /// Where a world position falls in the grid.
@@ -111,6 +125,69 @@ impl Grid {
                 0
             },
             _padding: [0; 3],
+        }
+    }
+
+    /// A world position in view space, where [`Self::cell_boxes`] are.
+    pub fn view_point(&self, world: Vec3) -> Vec3 {
+        self.view_from_world.transform_point3(world)
+    }
+
+    /// Every cell's view-space bounding box, indexed like [`Cell::At`]. A cell is the convex
+    /// piece of its screen tile between two slice depths, so its corners bound it.
+    pub fn cell_boxes(&self) -> Vec<CellBox> {
+        let view_from_clip = self.clip_from_view.inverse();
+        let tiles = GRID.truncate();
+        // Each tile corner in view space: a point on its ray (perspective) or its x and y.
+        let mut corners = Vec::with_capacity(((tiles.x + 1) * (tiles.y + 1)) as usize);
+        for y in 0..=tiles.y {
+            for x in 0..=tiles.x {
+                let ndc = UVec2::new(x, y).as_vec2() / tiles.as_vec2() * 2.0 - 1.0;
+                corners.push(view_from_clip.project_point3(ndc.extend(0.5)));
+            }
+        }
+        let at_depth = |corner: Vec3, depth: f32| {
+            if self.perspective {
+                corner * (depth / -corner.z)
+            } else {
+                corner.with_z(-depth)
+            }
+        };
+        let mut boxes = Vec::with_capacity(GRID.element_product() as usize);
+        for z in 0..GRID.z {
+            let depths = [self.slice_start(z), self.slice_start(z + 1)];
+            for y in 0..tiles.y {
+                for x in 0..tiles.x {
+                    let (mut min, mut max) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let corner = corners[((y + dy) * (tiles.x + 1) + x + dx) as usize];
+                        for depth in depths {
+                            let point = at_depth(corner, depth);
+                            min = min.min(point);
+                            max = max.max(point);
+                        }
+                    }
+                    let padding = (max - min) * CELL_PADDING;
+                    boxes.push(CellBox {
+                        min: min - padding,
+                        max: max + padding,
+                    });
+                }
+            }
+        }
+        boxes
+    }
+
+    /// The view depth where depth slice `slice` starts; `GRID.z` gives where the last one ends.
+    fn slice_start(&self, slice: u32) -> f32 {
+        if slice == GRID.z {
+            self.far
+        } else if !self.perspective {
+            (slice as f32 - self.slice_bias) / self.slice_scale
+        } else if slice == 0 {
+            0.0
+        } else {
+            ((slice as f32 - 1.0 - self.slice_bias) / self.slice_scale).exp2()
         }
     }
 

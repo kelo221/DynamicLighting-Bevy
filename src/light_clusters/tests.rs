@@ -150,6 +150,45 @@ fn cells_list_far_fewer_lights_than_there_are() {
 }
 
 #[test]
+fn cells_beside_a_sphere_in_its_block_dont_list_it() {
+    let mut rng = EffectRng::new(3, 5);
+    let lights = random_lights(&mut rng, 200);
+    let lists = build(Some(perspective()), &lights, 0).unwrap();
+    let spheres: Vec<_> = lights.iter().filter_map(light_sphere).collect();
+    let grid = Grid::new(perspective(), spheres.iter().copied()).unwrap();
+    let blocks: usize = spheres
+        .iter()
+        .filter_map(|&sphere| grid.cells_touched(sphere))
+        .map(|(low, high)| (high - low + 1).element_product() as usize)
+        .sum();
+    assert!(
+        lists.entries * 10 < blocks * 9,
+        "{} entries of {blocks} block cells",
+        lists.entries
+    );
+}
+
+#[test]
+fn every_cell_box_holds_the_points_of_its_cell() {
+    for viewer in [perspective(), orthographic()] {
+        let lights = [light(LightType::Point, Vec3::ZERO, 12.0, (0.0, 0.0))];
+        let grid = Grid::new(viewer, lights.iter().filter_map(light_sphere)).unwrap();
+        let boxes = grid.cell_boxes();
+        let mut rng = EffectRng::new(1, 2);
+        for _ in 0..20_000 {
+            let v = Vec3::new(rng.next_f32(), rng.next_f32(), rng.next_f32()) * 2.0 - 1.0;
+            let point = v * 12.0;
+            if let Cell::At(cell) = grid.cell_at(point) {
+                assert!(
+                    boxes[cell as usize].reaches(grid.view_point(point), 0.0),
+                    "{point} is outside the box of its cell {cell}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn points_behind_or_beside_the_camera_visit_every_light() {
     let lights = [light(LightType::Point, Vec3::ZERO, 3.0, (0.0, 0.0))];
     let viewer = perspective();
