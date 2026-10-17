@@ -4,8 +4,12 @@
 //! visits gets shorter. Built on the CPU each frame after the light buffer is packed.
 //!
 //! Shaders import `dynlight::light_clusters::shaders::clusters` (`realtime_span`, `span_light`).
+//!
+//! The slice also keeps Bevy's own light clusters, which serve only Bevy's lights, on the CPU in a
+//! single cell (see `bevy_clusters`).
 
 mod assign;
+mod bevy_clusters;
 mod buffer;
 mod gpu;
 mod grid;
@@ -42,7 +46,9 @@ impl Plugin for LightClustersPlugin {
                 (systems::build_clusters, systems::upload_clusters)
                     .chain()
                     .in_set(LightClustersSystems),
-            );
+            )
+            .add_systems(Startup, bevy_clusters::use_cpu_clustering)
+            .add_systems(PreUpdate, bevy_clusters::single_cluster);
     }
 
     fn finish(&self, app: &mut App) {
