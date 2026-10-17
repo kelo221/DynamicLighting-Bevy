@@ -3,7 +3,7 @@
 use bevy::math::{UVec3, Vec2, Vec3};
 
 use super::gpu::{GPU_CLUSTER_HEADER_SIZE, GpuClusterHeader};
-use super::grid::{CellBox, GRID, Grid, Sphere};
+use super::grid::{CellBounds, GRID, Grid, Sphere};
 use crate::light::{LightType, RealtimeViewer};
 use crate::shared::{ChannelFlags, GpuLight};
 
@@ -96,7 +96,7 @@ pub fn build(
     let spheres: Vec<Option<Sphere>> = lights.iter().map(light_sphere).collect();
     let grid =
         Grid::new(viewer, spheres.iter().flatten().copied()).ok_or(GridOff::NothingInFront)?;
-    let boxes = grid.cell_boxes();
+    let bounds = grid.cell_bounds();
     let reach: Vec<Option<Reach>> = spheres
         .iter()
         .map(|sphere| {
@@ -114,14 +114,25 @@ pub fn build(
     let cell_count = GRID.element_product() as usize;
     let mut counts = vec![0u32; cell_count];
     let mut entries = 0usize;
-    for reach in reach.iter().flatten() {
-        reach.for_each_cell(&boxes, |cell| {
-            counts[cell] += 1;
-            entries += 1;
+    // Each light's runs of cells, first and last cell, kept for the second pass.
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    let mut light_runs = Vec::with_capacity(reach.len());
+    for (index, reach) in reach.iter().enumerate() {
+        let Some(reach) = reach else {
+            continue;
+        };
+        let start = runs.len();
+        reach.for_each_run(&bounds, |first, last| {
+            runs.push((first, last));
+            for count in &mut counts[first as usize..=last as usize] {
+                *count += 1;
+            }
+            entries += (last - first + 1) as usize;
         });
         if entries > MAX_ENTRIES {
             return Err(GridOff::TooManyEntries);
         }
+        light_runs.push((index as u32, start..runs.len()));
     }
 
     let entry_base = 2 * cell_count;
@@ -134,15 +145,13 @@ pub fn build(
         next[cell] = first;
         first += count;
     }
-    for (index, reach) in reach.iter().enumerate() {
-        let Some(reach) = reach else {
-            continue;
-        };
-        reach.for_each_cell(&boxes, |cell| {
-            let entry = next[cell];
-            next[cell] += 1;
-            words[entry_base + (entry >> 1) as usize] |= (index as u32) << ((entry & 1) * 16);
-        });
+    for (index, range) in light_runs {
+        for &(first, last) in &runs[range] {
+            for entry in &mut next[first as usize..=last as usize] {
+                words[entry_base + (*entry >> 1) as usize] |= index << ((*entry & 1) * 16);
+                *entry += 1;
+            }
+        }
     }
     Ok(ClusterLists {
         header: grid.header(entry_base as u32),
@@ -152,7 +161,7 @@ pub fn build(
 }
 
 /// The cells a light's sphere reaches: the block of cells around its view-space box, then a
-/// test against each cell's box. The block's corner cells are often out of reach.
+/// test against each cell's bounds. The block's corner cells are often out of reach.
 struct Reach {
     low: UVec3,
     high: UVec3,
@@ -162,16 +171,37 @@ struct Reach {
 }
 
 impl Reach {
-    fn for_each_cell(&self, boxes: &[CellBox], mut visit: impl FnMut(usize)) {
+    /// Visits the cells [`CellBounds::reaches`] accepts as runs along rows (first and last
+    /// cell), summing its distances in the same order, with the slice and row parts shared by
+    /// their cells. A row's cells are trimmed
+    /// from both ends only: where column ranges grow across the screen, as they do for the
+    /// usual projections, the cells in reach are one run, and otherwise the run keeps extras.
+    fn for_each_run(&self, bounds: &CellBounds, mut visit: impl FnMut(u32, u32)) {
+        let reach = self.radius * self.radius;
+        let mut columns = [0.0f32; GRID.x as usize];
         for z in self.low.z..=self.high.z {
+            let slice = bounds.slice_distance(z, self.center);
+            if slice > reach {
+                continue;
+            }
+            for x in self.low.x..=self.high.x {
+                columns[x as usize] = bounds.column_distance(z, x, self.center);
+            }
             for y in self.low.y..=self.high.y {
-                let row = (z * GRID.y + y) * GRID.x;
-                for x in self.low.x..=self.high.x {
-                    let cell = (row + x) as usize;
-                    if boxes[cell].reaches(self.center, self.radius) {
-                        visit(cell);
-                    }
+                let row_distance = slice + bounds.row_distance(z, y, self.center);
+                let out = |x: u32| row_distance + columns[x as usize] > reach;
+                let (mut first, mut last) = (self.low.x, self.high.x);
+                while first <= last && out(first) {
+                    first += 1;
                 }
+                while last > first && out(last) {
+                    last -= 1;
+                }
+                if first > last {
+                    continue;
+                }
+                let row = (z * GRID.y + y) * GRID.x;
+                visit(row + first, row + last);
             }
         }
     }

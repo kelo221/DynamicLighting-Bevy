@@ -2,7 +2,7 @@
 //! the point's cell, whatever the camera.
 
 use bevy::camera::{CameraProjection, OrthographicProjection, PerspectiveProjection};
-use bevy::math::{Mat4, Vec3};
+use bevy::math::{Mat4, UVec3, Vec3};
 use bevy::prelude::Transform;
 
 use super::assign::{ClusterLists, GridOff, MAX_ENTRIES, build, light_sphere};
@@ -169,22 +169,56 @@ fn cells_beside_a_sphere_in_its_block_dont_list_it() {
 }
 
 #[test]
-fn every_cell_box_holds_the_points_of_its_cell() {
+fn every_cell_bound_holds_the_points_of_its_cell() {
     for viewer in [perspective(), orthographic()] {
         let lights = [light(LightType::Point, Vec3::ZERO, 12.0, (0.0, 0.0))];
         let grid = Grid::new(viewer, lights.iter().filter_map(light_sphere)).unwrap();
-        let boxes = grid.cell_boxes();
+        let bounds = grid.cell_bounds();
         let mut rng = EffectRng::new(1, 2);
         for _ in 0..20_000 {
             let v = Vec3::new(rng.next_f32(), rng.next_f32(), rng.next_f32()) * 2.0 - 1.0;
             let point = v * 12.0;
             if let Cell::At(cell) = grid.cell_at(point) {
                 assert!(
-                    boxes[cell as usize].reaches(grid.view_point(point), 0.0),
-                    "{point} is outside the box of its cell {cell}"
+                    bounds.reaches(cell, grid.view_point(point), 0.0),
+                    "{point} is outside the bounds of its cell {cell}"
                 );
             }
         }
+    }
+}
+
+#[test]
+fn cells_list_exactly_the_lights_whose_bounds_test_passes() {
+    let mut rng = EffectRng::new(4, 8);
+    let lights = random_lights(&mut rng, 150);
+    let lists = build(Some(perspective()), &lights, 0).unwrap();
+    let grid = Grid::new(perspective(), lights.iter().filter_map(light_sphere)).unwrap();
+    let bounds = grid.cell_bounds();
+    for cell in 0..GRID.element_product() {
+        let at = UVec3::new(
+            cell % GRID.x,
+            cell / GRID.x % GRID.y,
+            cell / (GRID.x * GRID.y),
+        );
+        let expected: Vec<u32> = (0..lights.len() as u32)
+            .filter(|&index| {
+                let Some(sphere) = light_sphere(&lights[index as usize]) else {
+                    return false;
+                };
+                let Some((low, high)) = grid.cells_touched(sphere) else {
+                    return false;
+                };
+                at.cmpge(low).all()
+                    && at.cmple(high).all()
+                    && bounds.reaches(cell, grid.view_point(sphere.center), sphere.radius)
+            })
+            .collect();
+        assert_eq!(
+            lists.lights_in(cell).collect::<Vec<_>>(),
+            expected,
+            "cell {cell}"
+        );
     }
 }
 

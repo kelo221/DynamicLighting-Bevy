@@ -29,17 +29,55 @@ pub struct Sphere {
     pub radius: f32,
 }
 
-/// The view-space bounding box of a cell, widened by `CELL_PADDING` of its size.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CellBox {
-    pub min: Vec3,
-    pub max: Vec3,
+/// The view-space extent of the cells per axis, each range (low, high) widened by
+/// `CELL_PADDING` of its length. Cell (x, y, z) lies inside `x[z, x] × y[z, y] × z[z]`. A
+/// column's range covers it over every row and a row's over every column, so the product bounds
+/// each cell for any projection, and tightly for the usual ones, where view x depends only on
+/// the screen column and view y only on the row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellBounds {
+    /// View x of column x in slice z, at `z * GRID.x + x`.
+    pub x: Vec<Vec2>,
+    /// View y of row y in slice z, at `z * GRID.y + y`.
+    pub y: Vec<Vec2>,
+    /// View z of slice z.
+    pub z: Vec<Vec2>,
 }
 
-impl CellBox {
-    /// Whether the view-space sphere at `center` with `radius` may reach the cell.
-    pub fn reaches(&self, center: Vec3, radius: f32) -> bool {
-        center.clamp(self.min, self.max).distance_squared(center) <= radius * radius
+/// How far `value` lies outside `range`, squared.
+fn outside_squared(range: Vec2, value: f32) -> f32 {
+    let distance = (range.x - value).max(value - range.y).max(0.0);
+    distance * distance
+}
+
+impl CellBounds {
+    /// The squared distance from a view-space point to slice `z` along view z.
+    pub fn slice_distance(&self, z: u32, point: Vec3) -> f32 {
+        outside_squared(self.z[z as usize], point.z)
+    }
+
+    /// The squared distance from a view-space point to row `y` of slice `z` along view y.
+    pub fn row_distance(&self, z: u32, y: u32, point: Vec3) -> f32 {
+        outside_squared(self.y[(z * GRID.y + y) as usize], point.y)
+    }
+
+    /// The squared distance from a view-space point to column `x` of slice `z` along view x.
+    pub fn column_distance(&self, z: u32, x: u32, point: Vec3) -> f32 {
+        outside_squared(self.x[(z * GRID.x + x) as usize], point.x)
+    }
+
+    /// Whether the view-space sphere at `center` with `radius` may reach cell `cell`, an index
+    /// as in [`Cell::At`].
+    pub fn reaches(&self, cell: u32, center: Vec3, radius: f32) -> bool {
+        let (x, y, z) = (
+            cell % GRID.x,
+            cell / GRID.x % GRID.y,
+            cell / (GRID.x * GRID.y),
+        );
+        self.slice_distance(z, center)
+            + self.row_distance(z, y, center)
+            + self.column_distance(z, x, center)
+            <= radius * radius
     }
 }
 
@@ -128,54 +166,72 @@ impl Grid {
         }
     }
 
-    /// A world position in view space, where [`Self::cell_boxes`] are.
+    /// A world position in view space, where [`Self::cell_bounds`] are.
     pub fn view_point(&self, world: Vec3) -> Vec3 {
         self.view_from_world.transform_point3(world)
     }
 
-    /// Every cell's view-space bounding box, indexed like [`Cell::At`]. A cell is the convex
-    /// piece of its screen tile between two slice depths, so its corners bound it.
-    pub fn cell_boxes(&self) -> Vec<CellBox> {
+    /// The cells' view-space extent. A cell is the convex piece of its screen tile between two
+    /// slice depths, so the tile corners at those depths bound it.
+    pub fn cell_bounds(&self) -> CellBounds {
         let view_from_clip = self.clip_from_view.inverse();
         let tiles = GRID.truncate();
-        // Each tile corner in view space: a point on its ray (perspective) or its x and y.
-        let mut corners = Vec::with_capacity(((tiles.x + 1) * (tiles.y + 1)) as usize);
-        for y in 0..=tiles.y {
-            for x in 0..=tiles.x {
-                let ndc = UVec2::new(x, y).as_vec2() / tiles.as_vec2() * 2.0 - 1.0;
-                corners.push(view_from_clip.project_point3(ndc.extend(0.5)));
-            }
-        }
-        let at_depth = |corner: Vec3, depth: f32| {
-            if self.perspective {
-                corner * (depth / -corner.z)
-            } else {
-                corner.with_z(-depth)
-            }
+        // The view x and y of each tile corner at depth 1 (perspective, where they grow with
+        // depth) or at any depth (orthographic), as ranges per column over every row and per
+        // row over every column. A corner bounds the columns and rows on both of its sides.
+        let empty = Vec2::new(f32::INFINITY, f32::NEG_INFINITY);
+        let mut columns = [empty; GRID.x as usize];
+        let mut rows = [empty; GRID.y as usize];
+        let grow = |range: &mut Vec2, value: f32| {
+            *range = Vec2::new(range.x.min(value), range.y.max(value));
         };
-        let mut boxes = Vec::with_capacity(GRID.element_product() as usize);
-        for z in 0..GRID.z {
-            let depths = [self.slice_start(z), self.slice_start(z + 1)];
-            for y in 0..tiles.y {
-                for x in 0..tiles.x {
-                    let (mut min, mut max) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
-                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let corner = corners[((y + dy) * (tiles.x + 1) + x + dx) as usize];
-                        for depth in depths {
-                            let point = at_depth(corner, depth);
-                            min = min.min(point);
-                            max = max.max(point);
-                        }
-                    }
-                    let padding = (max - min) * CELL_PADDING;
-                    boxes.push(CellBox {
-                        min: min - padding,
-                        max: max + padding,
-                    });
+        for cy in 0..=tiles.y {
+            for cx in 0..=tiles.x {
+                let ndc = UVec2::new(cx, cy).as_vec2() / tiles.as_vec2() * 2.0 - 1.0;
+                let corner = view_from_clip.project_point3(ndc.extend(0.5));
+                let scale = if self.perspective {
+                    1.0 / -corner.z
+                } else {
+                    1.0
+                };
+                for x in cx.saturating_sub(1)..=cx.min(tiles.x - 1) {
+                    grow(&mut columns[x as usize], corner.x * scale);
+                }
+                for y in cy.saturating_sub(1)..=cy.min(tiles.y - 1) {
+                    grow(&mut rows[y as usize], corner.y * scale);
                 }
             }
         }
-        boxes
+        let padded = |range: Vec2| {
+            let padding = (range.y - range.x) * CELL_PADDING;
+            range + Vec2::new(-padding, padding)
+        };
+        let mut bounds = CellBounds {
+            x: Vec::with_capacity((GRID.z * GRID.x) as usize),
+            y: Vec::with_capacity((GRID.z * GRID.y) as usize),
+            z: Vec::with_capacity(GRID.z as usize),
+        };
+        for z in 0..GRID.z {
+            let (near, far) = (self.slice_start(z), self.slice_start(z + 1));
+            let at_depths = |range: Vec2| {
+                if self.perspective {
+                    Vec2::new(
+                        (range.x * near).min(range.x * far),
+                        (range.y * near).max(range.y * far),
+                    )
+                } else {
+                    range
+                }
+            };
+            bounds
+                .x
+                .extend(columns.iter().map(|&range| padded(at_depths(range))));
+            bounds
+                .y
+                .extend(rows.iter().map(|&range| padded(at_depths(range))));
+            bounds.z.push(padded(Vec2::new(-far, -near)));
+        }
+        bounds
     }
 
     /// The view depth where depth slice `slice` starts; `GRID.z` gives where the last one ends.
