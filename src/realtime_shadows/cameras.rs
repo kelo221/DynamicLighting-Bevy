@@ -9,6 +9,7 @@ use bevy::camera::primitives::{Frustum, Sphere};
 use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::ecs::query::QueryItem;
+use bevy::light::cluster::Clusters;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::extract_component::ExtractComponent;
@@ -245,7 +246,12 @@ pub(super) fn place_shadow_cameras(
     };
     for index in cameras.faces.len()..plan.len() * face_count {
         let (pose, active) = placement(index).unwrap_or((IDLE_POSE, false));
-        let camera = commands.spawn(face_camera(index, pose, active)).id();
+        // Every `Camera3d` gets Bevy's light clusters, which cluster lights on the GPU and build
+        // light bind groups for the view each frame. The depth prepass needs none of that.
+        let camera = commands
+            .spawn(face_camera(index, pose, active))
+            .remove::<Clusters>()
+            .id();
         cameras.faces.push(camera);
     }
     for (index, &entity) in cameras.faces.iter().enumerate() {

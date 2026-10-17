@@ -330,6 +330,7 @@ Per frame, in `PostUpdate` after transform propagation:
 - **Spike A:** follow Bevy 0.20's `render_depth_to_texture` example.
   - Use depth-only cameras (`RenderTarget::None` + `DepthPrepass`, 90° FOV, one per face).
   - Add our own system after `Core3dSystems::Prepass` that converts depth to linear-distance moments and blurs them.
+  - Face cameras drop the `Clusters` component Bevy requires on every `Camera3d` (M16): the depth prepass binds only the view uniform, and Bevy's light clustering and light bind groups cost about half the CPU time of a face.
 - **Spike B:** if A's CPU cost per camera is too high, use a custom render phase (`custom_render_phase` example) that draws casters into all faces in one system.
 - **Not used:** bevyout's `shadow_proxy.rs`, its patched `bevy_pbr` cubemaps, and its deferred surface pass. That surface pass was dead code, because the app runs forward and never adds `DeferredPrepass`.
 
@@ -525,6 +526,10 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - `light::ltc` (table reads like a linear sampler, the quad integral, `rectangle_specular`), `light/shaders/ltc.wesl`, `area_ltc_specular` in `area.wesl`, the table on `DynLitMaterial` (`area_light_lut`, bindings 27–28), and `surface::mirror`, a CPU reference of Metallic shading's per-light specular term.
   - Tests: the table's layout and range, lookups at texel centers, the identity transform against Lambert's form factor (within 4 · 10⁻⁶), the quad integral against the transformed lobe integrated over the panel (within 1%, clipped and head-on views included), the fit against brute-force GGX, front-only reflection, the fallbacks, small panels against point lights, and wider highlights for larger panels. `gpu_check_specular` reads back a copper floor at two roughnesses under two panels, a tube and a point light from a low camera (view angles up to about 70°) and compares 4032 samples with the CPU mirrors (largest difference 0.0032; ignored test in `gpu_examples`); with the shader's LTC path turned off it fails 1191 samples.
   - The shader code is larger: the material pipelines finish compiling about 0.1 s later in the lab (median 2.34 s against 2.22 s after the plugins finish, three alternating runs with the LTC path removed). `gpu_check_specular` therefore retries its readback until it matches or 20 s pass, like `gpu_check_area`; one run checked once after 2 s had read an unlit frame. Frame time wasn't measured: the lab's only Metallic surfaces are the sphere row, which no rectangle reaches.
+- **Comparison with Bevy's lights, 2026-10-16.** A harness outside the repo (it spawns Bevy's `PointLight`, which the repo bans) renders the `stress_lights` layout with either system (release profile, 1920×1080, RTX 4080 SUPER, 512² shadow cubes for both, medians of alternating runs).
+  - Baked lights cost the same GPU time as Bevy's lights without shadows (1000 lights: 1.09 ms against 1.07 ms), because both shade every nearby light per pixel; baking makes the shadows nearly free. Bevy with 100 shadowed lights takes 77–122 ms per frame.
+  - Two losses: realtime lights are looped without culling (1000 realtime lights: 22.6 ms of GPU against 1.08 ms), and moving realtime shadow cubemaps were CPU-bound on the per-face cameras (16 shadowed lights moving: 53–76 ms against Bevy's 18–28 ms). M16–M18 address them.
+- **M16 Face cameras without light clustering, done 2026-10-17:** `realtime_shadows` removes Bevy's `Clusters` from its face cameras, so Bevy no longer clusters lights on the GPU, prepares lights or builds a mesh view bind group for them. Harness, 16 moving shadowed lights (96 faces per frame): 26.7 ms per frame against 53–76 ms (Bevy 16.1 ms in the same run); still: 1.72 ms.
 
 ## 15. Testing
 
