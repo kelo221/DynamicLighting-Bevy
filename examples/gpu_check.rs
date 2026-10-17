@@ -37,6 +37,9 @@ const RELATIVE_TOLERANCE: f32 = 0.01;
 const ABSOLUTE_TOLERANCE: f32 = 0.01;
 /// Real time before the readback is checked, so pipelines have compiled.
 const WARM_UP_SECONDS: f32 = 2.0;
+/// Real time until a mismatch counts: until then a failing readback may be a frame drawn before
+/// the lit pipeline compiled (Direct3D 12's FXC takes about 12 s for it).
+const DEADLINE_SECONDS: f32 = 60.0;
 /// `--many`: lights, and the side of their floor in meters.
 const MANY_LIGHTS: usize = 200;
 const MANY_EXTENT: f32 = 100.0;
@@ -303,7 +306,6 @@ fn check(
     if *done || time.elapsed_secs() < WARM_UP_SECONDS {
         return;
     }
-    *done = true;
     let texels: Vec<half::f16> = bytemuck::cast_slice::<u8, u16>(&readback.data)
         .iter()
         .map(|&bits| half::f16::from_bits(bits))
@@ -336,6 +338,10 @@ fn check(
             }
         }
     }
+    if failures > 0 && time.elapsed_secs() < DEADLINE_SECONDS {
+        return;
+    }
+    *done = true;
     let (error, pixel, gpu, cpu) = worst;
     info!(
         "{samples} samples of {} lights, {in_grid} inside the light grid; largest difference \

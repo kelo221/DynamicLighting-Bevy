@@ -1,13 +1,22 @@
 //! Helpers shared by the GPU test files.
 
+// Each test file uses a different subset.
+#![allow(dead_code)]
+
 use std::process::Command;
 
 /// Runs `cargo run --example <name> -- <args>` with this test's features and asserts it exits
 /// cleanly without logging render errors.
 pub fn run_example(name: &str, args: &[&str]) -> String {
+    run_example_with_env(name, args, &[])
+}
+
+/// [`run_example`] with extra environment variables for the example.
+pub fn run_example_with_env(name: &str, args: &[&str], env: &[(&str, &str)]) -> String {
     let mut command = Command::new(env!("CARGO"));
     command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .envs(env.iter().copied())
         .args(["run", "--example", name]);
     if cfg!(feature = "dev") {
         command.args(["--features", "dev"]);

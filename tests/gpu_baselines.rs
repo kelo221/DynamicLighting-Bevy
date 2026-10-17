@@ -53,6 +53,21 @@ fn lighting_test_triangle_ids_match_the_overview() {
     );
 }
 
+/// Direct3D 12 without `dxcompiler.dll` falls back to the old FXC compiler, which rejects some
+/// shaders that DXC and Vulkan accept (an array inside a struct written at a run-time index).
+#[cfg(windows)]
+#[test]
+#[ignore = "needs a GPU"]
+fn lighting_test_on_fxc_matches_the_overview() {
+    check_with_env(
+        "lighting_test_fxc",
+        "lighting_test_overview",
+        "lighting_test",
+        &["--bake", "--camera", OVERVIEW],
+        &[("WGPU_BACKEND", "dx12"), ("WGPU_DX12_COMPILER", "fxc")],
+    );
+}
+
 /// Without a bake every mesh takes the dynamic-geometry path.
 #[test]
 #[ignore = "needs a GPU"]
@@ -135,8 +150,13 @@ fn check(name: &str, example: &str, args: &[&str]) {
     check_against(name, name, example, args);
 }
 
-/// Captures `example` with `args` and compares the frame with `tests/baselines/<baseline>.png`.
 fn check_against(name: &str, baseline: &str, example: &str, args: &[&str]) {
+    check_with_env(name, baseline, example, args, &[]);
+}
+
+/// Captures `example` with `args` and the environment variables `env`, and compares the frame
+/// with `tests/baselines/<baseline>.png`.
+fn check_with_env(name: &str, baseline: &str, example: &str, args: &[&str], env: &[(&str, &str)]) {
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("baselines");
     fs::create_dir_all(&out).expect("the output folder can be created");
     let frame = out.join(format!("{name}.png"));
@@ -144,7 +164,7 @@ fn check_against(name: &str, baseline: &str, example: &str, args: &[&str]) {
     let frame_arg = frame.to_string_lossy().into_owned();
     let mut capture_args = args.to_vec();
     capture_args.extend(["--capture", &frame_arg]);
-    common::run_example(example, &capture_args);
+    common::run_example_with_env(example, &capture_args, env);
 
     let reference = baseline_path(baseline);
     if std::env::var_os("DYNLIGHT_BLESS").is_some() && name == baseline {

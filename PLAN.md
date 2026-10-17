@@ -582,7 +582,12 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - Repeated captures are bit-identical. Direct3D 12 against the Vulkan baselines gives a mean FLIP below 0.00001 and a largest error of 0.011 (RTX 4080 SUPER).
   - Limits: mean 0.002, and at most 0.01% of pixels above 0.1. Deliberate regressions that fail: 3% darker albedo (mean 0.016–0.038), and a point-light shadow blur of σ 1 instead of 1.5 (mean 0.0033, but 1.1% of pixels above 0.1).
   - Not caught: halving the panel's bake samples (mean 0.0006, 9 visible pixels; FLIP rates it invisible), and switching off the LTC specular, which no baseline view shows because no rectangle light reaches a Metallic surface. `gpu_check_specular` covers that path.
-  - Found on the way: on Direct3D 12 without `dxcompiler.dll`, wgpu falls back to FXC, which fails to compile the lit fragment shader (loop unrolling, "array reference cannot be used as an l-value"). Bevy only picks DXC when `dxcompiler.dll` is in the working directory, or when `WGPU_DX12_COMPILER=dxc` is set. Vulkan, the Windows default, is unaffected.
+  - Found on the way, fixed the same day: on Direct3D 12 without `dxcompiler.dll`, wgpu falls back to FXC. Bevy only picks DXC when `dxcompiler.dll` is in the working directory or `WGPU_DX12_COMPILER=dxc` is set. FXC failed to compile the lit fragment shader.
+    - The cause: the light BVH walk wrote its node stack, an array inside the `BvhWalk` struct, at a run-time index through a pointer. FXC calls that "not natively addressable" and then fails to unroll the loops around it.
+    - The fix: the stack is a `var<private>` array (`dynamic_geometry/shaders/light_bvh.wesl`). Vulkan frames are bit-identical.
+    - On FXC the lit pipeline takes about 12 s to compile. The readback checks therefore wait up to 60 s for a match, and `lighting_test_renders_a_lit_scene` uses `--capture`.
+    - Every GPU test passes on Direct3D 12 with FXC forced. The baselines stay within mean FLIP 0.0008 there; the panel differs most. `lighting_test_on_fxc_matches_the_overview` (Windows only) guards it.
+    - How it was found: naga's HLSL backend (`hlsl-out`) on the surface WESL modules, with the Windows SDK's `fxc.exe`, reproduces such errors in a fraction of a second without a GPU.
 - **Benchmarks:** rays/s, bake time of the sample scene, frame time at 100/500/1000 lights.
   - **Done:** `benches/bake.rs` (`cargo bench --bench bake`; 26–28 M shadow rays/s on a 32-thread desktop CPU, bounce for 64 lights in 3.4 s) and the `stress_lights` example for frame times (README).
 

@@ -32,9 +32,10 @@ const STEP: u32 = 4;
 const RELATIVE_TOLERANCE: f32 = 0.01;
 const ABSOLUTE_TOLERANCE: f32 = 0.01;
 /// Real time after the bake is applied before readbacks are checked, and until a matching one
-/// may arrive (pipelines can take a while to compile in debug builds).
+/// may arrive (pipelines can take a while to compile in debug builds, and Direct3D 12's FXC
+/// about 12 s).
 const WARM_UP_SECONDS: f32 = 2.0;
-const DEADLINE_SECONDS: f32 = 20.0;
+const DEADLINE_SECONDS: f32 = 60.0;
 /// Samples on each floor that must be at least half in shadow, so the shadows are tested.
 const MIN_SHADOWED: usize = 20;
 /// Slabs: center and half size. Pixels over them (seen from above) aren't checked.

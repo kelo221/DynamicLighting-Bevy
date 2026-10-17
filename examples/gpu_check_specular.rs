@@ -30,9 +30,9 @@ const STEP: u32 = 4;
 const RELATIVE_TOLERANCE: f32 = 0.01;
 const ABSOLUTE_TOLERANCE: f32 = 0.01;
 /// Real time before readbacks are checked, and until a matching one may arrive (pipelines can
-/// take a while to compile in debug builds).
+/// take a while to compile in debug builds, and Direct3D 12's FXC about 12 s).
 const WARM_UP_SECONDS: f32 = 2.0;
-const DEADLINE_SECONDS: f32 = 20.0;
+const DEADLINE_SECONDS: f32 = 60.0;
 /// Samples that must take a rectangle's LTC integral, so the table is tested.
 const MIN_INTEGRATED: usize = 200;
 

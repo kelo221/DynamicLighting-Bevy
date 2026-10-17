@@ -112,10 +112,8 @@ fn still_shadow_cubemaps_stay_cached() {
 fn lighting_test_renders_a_lit_scene() {
     let lit = scratch("lit.png");
     let lit_path = lit.to_string_lossy().into_owned();
-    run_example(
-        "lighting_test",
-        &["--frames", "30", "--screenshot", &lit_path],
-    );
+    // `--capture` waits for the pipelines, which a fixed frame count can't on a slow compiler.
+    run_example("lighting_test", &["--capture", &lit_path]);
     let (mean, spread) = luminance_stats(&lit);
     // The clear color alone has a luminance of about 0.002 and no spread.
     assert!(mean > 0.05, "the scene is too dark: mean {mean}");
@@ -125,14 +123,7 @@ fn lighting_test_renders_a_lit_scene() {
     let count_path = count.to_string_lossy().into_owned();
     run_example(
         "lighting_test",
-        &[
-            "--debug-view",
-            "light-count",
-            "--frames",
-            "30",
-            "--screenshot",
-            &count_path,
-        ],
+        &["--debug-view", "light-count", "--capture", &count_path],
     );
     let (count_mean, _) = luminance_stats(&count);
     assert!(
