@@ -12,7 +12,7 @@ The crate is its own lighting system. It never uses Bevy's lights (`PointLight`,
 - **Baked shadows:** per-texel shadow bits for every (triangle, light) pair, with seam padding, optional alpha-tested transparency, and four filtering quality tiers.
 - **Bounce light:** one baked bounce per light, stored per texel at 4 to 8 bits.
 - **Dynamic geometry:** moving meshes find the lights around them through a baked light BVH and are shadowed by baked distance cubes, with angular or cubic filtering.
-- **Realtime lights and shadows:** lights marked `realtime` are evaluated every frame, nearest first within a budget. `ShadowMode::Realtime` adds a variance shadow cubemap so moving objects cast shadows. A cubemap only redraws the faces where something changed, and a light at its baked position leaves baked meshes out of it, so a still scene renders no shadow faces at all. Area lights blur their cubemaps wider.
+- **Realtime lights and shadows:** lights marked `realtime` are evaluated every frame, nearest first within a budget, and each pixel only visits the realtime lights that reach its cell of a view-space grid. `ShadowMode::Realtime` adds a variance shadow cubemap so moving objects cast shadows. A cubemap only redraws the faces where something changed, and a light at its baked position leaves baked meshes out of it, so a still scene renders no shadow faces at all. Area lights blur their cubemaps wider.
 - **Materials:** `DynLitMaterial` covers Henry's Diffuse, Metallic (GGX) and Unlit shaders, with normal, occlusion and metallic-roughness maps. glTF `StandardMaterial`s and light extras are converted on load.
 - **Volumetric fog:** sphere, box, cone and square-shaft (`Frustum`) fog volumes per light, as a post-process pass. The shaft starts at an area light's size, for fluorescent fixtures.
 - **Debug views:** `DynamicLightingSettings::debug_view` shows lighting on white surfaces, or a heat map of how many lights reach each fragment.
@@ -25,6 +25,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 
 - **Area lights.** Rectangle and tube lights are shaded from their shape and bake soft shadows: each texel stores how much of the shape it sees in 4 bits (16 levels) instead of Henry's single shadow bit, so penumbras are smooth and harden where objects touch the ground. Moving objects get soft shadows from the light's distance cube, with penumbras that widen with the distance to the blocker. Otherwise they follow his rules: one light at a fixed position with a `radius`, and moving, turning or resizing a baked area light falls back to realtime lighting until the next bake.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
+- **Clustered realtime lights.** Henry's shader visits every realtime light at every pixel; dynlight lists the realtime lights per cell of a view-space grid, so 1000 realtime lights take 1.7 ms of GPU time instead of 23 ms (see Performance).
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
 - **Platforms and tools:** bakes in memory and in the browser (WebGPU), a triangle-ID fallback for GPUs without primitive indices, debug views (lighting only, light count), and a CPU reference of the shader math that is checked against GPU readback.
 
@@ -34,7 +35,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 - **Bugs fixed,** e.g. intensity applied twice in Metallic shading, seam padding wrapping across rows, a divide by zero for spot cones with equal cutoffs, and bounce blur passes reading and writing the same texture.
 - **Smoother realtime shadows:** a 5-tap blur at σ 1.5 instead of 3 taps at σ 1, a smooth fade at the terminator instead of the `1 − NdotL` light-bleeding term, and 32-bit moments wherever the GPU can filter them.
 - **Metallic shading** doesn't divide diffuse light by π, so a rough non-metal looks the same under Metallic and Diffuse shading.
-- **Smaller changes:** a baked light counts as moved beyond 1 mm (Henry: 0.01 mm), shadow cameras end at the light's radius (Henry: 3× the radius), cubemaps go to the lights nearest the camera, transparent shadows alpha-test the texture directly instead of filtering photon cubes, and `TrackingMode` has no effect.
+- **Smaller changes:** a baked light counts as moved beyond 1 mm (Henry: 0.01 mm), shadow cubemaps end at the light's radius (Henry: 3× the radius), cubemaps go to the lights nearest the camera, transparent shadows alpha-test the texture directly instead of filtering photon cubes, and `TrackingMode` has no effect.
 
 PLAN.md §12 lists every difference with its reason ("Quirks in Henry's code" and "Beyond Henry").
 
@@ -114,17 +115,25 @@ Shadow maps use the mesh's UV1, or UV0 when there is no UV1; overlapping UVs are
 
 All examples except `gpu_check` accept `--frames N` (exit after N frames) and `--screenshot path.png`.
 
-Frame times measured with `stress_lights` (RTX 4080 SUPER, Vulkan, 1280×720, dev profile):
+The GPU checks need a GPU, so they are skipped by `cargo test`; run them with `cargo test --test gpu_examples -- --ignored --test-threads=1`.
 
-| Scene | Frame time |
-|---|---|
-| 1000 baked lights | 1.8 ms |
-| 100 realtime lights | 1.9 ms |
-| 1000 realtime lights | 11.1 ms |
+## Performance
 
-Baking the 1000-light scene (1047 meshes, 6.3 M texels, 18 M rays) takes 2.0 s. Realtime shadow cubemaps don't scale to scenes like this while things move: each face that redraws is a depth view, and with all six faces redrawing a shadowed light costs about 4 ms of CPU time here. `cargo bench --bench bake` measures the baker on its own (about 27 M shadow rays per second on a 32-thread desktop CPU).
+dynlight against Bevy's own lights in the same scene: the `stress_lights` layout, about 1000 pillars in an 80 m hall. The harness lives outside this repository because it spawns Bevy's `PointLight`s. Release profile, 1920×1080, RTX 4080 SUPER, Vulkan, 512² shadow cubemaps for both, medians of 10 alternating runs (2026-10-17). GPU time is the main lit pass. Frame times near 1.7 ms are limited by the CPU and vary between runs, so GPU time is the steadier comparison.
 
-The GPU checks need a GPU, so they are skipped by `cargo test`; run them with `cargo test --test gpu_examples -- --ignored`.
+| Scene | GPU, dynlight | GPU, Bevy | Frame, dynlight | Frame, Bevy |
+|---|---|---|---|---|
+| 1000 still lights (dynlight: baked shadows; Bevy: no shadows) | 0.86 ms | 1.09 ms | 1.80 ms | 1.71 ms |
+| 100 moving realtime lights, no shadows | 0.23 ms | 0.15 ms | 1.72 ms | 1.72 ms |
+| 1000 moving realtime lights, no shadows | 1.74 ms | 1.11 ms | 2.27 ms | 1.84 ms |
+| 16 of 100 lights with realtime shadows, scene still | 0.22 ms | – | 1.80 ms | 19.0 ms |
+| 16 of 100 lights with realtime shadows, scene moving | – | – | 18.3 ms | 19.4 ms |
+
+- **Baked lights** shade faster than Bevy's lights without shadows, and their shadows cost nothing at runtime. For comparison, Bevy with all 100 lights shadowed took 77–122 ms per frame (three runs).
+- **Realtime lights** are sorted into the cells of a view-space grid, as Bevy does, so a pixel only visits the lights that reach it. At 1000 lights dynlight's pass takes about 1.6× as long as Bevy's.
+- **Realtime shadows** are cached: a cubemap face only redraws where something changed, so a still scene renders none. Bevy's still scene costs as much as its moving one. When everything moves, both redraw all their faces (96 per frame here) and cost about the same.
+
+Baking the 1000-light scene (1047 meshes, 6.3 M texels, 18 M rays) takes 2.0 s. `cargo bench --bench bake` measures the baker on its own (about 27 M shadow rays per second on a 32-thread desktop CPU), and `cargo bench --bench clusters` the per-frame light grid (0.14 ms for 1000 lights).
 
 ## Development
 
