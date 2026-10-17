@@ -3,6 +3,7 @@
 use crate::baked_lighting::shader_tests::{BAKED_DATA, TRIANGLES};
 use crate::dynamic_geometry::shader_tests::{DISTANCE_CUBES, LIGHT_BVH};
 use crate::light::shader_tests::{AREA, LIGHT_TYPES, LTC};
+use crate::light_clusters::shader_tests::CLUSTERS;
 use crate::realtime_shadows::shader_tests::VSM;
 use crate::shared::wesl_check::{MATERIAL_CONSTANTS as CONSTANTS, SHARED_TYPES, compile};
 
@@ -39,6 +40,7 @@ pub(crate) fn surface_modules() -> Vec<(&'static str, &'static str)> {
         LIGHT_BVH,
         DISTANCE_CUBES,
         VSM,
+        CLUSTERS,
         BINDINGS,
         BRDF,
         LIGHT_PROCESSOR,

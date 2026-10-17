@@ -19,6 +19,7 @@ pub mod effects;
 pub mod fog;
 pub mod gltf_import;
 pub mod light;
+pub mod light_clusters;
 pub mod realtime_shadows;
 pub mod shared;
 pub mod surface;
@@ -53,6 +54,7 @@ impl Plugin for DynamicLightingPlugin {
             shared::SharedPlugin,
             effects::EffectsPlugin,
             light::LightPlugin,
+            light_clusters::LightClustersPlugin,
             cookies::CookiesPlugin,
             surface::SurfacePlugin,
             bake::BakePlugin,

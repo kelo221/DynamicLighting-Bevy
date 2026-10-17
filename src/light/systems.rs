@@ -4,7 +4,7 @@ use bevy::camera::primitives::{Frustum, Sphere};
 use bevy::prelude::*;
 
 use super::budget::{RealtimeCandidate, select_realtime};
-use super::buffer::{BakedLightSlots, LightAttachments, PackedLights};
+use super::buffer::{BakedLightSlots, LightAttachments, PackedLights, RealtimeViewer};
 use super::component::DynamicLight;
 use super::pack::{PackContext, pack};
 use super::placement::{LightPlacement, pose_of};
@@ -83,6 +83,10 @@ pub(super) fn pack_lights(
         .iter()
         .filter(|(camera, ..)| camera.is_active)
         .max_by_key(|(camera, ..)| camera.order);
+    packed.viewer = camera.map(|(camera, transform, _)| RealtimeViewer {
+        view_from_world: transform.to_matrix().inverse(),
+        clip_from_view: camera.clip_from_view(),
+    });
     let selected = select_realtime(
         candidates,
         camera.map(|(_, transform, _)| transform.translation()),

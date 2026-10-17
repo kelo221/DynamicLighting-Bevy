@@ -12,6 +12,10 @@ pub struct DynamicLightingSettings {
     /// Most realtime lights evaluated per frame. Realtime lights are lights marked realtime plus
     /// baked lights that moved; when there are more, the ones nearest the camera win.
     pub realtime_light_budget: u32,
+    /// From this many realtime lights on, each fragment only visits the realtime lights that can
+    /// reach its cell of a grid over the camera's view. With fewer, every fragment visits every
+    /// realtime light, which costs about the same as finding the cell. 0 always uses the grid.
+    pub realtime_cluster_min_lights: u32,
     /// Most lights with realtime shadow cubemaps at once.
     pub shadow_cubemap_budget: u32,
     pub quality: RuntimeQuality,
@@ -28,6 +32,7 @@ impl Default for DynamicLightingSettings {
         Self {
             ambient: Color::srgba(1.0, 1.0, 1.0, 32.0 / 255.0),
             realtime_light_budget: 32,
+            realtime_cluster_min_lights: 8,
             shadow_cubemap_budget: 16,
             quality: RuntimeQuality::default(),
             dynamic_geometry: DynamicGeometryMode::default(),

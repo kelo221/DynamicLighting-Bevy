@@ -43,7 +43,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/shared/gpu_light.rs` | `C/Core/ShaderDynamicLight.cs:1-89`; channel bits `C/Core/DynamicLightManager.cs:1283-1313` | `BO/render/gpu.rs:30-220` | Lifted; flags renamed, `bounce_color` before `falloff` (112 bytes), layout test checks the WESL struct through naga; channel bits 20–22 hold the baked shadow bits per texel (New, PLAN §12) |
 | `src/shared/math.rs` | `Mathf.Lerp`/`InverseLerp`/`MoveTowards`/`SmoothStep` call sites | `BO/core/unity_math.rs:18-46` | Replaced; helpers named for what they do |
 | `src/shared/mesh_hash.rs` | (Unity `Mesh.GetFastHash`, `C/Core/DynamicLightManager.cs:646,1208`) | none | New; hashes triangle corners (position + UV1 bits) in draw order, so de-indexed meshes keep their hash |
-| `src/shared/settings.rs` | `C/Core/DynamicLightingSettings.cs`; manager fields `C/Core/DynamicLightManager.cs:198-310`; ambient `C/Core/DynamicLightManager.Shaders.cs:249-268`; `C/Lighting/DynamicLightingRuntimeQuality.cs`, `DynamicGeometryLightingMode.cs`, `DynamicLightTrackingMode.cs`; lighting-only view `E/Interface/DrawModes/SceneViewDrawModeLighting.cs` | `BO/core/config.rs` | Lifted; the `DebugView` enum is New (its `Lighting` view follows Henry's draw mode, `LightCount` has no counterpart); `TrackingMode` is kept for compatibility but has no effect (Bevy transforms are change-tracked, so positions are always current) |
+| `src/shared/settings.rs` | `C/Core/DynamicLightingSettings.cs`; manager fields `C/Core/DynamicLightManager.cs:198-310`; ambient `C/Core/DynamicLightManager.Shaders.cs:249-268`; `C/Lighting/DynamicLightingRuntimeQuality.cs`, `DynamicGeometryLightingMode.cs`, `DynamicLightTrackingMode.cs`; lighting-only view `E/Interface/DrawModes/SceneViewDrawModeLighting.cs` | `BO/core/config.rs` | Lifted; the `DebugView` enum is New (its `Lighting` view follows Henry's draw mode, `LightCount` has no counterpart); `TrackingMode` is kept for compatibility but has no effect (Bevy transforms are change-tracked, so positions are always current); `realtime_cluster_min_lights` is New (`light_clusters`) |
 | `src/shared/shaders/types.wesl` | `S/DynamicLighting.cginc:10-130` (struct, type/shimmer constants, flag getters); globals `:343-356` | `BO/shaders/dynamic_lighting_types.wgsl` | Ported to WESL; adds the `LightGlobals` header and the `DynamicLights` buffer struct; `light_group` (New) |
 | `src/shared/wesl_check.rs` | none | none | New (test-only); compiles WESL with Bevy's `wesl` and inspects layouts with naga |
 
@@ -74,7 +74,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/light/area_record_tests.rs` | none | none | New; packed area-light records: their shape, nothing lit past the radius, and shadow-point records adding up to the whole light |
 | `src/light/area_tests.rs` | none | none | New; the area-light math against brute-force integration over the shapes |
 | `src/light/budget.rs` | `C/Core/DynamicLightManager.cs:1051-1088,1258-1262` | none | Ported; stable sort (ties keep order); Henry's editor-only frustum bypass dropped |
-| `src/light/buffer.rs` | `C/Core/DynamicLightManager.cs:903-924,1154-1159` | none (replaces the per-frame buffers of `BO/render/gpu.rs:246-470`) | New; globals header + baked slots + realtime lights in one `ShaderBuffer` |
+| `src/light/buffer.rs` | `C/Core/DynamicLightManager.cs:903-924,1154-1159` | none (replaces the per-frame buffers of `BO/render/gpu.rs:246-470`) | New; globals header + baked slots + realtime lights in one `ShaderBuffer`; also records the camera the realtime lights were chosen for (`RealtimeViewer`), which `light_clusters` builds its grid over |
 | `src/light/component.rs` | `C/Lighting/DynamicLight.cs:30-370` (fields, defaults) | `BO/core/config.rs` | Lifted |
 | `src/light/kinds.rs` | `C/Lighting/DynamicLight{Type,ShadowMode,IlluminationMode,TransparencyMode,Shimmer}.cs`, `C/Lighting/DynamicBounceLightingCompressionMode.cs` | `BO/core/types.rs` | Lifted; enums match Henry's; `EnabledMax` behaves as `Enabled` (rays alpha-test directly) |
 | `src/light/mirror.rs` | `S/DynamicLighting.cginc:140-336` | `BO/core/spatial.rs` | Ported; right-handed light space; equal cutoffs give a hard edge (PLAN §12) |
@@ -89,23 +89,37 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/light/systems.rs` | `C/Core/DynamicLightManager.cs:1004-1159` (moved baked lights, budget, packing order); `C/Core/DynamicLightManager.LightPositions.cs:67-100` | none | Ported; moved-light detection lives in `placement.rs` |
 | `src/light/tests.rs` | none | none | New |
 
+### `light_clusters/`
+
+| Our file | Henry | bevyout | Status |
+|---|---|---|---|
+| `src/light_clusters/mod.rs` | none | none | New; wiring: `LightClustersPlugin`, `LightClustersSystems` after `LightSystems::Pack`, loads `clusters.wesl` and creates the cluster buffer |
+| `src/light_clusters/grid.rs` | none | none | New; the 16 × 9 × 24 cell grid over the realtime-selection camera (exponential depth slices, linear for orthographic cameras), the cell of a world position (CPU mirror of `realtime_span`) and the cells a sphere's view-space box covers (PLAN §12, Beyond Henry) |
+| `src/light_clusters/assign.rs` | none | none | New; light spheres (area lights add their extent), per-cell lists in light order packed as two u16 per word, and the reasons the grid stays off |
+| `src/light_clusters/gpu.rs` | none | none | New; `GpuClusterHeader` and its layout tests against the WESL |
+| `src/light_clusters/buffer.rs` | none | none | New; the `REALTIME_CLUSTERS` `ShaderBuffer` |
+| `src/light_clusters/systems.rs` | none | none | New; builds the lists from the packed realtime lights and uploads them each frame |
+| `src/light_clusters/shaders/clusters.wesl` | none | none | New; binding 29, `realtime_span` (a fragment's cell list, or every realtime light outside the grid) and `span_light` |
+| `src/light_clusters/shader_tests.rs` | none | none | New |
+| `src/light_clusters/tests.rs` | none | none | New; every light whose sphere holds a random point is listed in its cell (perspective and orthographic), list lengths, fallbacks, buffer layout |
+
 ### `surface/`
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
 | `src/surface/mod.rs` | none | none | New; wiring: `SurfacePlugin`, `MaterialPlugin<DynLitMaterial>`, loads the surface WESL modules, alpha-mask system |
 | `src/surface/alpha_mask.rs` | `S/Generators/PhotonCubeTransparent.cginc:55-71` (0.5 alpha cutoff) | none | New; derives `BakeAlphaMask` from `DynLitMaterial`; `Mask(c)` materials bake with their own cutoff |
-| `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false` |
+| `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false`; the realtime light clusters at binding 29 (New) |
 | `src/surface/shader_tests.rs` | none | none | New |
 | `src/surface/mirror.rs` | none | none | New; CPU reference of `brdf.wesl` and Metallic shading's per-light specular term in `light_processor.wesl` |
 | `src/surface/shared_arrays.rs` | none | none | New; re-prepares lit materials when the shadow cubemap or cookie array is replaced |
-| `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide, 27–28 the LTC table) |
+| `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide, 27–28 the LTC table, 29 the realtime light clusters, declared by `clusters.wesl`) |
 | `src/surface/shaders/brdf.wesl` | none (Henry's `S/Internal/Common.cginc:291-342` is LearnOpenGL code, CC BY-NC) | none | Replaced; GGX / Smith / Schlick rewritten from the published papers |
 | `src/surface/shaders/dynlit.wesl` | fragment bodies `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260`; lighting-only mode `S/DynamicLightingDiffuse.shader:141` | none | Ported; `TRIANGLE_ID` / `PRIMITIVE_INDEX` paths; Unity fog and lightmaps dropped |
 | `src/surface/shaders/dynlit_prepass.wesl` | `S/Generators/DepthNormals.cginc:40-47`, `S/Generators/DepthOnly.cginc` | none | Ported; alpha cutout only |
 | `src/surface/shaders/dynlit_vertex.wesl` | none (Henry relies on `SV_PrimitiveID`) | none | New; Bevy's static mesh vertex shader plus a flat triangle ID |
 | `src/surface/shaders/light_processor.wesl` | `S/Generators/LightProcessor.cginc:1-235`; bounce cones `S/DynamicLighting.cginc:154-163,195-207`; per-light terms `S/DynamicLightingDiffuse.shader:163-203`, `S/DynamicLightingMetallic.shader:262-345` | none | Ported; Metallic intensity-applied-twice and bounce cross-terms fixed (PLAN §12); Metallic diffuse not divided by π, specular scaled by π instead; rectangle lights reflect through the LTC table (New, PLAN §12) |
-| `src/surface/shaders/lighting.wesl` | `S/DynamicLighting.cginc:1006-1158` (`DYNLIT_FRAGMENT_INTERNAL`) | none | Ported; macros become functions; baked and realtime lights in separate loops; baked entries ≥ `baked_count` ignored; baked shadows decoded at the light's bits per texel, and area lights on dynamic geometry use the soft cube lookup (New, PLAN §12) |
+| `src/surface/shaders/lighting.wesl` | `S/DynamicLighting.cginc:1006-1158` (`DYNLIT_FRAGMENT_INTERNAL`) | none | Ported; macros become functions; baked and realtime lights in separate loops; baked entries ≥ `baked_count` ignored; baked shadows decoded at the light's bits per texel, and area lights on dynamic geometry use the soft cube lookup (New, PLAN §12); realtime lights come from the fragment's light-grid cell (New, PLAN §12) |
 | `src/surface/shaders/shade.wesl` | `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260` | none | Ported; Unity reflection probes replaced by an optional own cubemap; the light-count heat map (debug view) is New |
 
 ### `bake/`
@@ -239,7 +253,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
-| `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light |
+| `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light, with the light grid forced on; `--many` reads 200 small lights back through a perspective camera, so most samples take their lights from cell lists; `--webgpu-limits` caps the device at WebGPU's default limits |
 | `examples/gpu_check_area.rs` | none | none | New; a baked and an unbaked floor under a panel and a tube, read back and compared with `baked_lighting::mirror` and `dynamic_geometry::mirror` at every quality tier |
 | `examples/gpu_check_specular.rs` | none | none | New; a Metallic copper floor at two roughnesses under rectangles, a tube and a point light, read back and compared with `surface::mirror` and `light::ltc` |
 | `examples/inspector/main.rs` | role of `E/Inspectors/DynamicLightEditor.cs`; light from `DynamicLight::spot()` (`E/EditorMenus.cs:125-131`) | none | New; Feathers UI, bake button |
@@ -257,7 +271,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `tests/area_light_bake.rs` | none | none | New; panels bake soft shadows close to a brute-force trace, tubes soften only along their length, point lights keep one bit |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
-| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check`, `gpu_check_specular` and `gpu_check_area` examples and check `lighting_test` screenshots |
+| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular` and `gpu_check_area` examples and check `lighting_test` screenshots |
 | `tests/headless_app.rs` | none | none | New |
 | `tests/repo_hygiene.rs` | none | none | New; enforces the `AGENTS.md` rules |
 
@@ -266,3 +280,4 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
 | `benches/bake.rs` | none | none | New; synthetic bake benchmark (`harness = false`): without bounce, with bounce, 4× lights |
+| `benches/clusters.rs` | none | none | New; light grid build time for 100, 1000 and 10 000 scattered point lights (`harness = false`) |

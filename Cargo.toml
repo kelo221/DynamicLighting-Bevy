@@ -78,6 +78,10 @@ required-features = ["inspector"]
 name = "bake"
 harness = false
 
+[[bench]]
+name = "clusters"
+harness = false
+
 # Bevy's recommended dev profile: some optimization for our code, full for deps.
 [profile.dev]
 opt-level = 1

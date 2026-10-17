@@ -36,7 +36,9 @@ use bevy::transform::TransformSystems;
 
 pub use area::AreaLightShape;
 pub use budget::{RealtimeCandidate, select_realtime};
-pub use buffer::{BakedLightSlots, BakedSlot, LIGHT_BUFFER, LightAttachments, PackedLights};
+pub use buffer::{
+    BakedLightSlots, BakedSlot, LIGHT_BUFFER, LightAttachments, PackedLights, RealtimeViewer,
+};
 pub use component::DynamicLight;
 pub use kinds::{
     BounceCompression, Illumination, LightBounce, LightType, ShadowMode, Shimmer, Transparency,

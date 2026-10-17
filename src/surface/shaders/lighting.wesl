@@ -13,6 +13,7 @@ import dynlight::baked_lighting::shaders::triangles::{
     Triangle, TriangleLight, QUALITY_INTEGRATED, load_triangle, triangle_light, baked_shadow,
     baked_bounce,
 };
+import dynlight::light_clusters::shaders::clusters::{realtime_span, span_light};
 import dynlight::surface::shaders::bindings::dynamic_lights;
 import dynlight::surface::shaders::light_processor::{
     LightSum, Shading, SurfacePoint, add_light, add_unshadowed, bounce_mask, light_geometry,
@@ -44,12 +45,13 @@ fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
 
 // Light on a surface without bake data, with half-Lambert diffuse (Henry's dynamic-geometry
 // path): the baked lights whose BVH leaves contain the point, shadowed by their distance cubes,
-// then every realtime light. Without a light BVH every light is visited unshadowed.
+// then the realtime lights that can reach it. Without a light BVH every baked light is visited
+// unshadowed.
 fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), 0u);
     let surface = SurfacePoint(world, normal, false);
-    var first_unvisited = 0u;
+    var unshadowed_baked = globals.baked_count;
     if bvh_node_count() > 0u {
         let shadows = (globals.flags & GLOBALS_FLAG_LIGHTING_ONLY) == 0u;
         var walk = bvh_start();
@@ -59,11 +61,20 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
                 add_cube_shadowed(&sum, shading, light, walk.light, surface, globals.time, shadows);
             }
         }
-        first_unvisited = globals.baked_count;
+        unshadowed_baked = 0u;
     }
-    let count = globals.baked_count + globals.realtime_count;
-    for (var k = first_unvisited; k < count; k++) {
-        add_unshadowed(&sum, shading, dynamic_lights.lights[k], surface, globals.time);
+    let span = realtime_span(world, globals.realtime_count);
+    let count = unshadowed_baked + span.count;
+    for (var k = 0u; k < count; k++) {
+        var slot = k;
+        if k >= unshadowed_baked {
+            let realtime = span_light(span, k - unshadowed_baked);
+            if realtime >= globals.realtime_count {
+                continue;
+            }
+            slot = globals.baked_count + realtime;
+        }
+        add_unshadowed(&sum, shading, dynamic_lights.lights[slot], surface, globals.time);
     }
     return sum;
 }
@@ -95,7 +106,7 @@ fn add_cube_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: GpuL
 }
 
 // Light on a baked mesh: the triangle's own baked lights with their shadow bits and bounce
-// light, then every realtime light unshadowed. Lambert diffuse.
+// light, then the realtime lights that can reach it, unshadowed. Lambert diffuse.
 fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), 0u);
@@ -110,9 +121,13 @@ fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) 
             add_baked(&sum, shading, light, surface, triangle, entry, pixel, globals);
         }
     }
-    for (var k = 0u; k < globals.realtime_count; k++) {
-        let light = dynamic_lights.lights[globals.baked_count + k];
-        add_unshadowed(&sum, shading, light, surface, globals.time);
+    let span = realtime_span(input.world, globals.realtime_count);
+    for (var k = 0u; k < span.count; k++) {
+        let realtime = span_light(span, k);
+        if realtime < globals.realtime_count {
+            let light = dynamic_lights.lights[globals.baked_count + realtime];
+            add_unshadowed(&sum, shading, light, surface, globals.time);
+        }
     }
     return sum;
 }

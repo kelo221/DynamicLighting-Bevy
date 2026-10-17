@@ -1,6 +1,7 @@
 // The `DynLitMaterial` bind group. Bindings 0–19 are the material's own; 20 and up are the
 // scene-wide lighting resources every lit material shares (23 and 24 are declared by
-// `dynlight::baked_lighting::shaders::baked_data`, 25 and 26 by the realtime shadows).
+// `dynlight::baked_lighting::shaders::baked_data`, 25 and 26 by the realtime shadows, 29 by
+// `dynlight::light_clusters::shaders::clusters`).
 
 import dynlight::shared::shaders::types::DynamicLights;
 

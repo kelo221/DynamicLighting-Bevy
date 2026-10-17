@@ -55,6 +55,15 @@ pub struct PackedLights {
     pub baked: Vec<Option<Entity>>,
     /// The entity behind each realtime light, in buffer order.
     pub realtime: Vec<Entity>,
+    /// The camera the realtime lights were chosen for: the active camera with the highest order.
+    pub viewer: Option<RealtimeViewer>,
+}
+
+/// The camera that chose the realtime lights, in the matrices its view uses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RealtimeViewer {
+    pub view_from_world: Mat4,
+    pub clip_from_view: Mat4,
 }
 
 impl PackedLights {

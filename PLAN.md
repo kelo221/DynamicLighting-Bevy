@@ -64,6 +64,7 @@ The project is a single crate, `dynlight` (the package is renamed in M0), organi
 |---|---|---|
 | `shared/` | `BakeId`, GPU light ABI + packing, math helpers, WESL `types` / `math` / `bindings` | `BO/render/gpu.rs:30-220`, `BO/core/unity_math.rs:18-46` (renamed), `S/DynamicLighting.cginc` structs, `S/Internal/Common.cginc` |
 | `light/` | `DynamicLight`, enums, presets, light buffer, realtime budget, moved lights, `light_types.wesl`, CPU mirror | `BO/core/{config,types,spatial}.rs`, `BO/bevy_bridge/mod.rs`, `C/Core/DynamicLightManager.cs`, `C/Lighting/*` |
+| `light_clusters/` | Cell grid over the realtime-selection camera, per-cell realtime light lists, `clusters.wesl` (M17) | new |
 | `effects/` | 15 intensity effects, our noise + RNG, fixed timestep | `BO/core/{runtime,fixed_timestep}.rs`, `C/Core/LightEffects/*` |
 | `surface/` | `DynLitMaterial` variants, prepass, BRDF, `light_processor.wesl`, `lighting.wesl` | `S/DynamicLighting{Diffuse,Metallic,Unlit}.shader`, `S/Generators/LightProcessor.cginc` |
 | `bake/` | Tracer steps (§8), `.dynlight` format, `BakeRequest` + progress | `C/Core/DynamicLightingTracer*.cs`, `DynamicTrianglesBuilder.cs`, `Acceleration/BvhLightStructure.cs`, `BO/baker.rs` codec |
@@ -164,7 +165,7 @@ Two changes for Bevy:
   - Henry uses a 512² cube array with 16 cubes.
   - `Rg32Float` isn't filterable without the `FLOAT32_FILTERABLE` feature. **Done:** `Rg32Float` when the device has the feature (Bevy requests all adapter features by default), `Rg16Float` otherwise; the render world builds pipelines for both. Variance needs the precision: `Rg16Float` shows acne on caps and crate faces.
 
-**Storage-buffer budget.** We use 3 storage buffers: lights, triangles, aux. Bevy's view/mesh groups use some more, and WebGPU's default is 8 per stage. Measure in M1. If needed, merge triangles into aux, or raise limits on native. Triangle data with bounce can exceed the default 128 MiB binding size, so on native, raise `max_storage_buffer_binding_size`.
+**Storage-buffer budget.** We use 4 storage buffers: lights, triangles, aux and the realtime light clusters (M17). With Bevy's view group (bindings 8, 9 and 10) and the mesh group (one), the fragment stage binds 8, exactly WebGPU's default per stage. Bevy asks for the adapter's limits, which are often higher (16 in Edge on an RTX 4080), so `gpu_check --webgpu-limits` caps the device at WebGPU's defaults, and a GPU test runs it (with the cap at 7, wgpu reports a count of 8). Another buffer needs triangles merged into aux, or raised limits on native. Triangle data with bounce can exceed the default 128 MiB binding size, so on native, raise `max_storage_buffer_binding_size`.
 
 ## 6. Primitive index and platforms
 
@@ -315,7 +316,7 @@ Per frame, in `PostUpdate` after transform propagation:
    - ⇒ Fix Henry's double update of moved baked lights.
 2. **Light positions.** Live tracking (every frame) or Relaxed tracking (on change), from `GlobalTransform`.
 3. **Moved baked lights.** A baked light whose position differs from its baked origin gets `radius_sqr = −1` in its baked slot and is moved to the realtime list.
-4. **Realtime selection.** Budget 32. If over budget, sort by distance to the active camera, then frustum-test the light spheres (our own sphere-vs-`Frustum` test; the camera frustum isn't lighting).
+4. **Realtime selection.** Budget 32. If over budget, sort by distance to the active camera, then frustum-test the light spheres (our own sphere-vs-`Frustum` test; the camera frustum isn't lighting). Then `light_clusters` splits that camera's view into cells, each listing the selected lights that reach it, so a fragment visits only its cell's lights (M17, §12 Beyond Henry).
 5. **Pack lights.** Fill `GpuLight`s (packing from `BO/render/gpu.rs`, `gpN` per type, gamma→linear colors, bounce color mix, `falloff = r·falloff²`). Write the `ShaderBuffer` (resizable without rebuilding materials).
 6. **Cookies.** Dedupe per texture into the cookie array, budget 64. Copy only when a cookie changes; Henry re-blits every frame.
 7. **Realtime VSM shadows** (§10) for `RealtimeShadows` lights within the budget of 16.
@@ -421,6 +422,11 @@ Per frame, in `PostUpdate` after transform propagation:
     - Cost: two table samples and one more clipped quad per rectangle light per fragment, on Metallic materials only. The table is one more texture and sampler on the material bind group (bindings 27 and 28), uploaded once.
   - Realtime shadow cubemaps are seen from the light's position. Their faces are blurred wider the larger the shape is next to the radius: σ from 1.5 up to 4 texels, reached when half the diagonal is a quarter of the radius (`realtime_shadows::faces::face_blur`, 5 taps a side at σ 4). This softens the shadows of moving objects evenly; it doesn't model a penumbra that grows with the distance between occluder and receiver.
   - Why 4 bits: M12 and M13 kept Henry's 1-bit rule by baking an area light as 3 to 16 point lights. Penumbras came in visible steps (at most 16, wider than the filter tiers blur), and each point cost a light slot, a distance cube, per-triangle list entries and shadow reads. Soft visibility costs 4× a 1-bit light's shadow words, more bake rays only in penumbras, nothing extra at runtime, and gives smooth penumbras that harden where objects touch the ground. Lights on moving objects lose nothing: they never used baked shadows.
+- Clustered realtime lights (`light_clusters`, M17). Henry's shader visits every realtime light at every pixel. We split the view of the camera the realtime lights are chosen for into 16 × 9 × 24 cells (depth slices exponential past 1 m, linear for orthographic cameras), and list in each cell the realtime lights whose sphere's view-space box covers it. A fragment visits only its cell's list.
+  - Kept: every light is shaded by the same code, range check included; baked lights, the light BVH and baked shadows are untouched. A list holds its lights in buffer order, and the lights it leaves out add nothing, so a fragment sums the same terms in the same order as the flat loop.
+  - The grid is a world-space partition: the shader projects a fragment with the clustering camera's stored matrix, not the current view's. Another camera reads the right lists inside that camera's frustum and visits every realtime light outside it. Fragments past the farthest light sphere visit none.
+  - The flat loop stays for: no camera, fewer than `realtime_cluster_min_lights` realtime lights (8, §16), more than 2^20 list entries (logged once), or no light sphere in front of the camera.
+  - Cost: one CPU build per frame, 0.14 ms for 1000 lights on one thread (`benches/clusters.rs`), and one more storage buffer, the 8th in the fragment stage (§5).
 - Fog: `VolumetricShape::Frustum` is a rectangular shaft along the light's forward axis, starting at the light's size and widening by `tan(outer_cutoff)` (clamped to 0–75°) over the fog radius. Box fog now turns with the light (Henry's and bevyout's ignored rotation). Both are a ray clipped against six planes in the light's frame.
 
 ## 13. Bevy 0.20 APIs
@@ -530,6 +536,17 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - Baked lights cost the same GPU time as Bevy's lights without shadows (1000 lights: 1.09 ms against 1.07 ms), because both shade every nearby light per pixel; baking makes the shadows nearly free. Bevy with 100 shadowed lights takes 77–122 ms per frame.
   - Two losses: realtime lights are looped without culling (1000 realtime lights: 22.6 ms of GPU against 1.08 ms), and moving realtime shadow cubemaps were CPU-bound on the per-face cameras (16 shadowed lights moving: 53–76 ms against Bevy's 18–28 ms). M16–M18 address them.
 - **M16 Face cameras without light clustering, done 2026-10-17:** `realtime_shadows` removes Bevy's `Clusters` from its face cameras, so Bevy no longer clusters lights on the GPU, prepares lights or builds a mesh view bind group for them. Harness, 16 moving shadowed lights (96 faces per frame): 26.7 ms per frame against 53–76 ms (Bevy 16.1 ms in the same run); still: 1.72 ms.
+- **M17 Clustered realtime lights, done 2026-10-17:** new slice `light_clusters` (§9, §12 Beyond Henry), binding 29. Harness, moving realtime lights, GPU time of the main pass with the grid off → on (Bevy):
+
+  | Realtime lights | Grid off | Grid on | Bevy |
+  |---|---|---|---|
+  | 8 | 0.203 ms | 0.194 ms | |
+  | 16 | 0.238 ms | 0.201 ms | 0.099 ms |
+  | 32 | 0.320 ms | 0.202 ms | 0.117 ms |
+  | 100 | 0.817 ms | 0.238 ms | 0.161 ms |
+  | 1000 | 23.2 ms | 1.71 ms | 1.09 ms |
+
+  Frame time at 1000 lights: 23.7 → 2.16 ms (Bevy 1.65 ms). Not measured yet: how much of the remaining gap is per-light shading cost and how much the looser assignment (a box per light, where Bevy tests light spheres against cluster planes). Checks: a property test (every light whose sphere holds a random point is listed in its cell, perspective and orthographic), and GPU readback of 200 lights through `gpu_check --many` against `light::mirror` (largest difference 0.0019; shrinking the spheres by half in the assignment fails 65 of 1024 samples).
 
 ## 15. Testing
 
@@ -549,3 +566,4 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
 - **Targets:** desktop Vulkan, DX12 and Metal first. WebGPU and mobile come through the M9 fallback. No WebGL2: it has no storage buffers in fragment shaders.
 - **Baking:** CPU baker (deterministic, headless). A GPU baker via wgpu ray queries can come later.
 - **Fidelity:** match Henry's look (formulas, kernels, defaults), not bit-exact Unity output.
+- **Light grid:** `realtime_cluster_min_lights` is 8. In the harness the grid made no measurable difference at 2 and 4 realtime lights and saved GPU time from 8 on (M17).

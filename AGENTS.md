@@ -42,6 +42,7 @@ src/
   shared/                small kernel used by >= 2 slices: BakeId + stable ordering, GPU light ABI,
                          math helpers, WESL `types` / `math` / `bindings` modules
   light/                 DynamicLight authoring, enums, presets, light buffer, realtime budget, moved lights
+  light_clusters/        per-cell realtime light lists over the realtime-selection camera, clusters.wesl
   effects/               intensity effects, noise, RNG, fixed timestep
   surface/               DynLitMaterial (diffuse / metallic / unlit), prepass, BRDF, lighting composition WESL
   bake/                  CPU baker (light BVH, occluder BVH, triangle builder, rays, seams, bounce,
