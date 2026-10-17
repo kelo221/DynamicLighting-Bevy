@@ -1,6 +1,10 @@
 //! Deterministic random numbers for effects: one PCG32 stream per light, so results don't depend
 //! on the order lights are processed in.
 
+use bevy::math::Vec3;
+
+use crate::shared::BakeId;
+
 /// SplitMix64 finalizer: a stateless 64-bit mix with good avalanche.
 #[inline]
 pub fn splitmix64(mut value: u64) -> u64 {
@@ -8,6 +12,22 @@ pub fn splitmix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+/// The stable key of a light's random stream: its explicit `BakeId`, or else its `Name` path and
+/// local position. Never its entity, whose id shifts whenever anything is spawned before it.
+/// Lights with the same name path and position share a stream.
+pub fn light_key(explicit: Option<BakeId>, name_path: &[String], position: Vec3) -> u64 {
+    if let Some(id) = explicit {
+        return id.0;
+    }
+    let named = BakeId::from_path(name_path.iter().map(String::as_str)).0;
+    position
+        .to_array()
+        .into_iter()
+        .fold(splitmix64(named), |key, axis| {
+            splitmix64(key ^ u64::from(axis.to_bits()))
+        })
 }
 
 /// PCG32 (XSH-RR): small, fast and statistically solid for visual randomness.
@@ -111,6 +131,26 @@ mod tests {
         for count in counts {
             assert!((9_000..11_000).contains(&count), "{counts:?}");
         }
+    }
+
+    #[test]
+    fn light_keys_follow_names_and_positions_not_entities() {
+        let path = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        let lamp = path(&["Lab", "Lamp"]);
+        let key = light_key(None, &lamp, Vec3::X);
+        assert_eq!(key, light_key(None, &lamp, Vec3::X), "repeatable");
+        assert_ne!(key, light_key(None, &lamp, Vec3::Y), "same name, elsewhere");
+        assert_ne!(key, light_key(None, &path(&["Lab", "Desk"]), Vec3::X));
+        assert_eq!(
+            light_key(Some(BakeId(9)), &lamp, Vec3::X),
+            9,
+            "explicit ids win"
+        );
     }
 
     #[test]

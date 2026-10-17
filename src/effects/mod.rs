@@ -20,7 +20,7 @@ pub use advance::advance_effect;
 pub use effect::{LightEffect, LightEffectKind, LightEffectState};
 pub use fixed_timestep::FixedTimestep;
 pub use noise::noise01;
-pub use rng::{EffectRng, splitmix64};
+pub use rng::{EffectRng, light_key, splitmix64};
 
 /// Runs in `PostUpdate`. Systems that read effect intensities order themselves after this.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]

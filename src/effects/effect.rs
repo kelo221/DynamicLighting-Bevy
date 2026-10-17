@@ -122,7 +122,7 @@ impl LightEffectState {
     }
 
     /// Restarts the random stream. Done automatically from the scene seed and the light's
-    /// `BakeId` (or entity) the first time the effect runs.
+    /// [`light_key`](super::light_key) the first time the effect runs.
     pub fn seed(&mut self, seed: u64, light_key: u64) {
         self.rng = EffectRng::for_light(seed, light_key);
         self.seeded = true;

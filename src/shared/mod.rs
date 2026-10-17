@@ -9,6 +9,7 @@ mod globals;
 mod gpu_light;
 pub mod math;
 pub mod mesh_hash;
+mod name_path;
 mod settings;
 #[cfg(test)]
 pub(crate) mod wesl_check;
@@ -20,6 +21,7 @@ pub use bake_id::{BakeId, ResolvedBakeId};
 pub use globals::{GPU_LIGHT_GLOBALS_SIZE, GpuLightGlobals};
 pub use gpu_light::{ChannelFlags, GPU_LIGHT_SIZE, GpuLight};
 pub use mesh_hash::{hash_mesh, mesh_content_hash};
+pub use name_path::NamePaths;
 pub use settings::{
     DEBUG_LIGHT_COUNT_MAX, DebugView, DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality,
     TrackingMode, TriangleIdSource,

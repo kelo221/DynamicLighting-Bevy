@@ -8,7 +8,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::light::DynamicLight;
-use crate::shared::{BakeId, ResolvedBakeId, hash_mesh};
+use crate::shared::{BakeId, NamePaths, ResolvedBakeId, hash_mesh};
 
 use super::settings::BakeStatic;
 
@@ -92,32 +92,6 @@ pub(super) fn assign_ids(
         }
     }
     ids
-}
-
-/// `Name` paths through the entity hierarchy.
-#[derive(SystemParam)]
-pub(super) struct NamePaths<'w, 's> {
-    hierarchy: Query<'w, 's, (Option<&'static Name>, Option<&'static ChildOf>)>,
-}
-
-impl NamePaths<'_, '_> {
-    /// `Name`s from the root down to `entity`; unnamed entities count as empty segments.
-    pub(super) fn name_path(&self, entity: Entity) -> Vec<String> {
-        let mut path = Vec::new();
-        let mut current = Some(entity);
-        while let Some(entity) = current.take() {
-            let Ok((name, parent)) = self.hierarchy.get(entity) else {
-                break;
-            };
-            path.push(name.map_or_else(String::new, |name| name.as_str().to_owned()));
-            // Guards against malformed hierarchies; real ones are far shallower.
-            if path.len() < 1024 {
-                current = parent.map(ChildOf::parent);
-            }
-        }
-        path.reverse();
-        path
-    }
 }
 
 type MeshItem<'a> = (

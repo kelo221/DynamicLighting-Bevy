@@ -153,6 +153,7 @@ find src tests examples benches features -type f \( -name '*.rs' -o -name '*.wes
 - **Seeding:** seed the RNG per (mesh, light, texel, sample) with a stateless hash. Never use a global RNG.
 - **Ordering:** order by `BakeId` and BVH order only. Never iterate a `HashMap`/`HashSet` into output.
 - **Identity:** meshes and lights are matched to bake data by `BakeId` and a content hash. A mismatch falls back to the unbaked path and is reported in diagnostics; it is never silently reused.
+- **No entity ids in output:** never derive anything that is saved or rendered (seeds, keys, ordering) from `Entity` ids. They shift whenever anything is spawned earlier, resources included, which changes the image. Use `BakeId` or `shared::NamePaths`.
 
 ## Testing
 

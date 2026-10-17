@@ -13,9 +13,9 @@ use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::light::{AreaLightShape, DynamicLight};
-use crate::shared::{BakeId, mesh_content_hash};
+use crate::shared::{BakeId, NamePaths, mesh_content_hash};
 
-use super::identity::{Candidate, NamePaths, assign_ids};
+use super::identity::{Candidate, assign_ids};
 use super::input::{AlphaTexture, BakeBounce, BakeInput, BakeLight, BakeMesh};
 use super::settings::BakeStatic;
 
