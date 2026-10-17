@@ -44,10 +44,13 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (dispatch, show_finished));
 }
 
+/// Where a bake is written. Browser bakes and `--capture` runs stay in memory, so a capture never
+/// replaces the bake a normal run uses.
 fn output(asset: &str) -> Option<PathBuf> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        Some(PathBuf::from("assets").join(asset))
+        (!support::args().any(|arg| arg == "--capture"))
+            .then(|| PathBuf::from("assets").join(asset))
     }
     #[cfg(target_arch = "wasm32")]
     {

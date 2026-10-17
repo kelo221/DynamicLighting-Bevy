@@ -7,8 +7,10 @@
 //! `cargo run --example realtime_shadows -- --frames 60 --screenshot screenshots/shadows.png`
 //! exits after 60 frames, saves the last ones as an image and logs the mean frame time (VSync
 //! off) and cube faces rendered per frame. `--still` stops everything, so no face needs
-//! rendering.
+//! rendering. `--capture path.png` saves a still frame for the visual baselines.
 
+#[path = "support/capture.rs"]
+mod capture;
 #[path = "support/mod.rs"]
 mod support;
 
@@ -67,7 +69,7 @@ fn main() -> AppExit {
         primary_window: Some(window),
         ..default()
     }))
-    .add_plugins(DynamicLightingPlugin)
+    .add_plugins((DynamicLightingPlugin, capture::plugin))
     .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
     .insert_resource(options)
     .add_systems(Startup, spawn_scene)

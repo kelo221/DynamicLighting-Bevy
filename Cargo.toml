@@ -63,6 +63,11 @@ bevy = { version = "0.20.0", default-features = false, features = [
 naga = { version = "30.0.1", features = ["wgsl-in"] }
 wesl = "0.6.0"
 
+# NVIDIA's FLIP image metric for the visual baselines (`tests/gpu_baselines.rs`). It compiles
+# C++, so the browser builds of the examples leave it out.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+nv-flip = "0.1.2"
+
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 bevy = { version = "0.20.0", default-features = false, features = ["web", "webgpu"] }
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Location"] }

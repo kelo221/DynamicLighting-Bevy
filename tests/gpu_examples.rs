@@ -1,32 +1,13 @@
 //! GPU checks through the examples. They need a GPU and a display, which hosted CI runners
 //! lack, so they are ignored by default: `cargo test --test gpu_examples -- --ignored`.
 
+mod common;
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{CompressedImageFormats, Image, ImageSampler, ImageType};
-
-/// Runs `cargo run --example <name> -- <args>` with this test's features and asserts it exits
-/// cleanly without logging render errors.
-fn run_example(name: &str, args: &[&str]) -> String {
-    let mut command = Command::new(env!("CARGO"));
-    command
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .args(["run", "--example", name]);
-    if cfg!(feature = "dev") {
-        command.args(["--features", "dev"]);
-    }
-    let output = command.arg("--").args(args).output().expect("cargo runs");
-    let log = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.status.success(), "{name} failed:\n{log}");
-    assert!(!log.contains(" ERROR "), "{name} logged an error:\n{log}");
-    log
-}
+use common::run_example;
 
 fn scratch(file: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("dynlight-gpu-{}", std::process::id()));

@@ -14,12 +14,15 @@
 //!   changing it).
 //! - `--frames N` exits after measuring N frames and prints the mean frame time;
 //!   `--screenshot path.png` also saves the last frame. The camera holds still while measuring.
+//! - `--capture path.png` saves a still frame for the visual baselines.
 //!
 //! Drag to orbit and scroll to zoom. VSync is off so the frame time is the real cost; browsers
 //! cap the frame rate at the display's refresh rate.
 
 #[path = "support/baking.rs"]
 mod baking;
+#[path = "support/capture.rs"]
+mod capture;
 #[path = "support/orbit.rs"]
 mod orbit;
 #[path = "support/mod.rs"]
@@ -95,7 +98,7 @@ fn main() -> AppExit {
         ..default()
     }))
     .add_plugins((DynamicLightingPlugin, FrameTimeDiagnosticsPlugin::default()))
-    .add_plugins((baking::plugin, orbit::plugin))
+    .add_plugins((baking::plugin, capture::plugin, orbit::plugin))
     .insert_resource(ClearColor(Color::srgb(0.01, 0.01, 0.015)))
     .insert_resource(BakeSettings {
         pixel_density: 16.0,
@@ -203,7 +206,11 @@ fn spawn_scene(
     let mut camera = OrbitCamera::new(Vec3::ZERO, 0.0, 0.5, 30.0);
     camera.distance_range = (6.0, 90.0);
     camera.pitch_range = (0.1, 1.45);
-    camera.drift = if options.frames.is_some() { 0.0 } else { 0.04 };
+    camera.drift = if options.frames.is_some() || capture::active() {
+        0.0
+    } else {
+        0.04
+    };
     commands.spawn((Camera3d::default(), camera));
 }
 

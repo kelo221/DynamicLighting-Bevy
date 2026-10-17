@@ -117,6 +117,8 @@ All examples except `gpu_check` accept `--frames N` (exit after N frames) and `-
 
 The GPU checks need a GPU, so they are skipped by `cargo test`; run them with `cargo test --test gpu_examples -- --ignored --test-threads=1`.
 
+Visual baselines guard the look: `cargo test --test gpu_baselines -- --ignored --test-threads=1` renders still frames of `lighting_test`, `realtime_shadows` and `stress_lights` (`--capture path.png` freezes time and waits for the bake and the shaders) and compares them with `tests/baselines/` using NVIDIA's [FLIP](https://github.com/NVlabs/flip) metric. A failure leaves the new frame and an error map in `target/tmp/baselines/`. After an intended change to the look, rerun with `DYNLIGHT_BLESS=1` and review the new images before committing them.
+
 ## Performance
 
 dynlight against Bevy's own lights and against Henry's package in Unity, in the same scene: the `stress_lights` layout, about 1000 pillars in an 80 m hall. Both harnesses live outside this repository: one spawns Bevy's `PointLight`s, the other is a Unity project. Unity builds each scene from the harness's scene description and bakes it with Henry's own baker.

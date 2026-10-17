@@ -10,11 +10,14 @@
 //! `cargo run --example lighting_test -- --frames 120` exits after 120 frames (smoke test);
 //! add `--screenshot screenshots/lighting_test.png` to save the last frames as an image,
 //! `--camera x,y,z,target_x,target_y,target_z` to hold the camera still, and `--gizmos` to
-//! outline every light's radius.
+//! outline every light's radius. `--capture path.png` saves a still frame for the visual
+//! baselines (see `support/capture.rs`).
 
 mod bake;
 #[path = "../support/baking.rs"]
 mod baking;
+#[path = "../support/capture.rs"]
+mod capture;
 mod debug;
 mod fixtures;
 #[path = "../support/orbit.rs"]
@@ -66,7 +69,13 @@ fn main() -> AppExit {
     .insert_resource(WarmUp {
         ready_at: WARM_UP_SECONDS,
     })
-    .add_plugins((bake::plugin, debug::plugin, orbit::plugin, player::plugin))
+    .add_plugins((
+        bake::plugin,
+        capture::plugin,
+        debug::plugin,
+        orbit::plugin,
+        player::plugin,
+    ))
     .add_systems(Startup, spawn_scene);
     // Browser bakes stay small and in memory; Preview skips bounce, preserving the scene.
     #[cfg(target_arch = "wasm32")]

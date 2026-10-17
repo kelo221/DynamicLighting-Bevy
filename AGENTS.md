@@ -160,6 +160,11 @@ find src tests examples benches features -type f \( -name '*.rs' -o -name '*.wes
 - **Fixtures:** synthetic only (e.g. plane + box occluder + light, with the analytic shadow footprint). No Unity output, and no third-party game data.
 - **Bake tests:** determinism, light BVH query vs brute force, a round-trip of the triangle-word layout, and seam and padding cases.
 - **Visual check:** `tests/gpu_examples.rs` runs the `gpu_check` example (GPU readback vs the CPU mirrors) and checks `lighting_test` screenshots. It needs a GPU, so it is ignored by default: run `cargo test --test gpu_examples -- --ignored` after touching shaders or render code.
+- **Visual baselines:** `tests/gpu_baselines.rs` compares still frames of the examples (`--capture`) with `tests/baselines/*.png` using FLIP. Run `cargo test --test gpu_baselines -- --ignored --test-threads=1` after any change that could alter the image, including refactors and performance work.
+  - A failure is a regression until shown otherwise: look at the error map in `target/tmp/baselines/`.
+  - Re-bless (`DYNLIGHT_BLESS=1`) only for an intended change to the look. Look at every new image before committing it, and say in the commit message why the look changed.
+  - Baselines are our own renders only, never Unity or third-party output. Keep them few and at 1280×720.
+  - New features get a baseline view in an existing case or a new case.
 
 ## Build and verify
 
