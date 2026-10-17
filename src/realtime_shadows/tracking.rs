@@ -1,10 +1,10 @@
 //! What changed for the shadow cubemaps since the last frame: shadow casters that moved,
-//! appeared, disappeared, animate, changed render layers, mesh or material, and anything that
-//! may have kept the last renderings from being complete (pipelines still compiling, new meshes,
-//! materials and textures still on their way to the GPU).
+//! appeared, disappeared, animate, changed render layers, mesh or material, and the faces whose
+//! last rendering missed something (a caster's pipeline still compiling, its mesh, material or
+//! textures still on their way to the GPU).
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use bevy::asset::asset_changed::AssetChanged;
 use bevy::camera::primitives::Aabb;
@@ -21,18 +21,34 @@ use crate::baked_lighting::BakedReceiver;
 /// frame behind, so a report arrives a frame or two late.
 const SETTLE_FRAMES: u32 = 4;
 
-/// Set by the render world when a face pass ran while a pipeline was still compiling (so some
-/// casters weren't drawn) or couldn't run at all.
+/// Filled by the render world: faces that rendered without some of their casters, or every face
+/// when the face pass couldn't run at all.
 #[derive(Resource, Clone, Default)]
-pub(super) struct ShadowFeedback(Arc<AtomicBool>);
+pub(super) struct ShadowFeedback(Arc<Missed>);
+
+#[derive(Default)]
+struct Missed {
+    every_face: AtomicBool,
+    layers: Mutex<Vec<u32>>,
+}
 
 impl ShadowFeedback {
+    /// The face pass couldn't run, so every face must render again.
     pub(super) fn report_incomplete(&self) {
-        self.0.store(true, Ordering::Relaxed);
+        self.0.every_face.store(true, Ordering::Relaxed);
     }
 
-    fn take(&self) -> bool {
-        self.0.swap(false, Ordering::Relaxed)
+    /// The face at array layer `layer` rendered without some of its casters.
+    pub(super) fn report_layer(&self, layer: u32) {
+        let mut layers = self.0.layers.lock().unwrap_or_else(PoisonError::into_inner);
+        layers.push(layer);
+    }
+
+    /// Whether every face must render again, and the layers that must.
+    fn take(&self) -> (bool, Vec<u32>) {
+        let every_face = self.0.every_face.swap(false, Ordering::Relaxed);
+        let mut layers = self.0.layers.lock().unwrap_or_else(PoisonError::into_inner);
+        (every_face, core::mem::take(&mut *layers))
     }
 }
 
@@ -52,10 +68,12 @@ struct Seen {
 #[derive(Resource, Default)]
 pub(super) struct TouchedCasters(pub Vec<Entity>);
 
-/// This frame's changes for the cube planning in `cameras.rs`.
+/// This frame's changes for the cube planning in `views.rs`.
 #[derive(Resource, Default)]
 pub(super) struct CasterChanges {
     pub changes: Vec<CasterChange>,
+    /// Array layers whose last rendering missed some casters.
+    pub redraw: Vec<u32>,
     /// Frames left in which every face renders.
     pub settle: u32,
     /// Casters with a new mesh, material or textures, and the frames left in which they are
@@ -90,7 +108,7 @@ type Animated = (
 );
 
 /// The world-space bounding sphere of a caster.
-fn bounds(transform: &GlobalTransform, aabb: &Aabb, baked: bool) -> CasterChange {
+pub(super) fn bounds(transform: &GlobalTransform, aabb: &Aabb, baked: bool) -> CasterChange {
     let matrix = transform.affine().matrix3;
     let scale = matrix
         .x_axis
@@ -159,12 +177,15 @@ pub(super) fn track_casters(
 ) {
     let CasterChanges {
         changes: list,
+        redraw,
         settle,
         lingering,
     } = &mut *changes;
     list.clear();
+    let every_face;
+    (every_face, *redraw) = feedback.take();
     // Which meshes are baked decides what cubes of baked lights draw.
-    if feedback.take() | !rebaked.is_empty() | (unbaked.read().count() > 0) {
+    if every_face | !rebaked.is_empty() | (unbaked.read().count() > 0) {
         *settle = SETTLE_FRAMES;
     }
 
@@ -220,9 +241,14 @@ mod tests {
     #[test]
     fn feedback_is_taken_once() {
         let feedback = ShadowFeedback::default();
-        assert!(!feedback.take());
+        assert_eq!(feedback.take(), (false, vec![]));
         feedback.clone().report_incomplete();
-        assert!(feedback.take());
-        assert!(!feedback.take());
+        assert_eq!(feedback.take(), (true, vec![]));
+        assert_eq!(feedback.take(), (false, vec![]));
+        let render_world = feedback.clone();
+        render_world.report_layer(7);
+        render_world.report_layer(2);
+        assert_eq!(feedback.take(), (false, vec![7, 2]));
+        assert_eq!(feedback.take(), (false, vec![]));
     }
 }

@@ -1,11 +1,11 @@
-//! Where the six cameras of a shadow cubemap look, and which lights get a cubemap.
+//! Where the six face views of a shadow cubemap look, and which lights get a cubemap.
 
 use bevy::math::Vec3;
 
 /// Texels per side of a shadow cubemap face (Henry's 512).
 pub const SHADOW_CUBEMAP_RESOLUTION: u32 = 512;
 
-/// Near plane of the face cameras. Occluders closer to the light than this are clipped.
+/// Near plane of the face views. Occluders closer to the light than this are clipped.
 pub const SHADOW_NEAR_PLANE: f32 = 0.01;
 
 /// Gaussian blur of a point-like light's cubemap faces, in texels.
@@ -23,7 +23,7 @@ pub fn face_blur(extent: f32, radius: f32) -> f32 {
     POINT_BLUR + (MAX_AREA_BLUR - POINT_BLUR) * size
 }
 
-/// Forward and up of the camera that renders cube face `face`, in WebGPU face order
+/// Forward and up of the view that renders cube face `face`, in WebGPU face order
 /// (`+X, -X, +Y, -Y, +Z, -Z`; see `shared::cube`). Cube faces are left-handed, so the rendered
 /// image is mirrored horizontally when it is written into the face.
 pub fn face_orientation(face: u32) -> (Vec3, Vec3) {

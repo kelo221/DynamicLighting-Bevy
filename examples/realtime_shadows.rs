@@ -21,8 +21,9 @@ use dynlight::prelude::*;
 use dynlight::realtime_shadows::ShadowCubemapStats;
 use support::{argument, flag};
 
-/// Real time before `--frames` starts counting, so pipelines have compiled.
-const WARM_UP_SECONDS: f32 = 2.0;
+/// Real time before `--frames` starts counting, so pipelines have compiled and still cubes have
+/// settled (about 0.3 s on a desktop GPU).
+const WARM_UP_SECONDS: f32 = 1.0;
 /// Faces of the two cubes.
 const ALL_FACES: u32 = 12;
 

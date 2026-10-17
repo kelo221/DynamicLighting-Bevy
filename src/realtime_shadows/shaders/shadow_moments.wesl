@@ -1,4 +1,4 @@
-// First half of a shadow cubemap face: the face camera's depth becomes variance moments
+// First half of a shadow cubemap face: the face view's depth becomes variance moments
 // (d / r, (d / r)²) of the distance d from the light, blurred horizontally.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
@@ -6,7 +6,7 @@ import bevy_render::view::View;
 import dynlight::realtime_shadows::shaders::shadow_kernel::{ShadowFace, blur_taps, blur_weight};
 
 @group(0) @binding(0) var depth_texture: texture_depth_2d;
-// The face camera sits at the light, so the view position is the light position.
+// The face view sits at the light, so the view position is the light position.
 @group(0) @binding(1) var<uniform> view: View;
 @group(0) @binding(2) var<uniform> face: ShadowFace;
 
@@ -29,7 +29,7 @@ fn moments_at(pixel: vec2<i32>) -> vec2<f32> {
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(depth_texture));
-    // Cube faces are left-handed: face texel x shows camera column (size - 1 - x).
+    // Cube faces are left-handed: face texel x shows view column (size - 1 - x).
     let pixel = vec2(size.x - 1 - i32(in.position.x), i32(in.position.y));
     var moments = moments_at(pixel);
     var total = 1.0;

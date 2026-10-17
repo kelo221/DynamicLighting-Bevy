@@ -90,26 +90,33 @@ impl<K: Copy + PartialEq> CubeSlots<K> {
     }
 
     /// The faces of every slot to render this frame, as `(light, faces)` per slot (`None` for free
-    /// slots), and records the cubes as rendered. `reset` renders everything: the array was
-    /// recreated, or something may have been missing from the last renderings.
+    /// slots), and records the cubes as rendered. `redraw` holds array layers whose last
+    /// rendering missed something, six layers per slot. `reset` renders everything: the array was
+    /// recreated, or something may have been missing from every rendering.
     pub fn plan(
         &mut self,
         pose: impl Fn(K) -> CubePose,
         changes: &[CasterChange],
+        redraw: &[u32],
         reset: bool,
     ) -> Vec<Option<(K, u8)>> {
         self.slots
             .iter_mut()
-            .map(|slot| {
+            .enumerate()
+            .map(|(index, slot)| {
                 let slot = slot.as_mut()?;
                 let pose = pose(slot.light);
                 let faces = if reset || slot.rendered != Some(pose) {
                     ALL_FACES
                 } else {
+                    let missed = redraw
+                        .iter()
+                        .filter(|&&layer| layer / CUBE_FACE_COUNT == index as u32)
+                        .fold(0, |faces, layer| faces | 1 << (layer % CUBE_FACE_COUNT));
                     changes
                         .iter()
                         .filter(|change| !(pose.moving_only && change.baked))
-                        .fold(0, |faces, change| {
+                        .fold(missed, |faces, change| {
                             faces | faces_touching(pose, change.center, change.radius)
                         })
                 };
@@ -184,27 +191,40 @@ mod tests {
     fn new_moved_and_reset_cubes_render_every_face() {
         let mut slots = CubeSlots::default();
         slots.assign(&[1]);
-        assert_eq!(slots.plan(|_| POSE, &[], false), [Some((1, ALL_FACES))]);
-        assert_eq!(slots.plan(|_| POSE, &[], false), [Some((1, 0))], "cached");
-        assert_eq!(slots.plan(|_| POSE, &[], true), [Some((1, ALL_FACES))]);
+        assert_eq!(
+            slots.plan(|_| POSE, &[], &[], false),
+            [Some((1, ALL_FACES))]
+        );
+        assert_eq!(
+            slots.plan(|_| POSE, &[], &[], false),
+            [Some((1, 0))],
+            "cached"
+        );
+        assert_eq!(slots.plan(|_| POSE, &[], &[], true), [Some((1, ALL_FACES))]);
         let moved = CubePose {
             position: Vec3::X * 0.01,
             ..POSE
         };
-        assert_eq!(slots.plan(|_| moved, &[], false), [Some((1, ALL_FACES))]);
+        assert_eq!(
+            slots.plan(|_| moved, &[], &[], false),
+            [Some((1, ALL_FACES))]
+        );
         let baked_only = CubePose {
             moving_only: true,
             ..moved
         };
         assert_eq!(
-            slots.plan(|_| baked_only, &[], false),
+            slots.plan(|_| baked_only, &[], &[], false),
             [Some((1, ALL_FACES))]
         );
         let wider = CubePose {
             blur: 3.0,
             ..baked_only
         };
-        assert_eq!(slots.plan(|_| wider, &[], false), [Some((1, ALL_FACES))]);
+        assert_eq!(
+            slots.plan(|_| wider, &[], &[], false),
+            [Some((1, ALL_FACES))]
+        );
     }
 
     #[test]
@@ -216,14 +236,14 @@ mod tests {
             ..POSE
         };
         let pose = |light| if light == 1 { POSE } else { far };
-        slots.plan(pose, &[], false);
+        slots.plan(pose, &[], &[], false);
         let change = CasterChange {
             center: Vec3::new(5.0, 0.0, 0.0),
             radius: 0.5,
             baked: false,
         };
         assert_eq!(
-            slots.plan(pose, &[change], false),
+            slots.plan(pose, &[change], &[], false),
             [Some((1, face(0))), Some((2, 0))],
             "the far light can't see it"
         );
@@ -236,11 +256,30 @@ mod tests {
             ..POSE
         };
         slots.assign(&[1]);
-        slots.plan(moving_only, &[], false);
-        assert_eq!(slots.plan(moving_only, &[baked], false), [Some((1, 0))]);
+        slots.plan(moving_only, &[], &[], false);
         assert_eq!(
-            slots.plan(moving_only, &[change], false),
+            slots.plan(moving_only, &[baked], &[], false),
+            [Some((1, 0))]
+        );
+        assert_eq!(
+            slots.plan(moving_only, &[change], &[], false),
             [Some((1, face(0)))]
+        );
+    }
+
+    #[test]
+    fn faces_that_missed_something_render_again_alone() {
+        let mut slots = CubeSlots::default();
+        slots.assign(&[1, 2]);
+        slots.plan(|_| POSE, &[], &[], false);
+        // Layer 6 + 3 is face 3 of slot 1; layer 40 belongs to no slot.
+        assert_eq!(
+            slots.plan(|_| POSE, &[], &[0, 2, 9, 40], false),
+            [Some((1, face(0) | face(2))), Some((2, face(3)))]
+        );
+        assert_eq!(
+            slots.plan(|_| POSE, &[], &[], false),
+            [Some((1, 0)), Some((2, 0))]
         );
     }
 
