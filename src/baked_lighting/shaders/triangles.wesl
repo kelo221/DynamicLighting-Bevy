@@ -119,16 +119,30 @@ fn row_binomial(row: u32, x: u32, log_bits: u32) -> f32 {
     return side + 4.0 * near + 6.0 * row_level(row, x + 2u, log_bits);
 }
 
-// The grid texel at the top-left of a bilinear footprint around texel coordinates `pixel`.
-fn footprint_corner(triangle: Triangle, pixel: vec2<f32>) -> vec2<u32> {
-    return vec2<u32>(max(floor(pixel - 0.5), vec2(0.0))) - triangle.bounds.xy;
+// Where the filters read around texel coordinates `pixel`; the same for every light of the
+// triangle, so the lighting loop computes it once.
+struct Footprint {
+    // Bilinear weights.
+    f: vec2<f32>,
+    // The grid texel at the top-left of the bilinear footprint.
+    corner: vec2<u32>,
+    // The grid texel containing `pixel`.
+    texel: vec2<u32>,
+}
+
+fn footprint(triangle: Triangle, pixel: vec2<f32>) -> Footprint {
+    return Footprint(
+        fract(pixel - 0.5),
+        vec2<u32>(max(floor(pixel - 0.5), vec2(0.0))) - triangle.bounds.xy,
+        vec2<u32>(max(pixel, vec2(0.0))) - triangle.bounds.xy,
+    );
 }
 
 // Integrated graphics: bilinear over four texels. The filters return levels; `baked_shadow`
 // scales them to 0–1.
-fn shadow_integrated(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, log_bits: u32) -> f32 {
-    let f = fract(pixel - 0.5);
-    let corner = vec2<i32>(footprint_corner(triangle, pixel));
+fn shadow_integrated(triangle: Triangle, entry: TriangleLight, at: Footprint, log_bits: u32) -> f32 {
+    let f = at.f;
+    let corner = vec2<i32>(at.corner);
     let top = shadow_row(triangle, entry, corner, log_bits);
     let bottom = shadow_row(triangle, entry, corner + vec2(0, 1), log_bits);
     let left = vec2(row_level(top, 0u, log_bits), row_level(bottom, 0u, log_bits));
@@ -138,8 +152,8 @@ fn shadow_integrated(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>,
 }
 
 // Low: the average of the 3×3 texels around the texel containing `pixel`.
-fn shadow_3x3(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, log_bits: u32) -> f32 {
-    let uv = vec2<i32>(vec2<u32>(max(pixel, vec2(0.0))) - triangle.bounds.xy) - vec2(1);
+fn shadow_3x3(triangle: Triangle, entry: TriangleLight, at: Footprint, log_bits: u32) -> f32 {
+    let uv = vec2<i32>(at.texel) - vec2(1);
     var sum = 0.0;
     for (var y = 0; y < 3; y++) {
         let row = shadow_row(triangle, entry, uv + vec2(0, y), log_bits);
@@ -156,9 +170,9 @@ const WINDOW_BL: u32 = 0x7770u;
 const WINDOW_BR: u32 = 0xEEE0u;
 
 // Medium for one-bit shadows: the same four 3×3 sums as `shadow_bilinear`, counted as bits.
-fn shadow_bilinear_bits(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>) -> f32 {
-    let f = fract(pixel - 0.5);
-    let corner = vec2<i32>(footprint_corner(triangle, pixel));
+fn shadow_bilinear_bits(triangle: Triangle, entry: TriangleLight, at: Footprint) -> f32 {
+    let f = at.f;
+    let corner = vec2<i32>(at.corner);
     var block = 0u;
     for (var y = 0u; y < 4u; y++) {
         let row = shadow_row(triangle, entry, corner + vec2(-1, i32(y) - 1), 0u);
@@ -174,12 +188,12 @@ fn shadow_bilinear_bits(triangle: Triangle, entry: TriangleLight, pixel: vec2<f3
 
 // Medium and high: four overlapping 3×3 averages, blended bilinearly. High reads each of the
 // 4×4 texels through the 5×5 Gaussian (binomial weights, applied across then down).
-fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, gaussian: bool, log_bits: u32) -> f32 {
+fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, at: Footprint, gaussian: bool, log_bits: u32) -> f32 {
     if !gaussian && log_bits == 0u {
-        return shadow_bilinear_bits(triangle, entry, pixel);
+        return shadow_bilinear_bits(triangle, entry, at);
     }
-    let f = fract(pixel - 0.5);
-    let corner = vec2<i32>(footprint_corner(triangle, pixel));
+    let f = at.f;
+    let corner = vec2<i32>(at.corner);
     var map: array<array<f32, 4>, 4>;
     if gaussian {
         // Rows −3 to +4 around the corner, from column −3.
@@ -216,20 +230,20 @@ fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, g
     return mix(c.x, c.y, f.y) / 9.0;
 }
 
-// How much of the light reaches texel coordinates `pixel`, 0 to 1, at the given quality, for a
-// light with `bits_per_texel` shadow bits.
-fn baked_shadow(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, quality: u32, bits_per_texel: u32) -> f32 {
+// How much of the light reaches the footprint's texel coordinates, 0 to 1, at the given quality,
+// for a light with `bits_per_texel` shadow bits.
+fn baked_shadow(triangle: Triangle, entry: TriangleLight, at: Footprint, quality: u32, bits_per_texel: u32) -> f32 {
     if entry.shadow == 0u {
         return 1.0;
     }
     let log_bits = shadow_log_bits(bits_per_texel);
     var levels: f32;
     if quality == QUALITY_INTEGRATED {
-        levels = shadow_integrated(triangle, entry, pixel, log_bits);
+        levels = shadow_integrated(triangle, entry, at, log_bits);
     } else if quality == QUALITY_LOW {
-        levels = shadow_3x3(triangle, entry, pixel, log_bits);
+        levels = shadow_3x3(triangle, entry, at, log_bits);
     } else {
-        levels = shadow_bilinear(triangle, entry, pixel, quality >= QUALITY_HIGH, log_bits);
+        levels = shadow_bilinear(triangle, entry, at, quality >= QUALITY_HIGH, log_bits);
     }
     return levels / f32((1u << (1u << log_bits)) - 1u);
 }
@@ -242,14 +256,14 @@ fn bounce_texel(entry: TriangleLight, index: u32, bits: u32) -> f32 {
     return f32((word >> ((index % pixels) * bits)) & mask) / f32(mask);
 }
 
-// Bilinear bounce light at texel coordinates `pixel`, squared back to linear. `bits` is the
-// light's bounce bits per pixel.
-fn baked_bounce(triangle: Triangle, entry: TriangleLight, pixel: vec2<f32>, bits: u32) -> f32 {
+// Bilinear bounce light at the footprint, squared back to linear. `bits` is the light's bounce
+// bits per pixel.
+fn baked_bounce(triangle: Triangle, entry: TriangleLight, at: Footprint, bits: u32) -> f32 {
     if entry.bounce == 0u {
         return 0.0;
     }
-    let f = fract(pixel - 0.5);
-    let corner = footprint_corner(triangle, pixel);
+    let f = at.f;
+    let corner = at.corner;
     let top = corner.y * triangle.bounds.z + corner.x;
     let bottom = top + triangle.bounds.z;
     let tl = bounce_texel(entry, top, bits);

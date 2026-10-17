@@ -15,8 +15,8 @@ import dynlight::dynamic_geometry::shaders::distance_cubes::{cube_shadow, cube_a
 import dynlight::light::shaders::area::area_shape;
 import dynlight::baked_lighting::shaders::baked_data::{Receiver, receiver};
 import dynlight::baked_lighting::shaders::triangles::{
-    Triangle, TriangleLight, QUALITY_INTEGRATED, load_triangle, triangle_light, baked_shadow,
-    baked_bounce,
+    Footprint, Triangle, TriangleLight, QUALITY_INTEGRATED, load_triangle, triangle_light,
+    footprint, baked_shadow, baked_bounce,
 };
 import dynlight::light_clusters::shaders::clusters::{RealtimeSpan, realtime_span, span_light};
 import dynlight::surface::shaders::bindings::dynamic_lights;
@@ -123,14 +123,14 @@ fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) 
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), 0u);
     let surface = SurfacePoint(input.world, input.normal, true);
-    let pixel = input.lightmap_uv * f32(record.resolution);
     let triangle = load_triangle(record, input.primitive);
+    let at = footprint(triangle, input.lightmap_uv * f32(record.resolution));
     for (var k = 0u; k < triangle.light_count; k++) {
         let entry = triangle_light(triangle, k);
         // A bake that doesn't match the light buffer must not read realtime slots.
         if entry.index < globals.baked_count {
             let light = dynamic_lights.lights[entry.index];
-            add_baked(&sum, shading, light, surface, triangle, entry, pixel, globals);
+            add_baked(&sum, shading, light, surface, triangle, entry, at, globals);
         }
     }
     if !FEATURE_REALTIME_LIGHTS {
@@ -155,7 +155,7 @@ fn add_baked(
     surface: SurfacePoint,
     triangle: Triangle,
     entry: TriangleLight,
-    pixel: vec2<f32>,
+    at: Footprint,
     globals: LightGlobals,
 ) {
     let geometry = light_geometry(light, surface);
@@ -170,9 +170,9 @@ fn add_baked(
     var bounce = 0.0;
     if !light_is_realtime(light) {
         let shadow_bits = light_shadow_bits_per_texel(light);
-        map = baked_shadow(triangle, entry, pixel, QUALITY, shadow_bits);
+        map = baked_shadow(triangle, entry, at, QUALITY, shadow_bits);
         if has_bounce {
-            bounce = baked_bounce(triangle, entry, pixel, light_bounce_bits_per_pixel(light));
+            bounce = baked_bounce(triangle, entry, at, light_bounce_bits_per_pixel(light));
         } else if map == 0.0 {
             return;
         }
