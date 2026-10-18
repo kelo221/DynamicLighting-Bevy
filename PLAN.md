@@ -668,6 +668,7 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
     - M25: a subgroup fast path for the light loops.
     - M26: a depth prepass by default, only on a clear win.
   - Fixed first: shadow cubemaps, realtime lights and fog volumes were picked with the cameras' far plane, which Bevy's infinite reverse-Z projections never clip at. A light past a camera's `far` (1000 m by default) was dropped even though it reaches what the camera shows. `shared::sees_sphere` ignores the far plane, like Bevy's own culling, and `repo_hygiene` keeps `intersects_sphere` out of every other file. Images are unchanged, since no example sets `far`.
+  - M23 dropped: in the moving-shadow benchmark (15 lights, 90 faces per frame), none of the faces that render is out of every camera's view. Every shadowed light's center lies inside the view, and from there all six faces can be read. The face test was measured, not shipped: per face, a five-point hull (the light and the corners at its radius, two texels wider for the seam) against the cameras' side and near planes. It is kept as a patch in the benchmark harness (`patches/m23-face-culling.patch`, outside the repo) for scenes whose shadowed lights stand behind or beside the camera.
 
 ## 15. Testing
 
