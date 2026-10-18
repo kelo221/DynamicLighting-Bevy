@@ -21,6 +21,7 @@ pub mod fog;
 pub mod gltf_import;
 pub mod light;
 pub mod light_clusters;
+pub mod portals;
 pub mod realtime_shadows;
 pub mod shared;
 pub mod surface;
@@ -43,6 +44,7 @@ pub mod prelude {
         DynamicLight, Illumination, LightBounce, LightType, LightingViewer, ShadowMode, Shimmer,
         Transparency, sun_light,
     };
+    pub use crate::portals::{Portal, PortalSettings, PortalSide, Room};
     pub use crate::shared::{
         BakeId, DynamicLightingSettings, FeatureSelection, RuntimeQuality, ShaderFeatures,
         TriangleIdSource,
@@ -57,6 +59,7 @@ impl Plugin for DynamicLightingPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             shared::SharedPlugin,
+            portals::PortalsPlugin,
             effects::EffectsPlugin,
             light::LightPlugin,
             light_clusters::LightClustersPlugin,

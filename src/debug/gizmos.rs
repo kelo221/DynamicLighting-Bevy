@@ -8,6 +8,9 @@ use crate::light::{DynamicLight, LightType};
 
 /// Draws each light's radius as a sphere in its color, dimmed by its current effect intensity,
 /// and its shape. Suns, which have no radius, get a ring and arrows along their direction.
+/// Room cells are drawn green where a camera sees into them and grey elsewhere; portals yellow
+/// between rooms, orange to the outside, and red, with their rooms, when they turned portal
+/// culling off.
 #[derive(Resource, Reflect, Clone, Debug, Default, PartialEq)]
 #[reflect(Resource, Default, Debug, Clone, PartialEq)]
 pub struct LightGizmos {
