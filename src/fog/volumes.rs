@@ -12,7 +12,8 @@ use super::params::{Placement, bounding_radius, is_active, pack};
 use super::volumetric::VolumetricLight;
 use crate::effects::LightEffectState;
 use crate::light::DynamicLight;
-use crate::shared::{GpuLight, sees_sphere};
+use crate::portals::{self, RoomGraph, RoomView};
+use crate::shared::GpuLight;
 
 /// The fog volume records the fog pass reads.
 pub const FOG_BUFFER: Handle<ShaderBuffer> = uuid_handle!("3e7b5d19-8c2a-4f06-b4e1-6d9a0c7f2b53");
@@ -48,13 +49,19 @@ type FogItem<'a> = (
     Option<&'a LightEffectState>,
 );
 
-/// Packs every active fog volume that some fog camera can see.
+/// Packs every active fog volume that some active fog camera can see, through the rooms.
 pub(super) fn pack_fog_volumes(
     lights: Query<FogItem>,
-    cameras: Query<(&Camera, &Frustum), With<FogPostProcess>>,
+    cameras: Query<(&Camera, &Frustum, Option<&RoomView>), With<FogPostProcess>>,
+    rooms: Res<RoomGraph>,
     mut volumes: ResMut<FogVolumes>,
 ) {
     volumes.0.clear();
+    let cameras: Vec<_> = cameras
+        .iter()
+        .filter(|(camera, ..)| camera.is_active)
+        .map(|(_, frustum, view)| (frustum, view))
+        .collect();
     if cameras.is_empty() {
         return;
     }
@@ -69,10 +76,7 @@ pub(super) fn pack_fog_volumes(
         }
         let (scale, rotation, position) = transform.to_scale_rotation_translation();
         let radius = bounding_radius(fog, light, scale);
-        let seen = cameras
-            .iter()
-            .any(|(camera, frustum)| camera.is_active && sees_sphere(frustum, position, radius));
-        if seen {
+        if portals::sees(&rooms, cameras.iter().copied(), position, radius) {
             let placement = Placement {
                 position,
                 rotation,

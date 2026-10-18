@@ -198,6 +198,28 @@ fn camera_sphere_tests_ignore_the_far_plane() {
     );
 }
 
+/// What cameras see goes through `portals::sees`, so every slice that picks lights by it also
+/// culls through the rooms.
+#[test]
+fn camera_sphere_tests_go_through_the_rooms() {
+    let this_file = relative(Path::new(file!()));
+    let mut offenders = Vec::new();
+    for path in source_files() {
+        let name = relative(&path);
+        let allowed = name.starts_with("src/shared/") || name.starts_with("src/portals/");
+        if allowed || name.ends_with(&this_file) || !name.ends_with(".rs") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        for (number, line) in text.lines().enumerate() {
+            if identifiers(line).any(|token| token == "sees_sphere") {
+                offenders.push(format!("{name}:{}", number + 1));
+            }
+        }
+    }
+    assert!(offenders.is_empty(), "use portals::sees: {offenders:#?}");
+}
+
 #[test]
 fn bevy_is_not_patched() {
     let manifest = fs::read_to_string(repo_root().join("Cargo.toml")).unwrap();

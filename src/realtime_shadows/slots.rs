@@ -51,8 +51,10 @@ impl<K> Default for CubeSlots<K> {
 
 impl<K: Copy + PartialEq> CubeSlots<K> {
     /// Gives this frame's `lights` their slots: lights that keep a cubemap keep their slot, the
-    /// slots of the others are freed, and new lights take the lowest free slots.
-    pub fn assign(&mut self, lights: &[K]) {
+    /// slots of the others are freed, and new lights take the lowest free slots. Returns how
+    /// many lights took a slot, so all six of their faces render.
+    pub fn assign(&mut self, lights: &[K]) -> u32 {
+        let mut assigned = 0;
         for slot in &mut self.slots {
             if slot.is_some_and(|slot| !lights.contains(&slot.light)) {
                 *slot = None;
@@ -70,10 +72,12 @@ impl<K: Copy + PartialEq> CubeSlots<K> {
                 Some(free) => *free = fresh,
                 None => self.slots.push(fresh),
             }
+            assigned += 1;
         }
         while self.slots.last().is_some_and(Option::is_none) {
             self.slots.pop();
         }
+        assigned
     }
 
     /// The slot of `light`, if it has one.
@@ -185,6 +189,26 @@ mod tests {
         assert_eq!(slots.needed(), 1, "trailing free slots are dropped");
         slots.assign(&[]);
         assert_eq!(slots.needed(), 0);
+    }
+
+    #[test]
+    fn a_light_that_leaves_and_returns_takes_a_fresh_slot_and_renders_every_face() {
+        let mut slots = CubeSlots::default();
+        assert_eq!(slots.assign(&['a', 'b']), 2);
+        slots.plan(|_| POSE, &[], &[], false);
+        assert_eq!(slots.assign(&['a', 'b']), 0);
+        assert_eq!(
+            slots.plan(|_| POSE, &[], &[], false),
+            [Some(('a', 0)), Some(('b', 0))]
+        );
+        // Hidden behind a wall for a frame, then back: its old rendering is gone.
+        assert_eq!(slots.assign(&['a']), 0);
+        slots.plan(|_| POSE, &[], &[], false);
+        assert_eq!(slots.assign(&['a', 'b']), 1);
+        assert_eq!(
+            slots.plan(|_| POSE, &[], &[], false),
+            [Some(('a', 0)), Some(('b', ALL_FACES))]
+        );
     }
 
     #[test]

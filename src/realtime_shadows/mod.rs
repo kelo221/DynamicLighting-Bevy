@@ -18,6 +18,7 @@
 mod cascade_tests;
 pub mod cascades;
 pub mod casters;
+mod choice;
 mod cubemaps;
 mod driver;
 mod extract;
@@ -52,6 +53,7 @@ use bevy::render::{
 use bevy::shader::load_shader_library;
 use bevy::transform::TransformSystems;
 
+pub use choice::ShadowChoice;
 pub use cubemaps::{
     SHADOW_CUBEMAP_FORMATS, SHADOW_CUBEMAPS, SUN_CASCADES, ShadowCubemapCapacity, cascade_array,
     cubemap_array, shadow_cubemap_format,
@@ -67,8 +69,15 @@ pub struct RealtimeShadowsPlugin;
 
 impl Plugin for RealtimeShadowsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShadowCubemapStats>();
-        // Face views and the cube array need a renderer; headless apps skip realtime shadows.
+        app.init_resource::<ShadowCubemapStats>()
+            .init_resource::<ShadowChoice>()
+            .add_systems(
+                PostUpdate,
+                choice::choose_shadow_lights
+                    .in_set(LightSystems::Attach)
+                    .after(LightSystems::Locate),
+            );
+        // Face views and the cube array need a renderer; headless apps only choose the lights.
         if !app.is_plugin_added::<AssetPlugin>() {
             return;
         }
@@ -144,6 +153,7 @@ impl Plugin for RealtimeShadowsPlugin {
                     .after(VisibilitySystems::CalculateBounds)
                     .after(VisibilitySystems::VisibilityPropagate)
                     .after(LightSystems::Locate)
+                    .after(choice::choose_shadow_lights)
                     .before(VisibilitySystems::CheckVisibility),
                 (views::cull_casters, sun::cull_sun_casters)
                     .in_set(VisibilitySystems::CheckVisibility)

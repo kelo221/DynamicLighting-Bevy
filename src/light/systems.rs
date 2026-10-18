@@ -14,9 +14,10 @@ use super::pack::{PackContext, pack};
 use super::placement::{LightPlacement, pose_of};
 use super::viewer::{LightingViewer, viewer_rank};
 use crate::effects::LightEffectState;
+use crate::portals::{self, RoomGraph, RoomView};
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, NamePaths,
-    RuntimeQuality, SkyIrradiance, SunShadowBlock, sees_sphere,
+    RuntimeQuality, SkyIrradiance, SunShadowBlock,
 };
 
 type CameraItem<'a> = (
@@ -25,6 +26,7 @@ type CameraItem<'a> = (
     &'a Frustum,
     Has<Camera3d>,
     Has<LightingViewer>,
+    Option<&'a RoomView>,
 );
 
 type SkyItem<'a> = (
@@ -87,6 +89,9 @@ type LightItem<'a> = (
 /// realtime lights (lights marked realtime, lights the bake doesn't know, and baked lights that
 /// moved): distant lights first, all of them in [`LightRank`] order, then the others that fit
 /// the budget. Of the sky lights only the chosen one is packed.
+///
+/// A realtime light within the budget must lie in the viewer's frustum and be seen by some
+/// relevant camera through the rooms.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pack_lights(
     time: Res<Time>,
@@ -96,7 +101,7 @@ pub(super) fn pack_lights(
     (attachments, choices): (Res<LightAttachments>, Res<LightChoices>),
     (sky, sun_shadow): (Res<SkyIrradiance>, Res<SunShadowBlock>),
     lights: Query<LightItem>,
-    cameras: Query<CameraItem>,
+    (cameras, rooms): (Query<CameraItem>, Res<RoomGraph>),
     paths: NamePaths,
     mut packed: ResMut<PackedLights>,
 ) {
@@ -153,14 +158,17 @@ pub(super) fn pack_lights(
         }
     }
 
-    let camera = cameras
+    let relevant: Vec<_> = cameras
         .iter()
-        .filter_map(|(camera, transform, frustum, three_d, marked)| {
+        .filter_map(|(camera, transform, frustum, three_d, marked, view)| {
             let rank = viewer_rank(camera.is_active, camera.order, three_d, marked)?;
-            Some((rank, (camera, transform, frustum)))
+            Some((rank, (camera, transform, frustum), view))
         })
-        .max_by_key(|(rank, _)| *rank)
-        .map(|(_, camera)| camera);
+        .collect();
+    let camera = relevant
+        .iter()
+        .max_by_key(|(rank, ..)| *rank)
+        .map(|&(_, camera, _)| camera);
     packed.viewer = camera.map(|(camera, transform, _)| RealtimeViewer {
         view_from_world: transform.to_matrix().inverse(),
         clip_from_view: camera.clip_from_view(),
@@ -190,7 +198,20 @@ pub(super) fn pack_lights(
         candidates,
         camera.map(|(_, transform, _)| transform.translation()),
         settings.realtime_light_budget as usize,
-        |center, radius| camera.is_none_or(|(_, _, frustum)| sees_sphere(frustum, center, radius)),
+        |center, radius| {
+            // The viewer's frustum alone bounds the realtime lights, as it bounds the clusters.
+            camera.is_none_or(|(_, _, frustum)| {
+                portals::sees(&rooms, [(frustum, None)], center, radius)
+                    && portals::sees(
+                        &rooms,
+                        relevant
+                            .iter()
+                            .map(|&(_, (_, _, frustum), view)| (frustum, view)),
+                        center,
+                        radius,
+                    )
+            })
+        },
     );
     for candidate in selected {
         let (entity, pose) = candidate.key;

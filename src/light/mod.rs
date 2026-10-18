@@ -62,6 +62,7 @@ pub use systems::quality_level;
 pub use viewer::{LightingViewer, viewer_rank};
 
 use crate::effects::EffectsSystems;
+use crate::portals::PortalSystems;
 use crate::shared::shaders_available;
 
 /// Ordering of the light buffer work in `PostUpdate`.
@@ -99,7 +100,8 @@ impl Plugin for LightPlugin {
                     .after(EffectsSystems)
                     .after(TransformSystems::Propagate)
                     .after(VisibilitySystems::UpdateFrusta)
-                    .after(VisibilitySystems::VisibilityPropagate),
+                    .after(VisibilitySystems::VisibilityPropagate)
+                    .after(PortalSystems::Trace),
             )
             .configure_sets(
                 PostUpdate,

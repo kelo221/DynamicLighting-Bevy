@@ -146,6 +146,17 @@ mod tests {
         }
     }
 
+    /// Light reaches behind thin walls and blurred edges, which is why portal culling never
+    /// takes a wall to stop a light.
+    #[test]
+    fn walls_let_some_light_through() {
+        // 0.003 behind a wall at 0.5, within the bias: fully lit.
+        assert_eq!(visibility(Vec2::new(0.5, 0.25), 0.503), 1.0);
+        // Half the filter on a wall at 0.2 and half on open space at 0.8: a receiver behind the
+        // wall at 0.6 gets three quarters of the light.
+        assert!((visibility(Vec2::new(0.5, 0.34), 0.6) - 0.75).abs() < 1e-5);
+    }
+
     #[test]
     fn open_and_blocked_receivers() {
         let empty = |_: Vec3| Vec2::ONE;

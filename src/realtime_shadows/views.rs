@@ -6,7 +6,7 @@
 use core::f32::consts::FRAC_PI_2;
 
 use bevy::camera::CameraProjection;
-use bevy::camera::primitives::{Aabb, Frustum};
+use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{RenderLayers, SetViewVisibility};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
@@ -15,18 +15,15 @@ use bevy::render::renderer::RenderDevice;
 use bevy::render::sync_world::SyncToRenderWorld;
 
 use super::casters::{ActiveCube, Caster, face_lists};
+use super::choice::{ShadowChoice, ShadowLight};
 use super::cubemaps::{ShadowCubemapCapacity, ensure_capacity, shadow_cubemap_format};
-use super::faces::{
-    POINT_BLUR, SHADOW_NEAR_PLANE, face_blur, face_orientation, select_shadow_lights,
-};
+use super::faces::{POINT_BLUR, SHADOW_NEAR_PLANE, face_blur, face_orientation};
 use super::slots::{CubePose, CubeSlots};
 use super::tracking::{CasterChanges, bounds};
 use crate::baked_lighting::BakedReceiver;
-use crate::light::{
-    BakedInPlace, DynamicLight, LightAttachments, LightingViewer, ShadowMode, viewer_rank,
-};
+use crate::light::LightAttachments;
 use crate::shared::cube::CUBE_FACE_COUNT;
-use crate::shared::{DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality, sees_sphere};
+use crate::shared::{DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality};
 
 /// One face of a shadow cubemap: array layer `layer`, seen from its light at `pose`.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -55,6 +52,8 @@ pub struct ShadowFaceUniform {
 pub struct ShadowCubemapStats {
     /// Lights with a shadow cubemap.
     pub lights: u32,
+    /// Of those, the lights that got their slot this frame, so their six faces render.
+    pub cubes_assigned: u32,
     /// Cube faces rendered this frame; the others kept their last rendering.
     pub faces_rendered: u32,
     /// Cascades of the sun's realtime shadows rendered this frame.
@@ -84,30 +83,14 @@ pub(super) fn face_view(pose: CubePose, face: u32) -> (GlobalTransform, Mat4) {
     (transform.into(), projection.get_clip_from_view())
 }
 
-type ShadowLight<'a> = (
-    Entity,
-    &'a DynamicLight,
-    &'a GlobalTransform,
-    &'a InheritedVisibility,
-    Has<BakedInPlace>,
-);
-type Viewer<'a> = (
-    &'a Camera,
-    &'a GlobalTransform,
-    &'a Frustum,
-    Has<Camera3d>,
-    Has<LightingViewer>,
-);
-
-/// Gives the nearest visible `ShadowMode::Realtime` lights within the budget a cube slot,
-/// decides which faces render again, places them at their lights and records the slots in
-/// [`LightAttachments`].
+/// Gives the lights in [`ShadowChoice`] a cube slot, decides which faces render again, places
+/// them at their lights and records the slots in [`LightAttachments`].
 #[allow(clippy::too_many_arguments)]
 pub(super) fn place_shadow_faces(
     mut commands: Commands,
     settings: Res<DynamicLightingSettings>,
+    choice: Res<ShadowChoice>,
     lights: Query<ShadowLight>,
-    viewers: Query<Viewer>,
     mut faces: Query<&mut ShadowFace>,
     mut placed: ResMut<ShadowFaces>,
     mut attachments: ResMut<LightAttachments>,
@@ -117,45 +100,14 @@ pub(super) fn place_shadow_faces(
     mut stats: ResMut<ShadowCubemapStats>,
     device: Option<Res<RenderDevice>>,
 ) {
-    // Every camera that could be the viewer keeps the lights it sees; the viewer's distance
-    // picks among them.
-    let viewers: Vec<_> = viewers
-        .iter()
-        .filter_map(|(camera, transform, frustum, three_d, marked)| {
-            let rank = viewer_rank(camera.is_active, camera.order, three_d, marked)?;
-            Some((rank, transform, frustum))
-        })
-        .collect();
-    let viewer = viewers
-        .iter()
-        .max_by_key(|(rank, ..)| *rank)
-        .map(|(_, transform, _)| transform.translation());
+    let Some(device) = device else {
+        return;
+    };
     let budget = match settings.quality {
         RuntimeQuality::IntegratedGraphics => 0,
         _ => settings.shadow_cubemap_budget,
     };
-    let seen = |position: Vec3, radius: f32| {
-        viewers
-            .iter()
-            .any(|(_, _, frustum)| sees_sphere(frustum, position, radius))
-    };
-    let candidates = lights
-        .iter()
-        // Suns have no position to see a cubemap from.
-        .filter(|(_, light, _, visibility, _)| {
-            light.shadows == ShadowMode::Realtime
-                && !light.light_type.is_distant()
-                && light.is_valid()
-                && visibility.get()
-        })
-        .map(|(entity, light, transform, ..)| (entity, transform.translation(), light.radius))
-        .filter(|&(_, position, radius)| seen(position, radius))
-        .map(|(entity, position, _)| (entity, position))
-        .collect();
-    let selected = select_shadow_lights(candidates, viewer, budget as usize);
-    let Some(device) = device else {
-        return;
-    };
+    let selected = &choice.lights;
     // Lights that use their baked shadows only need the meshes the bake doesn't cover, unless
     // moving meshes ignore the bake too.
     let use_bake = settings.dynamic_geometry != DynamicGeometryMode::LightingOnly;
@@ -174,7 +126,7 @@ pub(super) fn place_shadow_faces(
         .collect();
 
     let placed = &mut *placed;
-    placed.slots.assign(&selected);
+    stats.cubes_assigned = placed.slots.assign(selected);
     let format = shadow_cubemap_format(device.features());
     let recreated = ensure_capacity(
         placed.slots.needed(),
