@@ -15,6 +15,7 @@ use crate::baked_lighting::{
     primitive_index_supported,
 };
 use crate::cookies::COOKIE_ARRAY;
+use crate::environment::SKY_SPECULAR;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
 use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS};
@@ -41,8 +42,8 @@ pub enum ShadingModel {
 /// Texture conventions follow glTF: `metallic_roughness_texture` has roughness in green and
 /// metallic in blue, `occlusion_texture` uses red, and `normal_map_texture` is a linear
 /// tangent-space map that needs mesh tangents. `lights`, `cookies`, `baked_triangles`,
-/// `baked_aux`, `shadow_cubemaps`, `area_light_lut` and `realtime_clusters` point at the
-/// scene-wide lighting resources and should stay at their defaults.
+/// `baked_aux`, `shadow_cubemaps`, `area_light_lut`, `realtime_clusters` and `sky_specular`
+/// point at the scene-wide lighting resources and should stay at their defaults.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 #[uniform(0, DynLitUniform)]
 #[bind_group_data(DynLitKey)]
@@ -75,8 +76,8 @@ pub struct DynLitMaterial {
     pub occlusion_texture: Option<Handle<Image>>,
     /// How much of the occlusion texture applies, 0 to 1.
     pub occlusion_strength: f32,
-    /// Environment reflected by metallic surfaces, sampled at a mip level by roughness. Without
-    /// it the ambient color is reflected.
+    /// Environment reflected by metallic surfaces, sampled at a mip level by roughness, in place
+    /// of the sky's reflection. Without either the ambient color is reflected.
     #[texture(11, dimension = "cube")]
     #[sampler(12)]
     pub reflection_cubemap: Option<Handle<Image>>,
@@ -103,6 +104,9 @@ pub struct DynLitMaterial {
     pub area_light_lut: Handle<Image>,
     #[storage(29, read_only)]
     pub realtime_clusters: Handle<ShaderBuffer>,
+    #[texture(30, dimension = "cube")]
+    #[sampler(31)]
+    pub sky_specular: Handle<Image>,
 }
 
 impl Default for DynLitMaterial {
@@ -131,6 +135,7 @@ impl Default for DynLitMaterial {
             shadow_cubemaps: SHADOW_CUBEMAPS,
             area_light_lut: AREA_LIGHT_LUT,
             realtime_clusters: REALTIME_CLUSTERS,
+            sky_specular: SKY_SPECULAR,
         }
     }
 }

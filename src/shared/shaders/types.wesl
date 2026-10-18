@@ -51,9 +51,16 @@ const GLOBALS_FLAG_DEBUG_LIGHTING: u32 = 2u;
 // Debug view: a heat map of the lights reaching each fragment.
 const GLOBALS_FLAG_DEBUG_LIGHT_COUNT: u32 = 4u;
 
-// The whole light buffer: the header, then the baked slots, then the realtime lights.
+// The sky's irradiance over π in the sky's frame, as spherical harmonics of bands 0 to 2
+// (`sh[i].xyz` per channel). Mirrors `dynlight::shared::GpuSkyIrradiance` (144 bytes).
+struct SkyIrradiance {
+    sh: array<vec4<f32>, 9>,
+}
+
+// The whole light buffer: the header, the sky, then the baked slots and the realtime lights.
 struct DynamicLights {
     globals: LightGlobals,
+    sky: SkyIrradiance,
     lights: array<GpuLight>,
 }
 
@@ -76,6 +83,7 @@ const LIGHT_TYPE_DISCO: u32 = 448u;
 const LIGHT_TYPE_RECTANGLE: u32 = 512u;
 const LIGHT_TYPE_TUBE: u32 = 576u;
 const LIGHT_TYPE_SUN: u32 = 640u;
+const LIGHT_TYPE_SKY: u32 = 704u;
 
 const LIGHT_SHIMMER_NONE: u32 = 0u;
 const LIGHT_SHIMMER_WATER: u32 = 1024u;
@@ -96,10 +104,12 @@ fn light_is_area(light: GpuLight) -> bool {
     return kind == LIGHT_TYPE_RECTANGLE || kind == LIGHT_TYPE_TUBE;
 }
 
-// Light from infinitely far away, without a position or radius: suns. `forward` points towards
-// a sun; `gp1` and `gp2` are the cosine and sine of its disk's angular radius.
+// Light from infinitely far away, without a position or radius: suns and skies. `forward`
+// points towards a sun; `gp1` and `gp2` are the cosine and sine of its disk's angular radius. A
+// sky's `forward` and `up` turn its image.
 fn light_is_distant(light: GpuLight) -> bool {
-    return light_type(light) == LIGHT_TYPE_SUN;
+    let kind = light_type(light);
+    return kind == LIGHT_TYPE_SUN || kind == LIGHT_TYPE_SKY;
 }
 
 // How far an area light's shape reaches from its position; 0 for the other types. An area

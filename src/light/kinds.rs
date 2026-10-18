@@ -36,10 +36,14 @@ pub enum LightType {
     /// forward axis (`Transform::forward`). It has no position or radius and reaches everything;
     /// `angular_diameter` is the disk's size, which softens its baked shadows.
     Sun = 10,
+    /// A distant light: the sky around the scene, from an image (`environment::SkyEnvironment`
+    /// on the same entity), turned with the entity. It lights every surface from all directions
+    /// and is drawn behind the scene.
+    Sky = 11,
 }
 
 impl LightType {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Point,
         Self::Spot,
         Self::Discoball,
@@ -51,6 +55,7 @@ impl LightType {
         Self::Rectangle,
         Self::Tube,
         Self::Sun,
+        Self::Sky,
     ];
 
     /// The type with GPU discriminant `bits`, if there is one.
@@ -63,11 +68,11 @@ impl LightType {
         matches!(self, Self::Rectangle | Self::Tube)
     }
 
-    /// Light from infinitely far away, without a position or radius: [`Self::Sun`]. Distant
-    /// lights reach every fragment, so they are kept out of the light BVH and the realtime
-    /// light grid, and each fragment visits them in a list of their own.
+    /// Light from infinitely far away, without a position or radius: [`Self::Sun`] and
+    /// [`Self::Sky`]. Distant lights reach every fragment, so they are kept out of the light BVH
+    /// and the realtime light grid, and each fragment visits them in a list of their own.
     pub fn is_distant(self) -> bool {
-        matches!(self, Self::Sun)
+        matches!(self, Self::Sun | Self::Sky)
     }
 }
 

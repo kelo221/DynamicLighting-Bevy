@@ -1,6 +1,6 @@
-//! The courtyard: ground, two buildings, a pergola, trees, a wall and a lamp post, all baked;
-//! a rolling ball and a spinning crate that aren't, so they take the sun's shadows from its
-//! sun map.
+//! The courtyard: ground, two buildings, a pergola, trees, a wall, a lamp post and two metal
+//! balls reflecting the sky, all baked; a rolling ball and a spinning crate that aren't, so they
+//! take the sun's shadows from its sun map.
 
 use core::f32::consts::{PI, TAU};
 
@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use dynlight::prelude::*;
 
 use crate::lightmap_uvs::{box_with_lightmap_uvs, with_uv0_as_uv1};
+use crate::sky;
 
 /// How the moving objects move, so captures can hold them still.
 #[derive(Component)]
@@ -48,6 +49,7 @@ pub fn spawn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<DynLitMaterial>,
+    images: &mut Assets<Image>,
 ) {
     let ground = materials.add(Color::srgb(0.72, 0.66, 0.55));
     let plaster = materials.add(Color::srgb(0.9, 0.86, 0.78));
@@ -164,16 +166,45 @@ pub fn spawn(
     ));
 
     let (sun, transform) = sun_light(Dir3::new(Vec3::new(-0.45, -0.75, -0.5)).unwrap());
-    commands.spawn((
-        Name::new("Sun"),
-        DynamicLight {
-            color: Color::srgb(1.0, 0.93, 0.8),
-            intensity: 2.5,
-            angular_diameter: 1.0,
-            ..sun
-        },
-        transform,
-    ));
+    let sun = DynamicLight {
+        color: Color::srgb(1.0, 0.93, 0.8),
+        intensity: 2.5,
+        angular_diameter: 1.0,
+        ..sun
+    };
+    sky::spawn(commands, images, &sun, *transform.back());
+    commands.spawn((Name::new("Sun"), sun, transform));
+
+    // A polished and a brushed metal ball, which reflect the sky.
+    let ball_mesh = meshes.add(with_uv0_as_uv1(Sphere::new(0.6).mesh().uv(32, 18)));
+    for (name, at, color, roughness) in [
+        (
+            "Chrome ball",
+            Vec3::new(-0.6, 0.6, 2.6),
+            Color::srgb(0.95, 0.95, 0.95),
+            0.05,
+        ),
+        (
+            "Brass ball",
+            Vec3::new(0.9, 0.6, 2.3),
+            Color::srgb(0.95, 0.75, 0.4),
+            0.35,
+        ),
+    ] {
+        let material = materials.add(DynLitMaterial {
+            shading: ShadingModel::Metallic,
+            metallic: 1.0,
+            perceptual_roughness: roughness,
+            ..DynLitMaterial::from(color)
+        });
+        commands.spawn((
+            Name::new(name),
+            Mesh3d(ball_mesh.clone()),
+            MeshMaterial3d(material),
+            Transform::from_translation(at),
+            BakeStatic,
+        ));
+    }
 
     let ball = materials.add(Color::srgb(0.85, 0.2, 0.15));
     commands.spawn((

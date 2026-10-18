@@ -11,6 +11,10 @@ ignore = [
   # bevy_anti_alias) and the fix is in 0.9.1. Only decoding untrusted zstd KTX2 images is
   # affected; dynlight decodes none. Remove once Bevy updates.
   "RUSTSEC-2026-0344",
+  # paste is unmaintained (informational, no vulnerability). It is a proc macro of pulp, which
+  # exr uses; exr comes with Bevy's `exr` feature, a native dev-dependency for loading HDR skies
+  # in the examples. Remove once exr or pulp drops paste.
+  "RUSTSEC-2024-0436",
 ]
 
 [licenses]

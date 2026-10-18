@@ -89,6 +89,8 @@ pub struct ShaderFeatures {
     pub bounce: bool,
     /// Suns. Off: they shine like point lights at their position.
     pub sun: bool,
+    /// Sky lights (`LightType::Sky`). Off: they add no light.
+    pub sky: bool,
 }
 
 impl ShaderFeatures {
@@ -100,6 +102,7 @@ impl ShaderFeatures {
         unbaked_meshes: true,
         bounce: true,
         sun: true,
+        sky: true,
     };
     pub const NONE: Self = Self {
         light_patterns: false,
@@ -109,10 +112,11 @@ impl ShaderFeatures {
         unbaked_meshes: false,
         bounce: false,
         sun: false,
+        sky: false,
     };
 
     /// The number of features in [`Self::list`].
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     /// `(name, enabled)` of every feature, for messages and the variant module.
     pub fn list(&self) -> [(&'static str, bool); Self::COUNT] {
@@ -124,6 +128,7 @@ impl ShaderFeatures {
             ("unbaked_meshes", self.unbaked_meshes),
             ("bounce", self.bounce),
             ("sun", self.sun),
+            ("sky", self.sky),
         ]
     }
 
@@ -146,6 +151,7 @@ impl ShaderFeatures {
             unbaked_meshes: f(self.unbaked_meshes, other.unbaked_meshes),
             bounce: f(self.bounce, other.bounce),
             sun: f(self.sun, other.sun),
+            sky: f(self.sky, other.sky),
         }
     }
 }

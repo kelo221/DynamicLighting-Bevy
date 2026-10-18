@@ -26,9 +26,14 @@ pub(super) fn draw_light_gizmos(
         let dimmed = (full * intensity).with_alpha(1.0);
         let position = transform.translation();
         let at_light = Isometry3d::from_translation(position);
-        if light.light_type == LightType::Sun {
-            draw_sun(&mut gizmos, transform, dimmed);
-            continue;
+        match light.light_type {
+            LightType::Sun => {
+                draw_sun(&mut gizmos, transform, dimmed);
+                continue;
+            }
+            // The sky is all around; the background shows it.
+            LightType::Sky => continue,
+            _ => {}
         }
         gizmos.sphere(at_light, light.radius, dimmed).resolution(24);
         gizmos.cross(at_light, 0.15, full);

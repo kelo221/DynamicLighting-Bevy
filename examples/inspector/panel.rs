@@ -65,8 +65,10 @@ fn panel() -> impl Scene {
             --
             @FeathersButton
             on(|_: On<Activate>, mut light: Light| {
-                let next = (light.light_type as usize + 1) % LightType::ALL.len();
-                light.light_type = LightType::ALL[next];
+                // The sky needs an image, which the inspector has no way to pick.
+                let types = &LightType::ALL[..LightType::ALL.len() - 1];
+                let next = (light.light_type as usize + 1) % types.len();
+                light.light_type = types[next];
             })
             Children [ @caption("Type") TypeCaption ]
             --

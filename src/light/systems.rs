@@ -11,6 +11,7 @@ use super::placement::{LightPlacement, pose_of};
 use crate::effects::LightEffectState;
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, RuntimeQuality,
+    SkyIrradiance,
 };
 
 type LightItem<'a> = (
@@ -31,6 +32,7 @@ pub(super) fn pack_lights(
     slots: Res<BakedLightSlots>,
     placement: Res<LightPlacement>,
     attachments: Res<LightAttachments>,
+    sky: Res<SkyIrradiance>,
     lights: Query<LightItem>,
     cameras: Query<(&Camera, &GlobalTransform, &Frustum)>,
     mut packed: ResMut<PackedLights>,
@@ -140,6 +142,7 @@ pub(super) fn pack_lights(
         realtime_distant,
         _padding: [0; 2],
     };
+    packed.sky = sky.0;
 }
 
 pub fn quality_level(quality: RuntimeQuality) -> u32 {

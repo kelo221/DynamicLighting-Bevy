@@ -1,7 +1,8 @@
 //! The lit material ([`DynLitMaterial`]) and the WESL lighting composition that calls into the
 //! other slices' shader modules.
 //!
-//! Shader modules: `dynlight::surface::shaders::{bindings, light_processor, lighting, dynlit}`;
+//! Shader modules: `dynlight::surface::shaders::{bindings, light_processor, sky_light, lighting,
+//! dynlit}`;
 //! `dynlit_vertex` is the vertex shader of meshes with triangle IDs. [`mirror`] is a CPU
 //! reference of Metallic shading's per-light specular term.
 
@@ -60,6 +61,7 @@ impl Plugin for SurfacePlugin {
             load_shader_library!(app, "shaders/bindings.wesl");
             load_shader_library!(app, "shaders/brdf.wesl");
             load_shader_library!(app, "shaders/light_processor.wesl");
+            load_shader_library!(app, "shaders/sky_light.wesl");
             load_shader_library!(app, "shaders/lighting.wesl");
             load_shader_library!(app, "shaders/shade.wesl");
         }

@@ -79,7 +79,11 @@ pub fn type_factor(light: &GpuLight, world: Vec3) -> f32 {
     let (gp1, gp2, gp3) = (light.gp1, light.gp2, light.gp3);
     let light_type = ChannelFlags::unpack(light.channel).light_type;
     match LightType::from_bits(light_type).unwrap_or_default() {
-        LightType::Point | LightType::Rectangle | LightType::Tube | LightType::Sun => 1.0,
+        LightType::Point
+        | LightType::Rectangle
+        | LightType::Tube
+        | LightType::Sun
+        | LightType::Sky => 1.0,
         LightType::Spot => cone(direction.dot(forward), gp1, gp2),
         LightType::Discoball => {
             let local = to_light_space(direction, forward, up);

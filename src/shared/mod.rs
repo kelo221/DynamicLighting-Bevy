@@ -16,6 +16,7 @@ pub mod mesh_hash;
 mod name_path;
 mod settings;
 mod shader_buffer;
+mod sky;
 mod variant;
 #[cfg(test)]
 pub(crate) mod wesl_check;
@@ -34,13 +35,15 @@ pub use settings::{
     FeatureSelection, RuntimeQuality, ShaderFeatures, TrackingMode, TriangleIdSource,
 };
 pub use shader_buffer::{buffer_capacity, frame_shader_buffer, write_shader_buffer};
+pub use sky::{GPU_SKY_SIZE, GpuSkyIrradiance, SkyIrradiance};
 pub use variant::{ShaderVariant, VARIANT_SHADER};
 
 pub struct SharedPlugin;
 
 impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DynamicLightingSettings>();
+        app.init_resource::<DynamicLightingSettings>()
+            .init_resource::<SkyIrradiance>();
         feature_use::plugin(app);
     }
 

@@ -3,7 +3,7 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT, LIGHT_TYPE_DISCOBALL, LIGHT_TYPE_RECTANGLE,
-    light_type, light_has_cookie, light_has_shadow_cubemap, light_is_area, light_is_distant,
+    LIGHT_TYPE_SUN, light_type, light_has_cookie, light_has_shadow_cubemap, light_is_area,
 };
 import dynlight::light::shaders::light_types::{
     attenuation, cone, discoball_theta, pattern, shimmer, spot_theta, to_light_space,
@@ -31,7 +31,7 @@ fn is_area(light: GpuLight) -> bool {
 
 // A sun, when suns are compiled in (`ShaderFeatures`); otherwise it shines like a point light.
 fn is_sun(light: GpuLight) -> bool {
-    return FEATURE_SUN && light_is_distant(light);
+    return FEATURE_SUN && light_type(light) == LIGHT_TYPE_SUN;
 }
 
 struct SurfacePoint {

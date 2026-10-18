@@ -2,6 +2,7 @@
 
 use crate::baked_lighting::shader_tests::{BAKED_DATA, TRIANGLES};
 use crate::dynamic_geometry::shader_tests::{DISTANCE_CUBES, LIGHT_BVH, SUN_MAP};
+use crate::environment::shader_tests::SKY;
 use crate::light::shader_tests::{AREA, LIGHT_TYPES, LTC, SUN};
 use crate::light_clusters::shader_tests::CLUSTERS;
 use crate::realtime_shadows::shader_tests::VSM;
@@ -21,6 +22,10 @@ pub(crate) const BRDF: (&str, &str) = (
 pub(crate) const LIGHT_PROCESSOR: (&str, &str) = (
     "dynlight::surface::shaders::light_processor",
     include_str!("shaders/light_processor.wesl"),
+);
+pub(crate) const SKY_LIGHT: (&str, &str) = (
+    "dynlight::surface::shaders::sky_light",
+    include_str!("shaders/sky_light.wesl"),
 );
 pub(crate) const LIGHTING: (&str, &str) = (
     "dynlight::surface::shaders::lighting",
@@ -47,9 +52,11 @@ pub(crate) fn surface_modules() -> Vec<(&'static str, &'static str)> {
         SUN_MAP,
         VSM,
         CLUSTERS,
+        SKY,
         BINDINGS,
         BRDF,
         LIGHT_PROCESSOR,
+        SKY_LIGHT,
         LIGHTING,
         SHADE,
     ]

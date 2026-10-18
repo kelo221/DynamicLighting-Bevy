@@ -1,9 +1,12 @@
-//! Outdoors under a baked sun: a courtyard with buildings, a pergola and trees whose soft sun
-//! shadows are baked per texel, a lamp post, and a rolling ball and a spinning crate that take
-//! the static scene's sun shadows from the sun map.
+//! Outdoors under a baked sun and a sky: a courtyard with buildings, a pergola and trees whose
+//! soft sun shadows are baked per texel, a lamp post, metal balls reflecting the sky, and a
+//! rolling ball and a spinning crate that take the static scene's sun shadows from the sun map.
+//! The sky lights everything from all directions and is drawn behind the scene.
 //!
 //! - `cargo run --example outdoor -- --bake` bakes (Full, about half a second) and writes
 //!   `assets/outdoor.dynlight`; later runs load it. Without a bake the sun shines unshadowed.
+//! - `--hdri path.exr` lights the scene with an HDR image (EXR or Radiance HDR) instead of the
+//!   procedural sky, turned so its brightest point faces the sun's direction.
 //! - `--frames N` exits after N frames, and `--screenshot path.png` saves the last ones.
 //! - `--capture path.png` saves a still frame for the visual baselines.
 //!
@@ -18,6 +21,7 @@ mod lightmap_uvs;
 #[path = "../support/orbit.rs"]
 mod orbit;
 mod scene;
+mod sky;
 #[path = "../support/mod.rs"]
 mod support;
 
@@ -42,13 +46,13 @@ fn main() -> AppExit {
     }))
     .add_plugins(DynamicLightingPlugin)
     .add_plugins((baking::plugin, capture::plugin, orbit::plugin))
-    .insert_resource(ClearColor(Color::srgb(0.55, 0.7, 0.9)))
     .insert_resource(BakeSettings {
         pixel_density: 20.0,
         ..default()
     })
+    // The sky is the only fill light.
     .insert_resource(DynamicLightingSettings {
-        ambient: Color::srgba(0.6, 0.75, 1.0, 0.3),
+        ambient: Color::NONE,
         ..default()
     })
     .add_systems(Startup, (spawn, load_or_bake))
@@ -63,8 +67,9 @@ fn spawn(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<DynLitMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
-    scene::spawn(&mut commands, &mut meshes, &mut materials);
+    scene::spawn(&mut commands, &mut meshes, &mut materials, &mut images);
     let mut camera = OrbitCamera::new(Vec3::new(0.0, 1.0, -1.0), 0.55, 0.42, 24.0);
     camera.distance_range = (6.0, 60.0);
     camera.pitch_range = (0.05, 1.4);

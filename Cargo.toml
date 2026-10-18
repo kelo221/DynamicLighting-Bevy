@@ -67,6 +67,8 @@ wesl = "0.6.0"
 # C++, so the browser builds of the examples leave it out.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 nv-flip = "0.1.2"
+# HDR sky images for the outdoor example's `--hdri`, which reads files from disk.
+bevy = { version = "0.20.0", default-features = false, features = ["exr", "hdr"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 bevy = { version = "0.20.0", default-features = false, features = ["web", "webgpu"] }

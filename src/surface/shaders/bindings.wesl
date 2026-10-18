@@ -47,3 +47,6 @@ const FLAG_METALLIC_SHADING: u32 = 256u;
 // The LTC table for rectangle-light specular (`dynlight::light::shaders::ltc`).
 @group(constants::MATERIAL_BIND_GROUP) @binding(27) var area_light_lut: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(28) var area_light_lut_sampler: sampler;
+// The sky's prefiltered specular cube (`dynlight::environment::SKY_SPECULAR`), in the sky's frame.
+@group(constants::MATERIAL_BIND_GROUP) @binding(30) var sky_specular: texture_cube<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(31) var sky_specular_sampler: sampler;

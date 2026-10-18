@@ -12,7 +12,7 @@ use bevy::mesh::{MeshAccessError, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
-use crate::light::{DynamicLight, LightShape};
+use crate::light::{DynamicLight, LightShape, LightType};
 use crate::shared::{BakeId, NamePaths, mesh_content_hash};
 
 use super::identity::{Candidate, assign_ids};
@@ -116,7 +116,8 @@ impl SceneSnapshot<'_, '_> {
         let mut baked = Vec::new();
         let mut candidates = Vec::new();
         for (entity, light, transform, id) in &self.lights {
-            if light.realtime {
+            // The sky isn't baked: it lights every surface unshadowed.
+            if light.realtime || light.light_type == LightType::Sky {
                 continue;
             }
             let (_, rotation, position) = transform.to_scale_rotation_translation();

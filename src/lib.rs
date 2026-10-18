@@ -16,6 +16,7 @@ pub mod cookies;
 pub mod debug;
 pub mod dynamic_geometry;
 pub mod effects;
+pub mod environment;
 pub mod fog;
 pub mod gltf_import;
 pub mod light;
@@ -36,6 +37,7 @@ pub mod prelude {
     pub use crate::cookies::LightCookie;
     pub use crate::debug::LightGizmos;
     pub use crate::effects::{LightEffect, LightEffectKind, LightEffectState};
+    pub use crate::environment::{NoSkyBackground, SkyEnvironment};
     pub use crate::fog::{FogPostProcess, VolumetricLight, VolumetricShape};
     pub use crate::light::{
         DynamicLight, Illumination, LightBounce, LightType, ShadowMode, Shimmer, Transparency,
@@ -59,6 +61,7 @@ impl Plugin for DynamicLightingPlugin {
             light::LightPlugin,
             light_clusters::LightClustersPlugin,
             cookies::CookiesPlugin,
+            environment::EnvironmentPlugin,
             surface::SurfacePlugin,
             bake::BakePlugin,
             baked_lighting::BakedLightingPlugin,

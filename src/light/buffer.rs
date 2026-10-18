@@ -7,10 +7,13 @@ use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
 use super::shape::LightShape;
-use crate::shared::{BakeId, GpuLight, GpuLightGlobals, frame_shader_buffer, write_shader_buffer};
+use crate::shared::{
+    BakeId, GpuLight, GpuLightGlobals, GpuSkyIrradiance, frame_shader_buffer, write_shader_buffer,
+};
 
 /// The light buffer every `DynLitMaterial` binds. Its layout is the WESL `DynamicLights`: the
-/// [`GpuLightGlobals`] header, then the baked slots, then the realtime lights.
+/// [`GpuLightGlobals`] header, the sky's [`GpuSkyIrradiance`], then the baked slots and the
+/// realtime lights.
 pub const LIGHT_BUFFER: Handle<ShaderBuffer> = uuid_handle!("5c3a3f0e-4d8b-4f6e-9a51-7d2c0b6e1f42");
 
 /// Baked lights in bake order, provided by the baked-lighting slice when a bake loads. Slot `i`
@@ -62,6 +65,8 @@ pub struct LightAttachments {
 #[derive(Resource, Default, Debug)]
 pub struct PackedLights {
     pub globals: GpuLightGlobals,
+    /// The sky's diffuse light, zero without a sky.
+    pub sky: GpuSkyIrradiance,
     /// Baked slots followed by realtime lights.
     pub lights: Vec<GpuLight>,
     /// The entity in each baked slot; `None` for disabled slots.
@@ -86,14 +91,18 @@ impl PackedLights {
         self.parts().concat()
     }
 
-    /// The buffer contents in two parts: the globals, then the lights.
-    pub fn parts(&self) -> [&[u8]; 2] {
+    /// The buffer contents in three parts: the globals, the sky, then the lights.
+    pub fn parts(&self) -> [&[u8]; 3] {
         let lights = if self.lights.is_empty() {
             bytemuck::bytes_of(&GpuLight::DISABLED)
         } else {
             bytemuck::cast_slice(&self.lights)
         };
-        [bytemuck::bytes_of(&self.globals), lights]
+        [
+            bytemuck::bytes_of(&self.globals),
+            bytemuck::bytes_of(&self.sky),
+            lights,
+        ]
     }
 }
 
@@ -125,13 +134,15 @@ pub(super) fn upload_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::{GPU_LIGHT_GLOBALS_SIZE, GPU_LIGHT_SIZE};
+    use crate::shared::{GPU_LIGHT_GLOBALS_SIZE, GPU_LIGHT_SIZE, GPU_SKY_SIZE};
+
+    const HEADER: usize = GPU_LIGHT_GLOBALS_SIZE + GPU_SKY_SIZE;
 
     #[test]
     fn empty_buffer_still_holds_one_disabled_light() {
         let bytes = PackedLights::default().to_bytes();
-        assert_eq!(bytes.len(), GPU_LIGHT_GLOBALS_SIZE + GPU_LIGHT_SIZE);
-        let light: GpuLight = bytemuck::pod_read_unaligned(&bytes[GPU_LIGHT_GLOBALS_SIZE..]);
+        assert_eq!(bytes.len(), HEADER + GPU_LIGHT_SIZE);
+        let light: GpuLight = bytemuck::pod_read_unaligned(&bytes[HEADER..]);
         assert_eq!(light, GpuLight::DISABLED);
     }
 
@@ -142,13 +153,17 @@ mod tests {
                 realtime_count: 2,
                 ..default()
             },
+            sky: GpuSkyIrradiance { sh: [[0.5; 4]; 9] },
             lights: vec![GpuLight::default(); 2],
             ..default()
         };
         let bytes = packed.to_bytes();
-        assert_eq!(bytes.len(), GPU_LIGHT_GLOBALS_SIZE + 2 * GPU_LIGHT_SIZE);
+        assert_eq!(bytes.len(), HEADER + 2 * GPU_LIGHT_SIZE);
         let globals: GpuLightGlobals =
             bytemuck::pod_read_unaligned(&bytes[..GPU_LIGHT_GLOBALS_SIZE]);
         assert_eq!(globals.realtime_count, 2);
+        let sky: GpuSkyIrradiance =
+            bytemuck::pod_read_unaligned(&bytes[GPU_LIGHT_GLOBALS_SIZE..HEADER]);
+        assert_eq!(sky, packed.sky);
     }
 }

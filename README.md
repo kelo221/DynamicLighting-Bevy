@@ -9,6 +9,7 @@ The crate is its own lighting system. It never uses Bevy's lights (`PointLight`,
 ## Features
 
 - **Lights:** Henry's 8 types (point, spot, discoball, wave, interference, rotor, shock, disco) plus rectangle and tube area lights (shaded from their shape, with soft baked shadows; rectangles reflect through linearly transformed cosines) and a sun (parallel light from a disk `angular_diameter` degrees wide, with soft baked shadows), 15 intensity effects, water and firelight shimmer, spot cookies. Presets: `DynamicLight::spot()`, `discoball()`, `rectangle(w, h)`, `tube(length)`, `sun()`, and `sun_light(direction)`, a sun shining along a direction.
+- **Sky:** an HDR equirect image (`SkyEnvironment`) lights every surface from all around and is drawn behind the scene. It is prefiltered on the CPU when it loads: nine spherical-harmonic coefficients for diffuse light and a GGX cube for Metallic reflections. Its color, intensity and effects stay live, and turning its entity turns it.
 - **Baked shadows:** per-texel shadow bits for every (triangle, light) pair, with seam padding, optional alpha-tested transparency, and four filtering quality tiers.
 - **Bounce light:** one baked bounce per light, stored per texel at 4 to 8 bits.
 - **Dynamic geometry:** moving meshes find the lights around them through a baked light BVH and are shadowed by baked distance cubes, with angular or cubic filtering. A baked sun shadows them through its sun map, a depth map of the static scene seen from the sun.
@@ -25,6 +26,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 
 - **Area lights.** Rectangle and tube lights are shaded from their shape and bake soft shadows: each texel stores how much of the shape it sees in 4 bits (16 levels) instead of Henry's single shadow bit, so penumbras are smooth and harden where objects touch the ground. Moving objects get soft shadows from the light's distance cube, with penumbras that widen with the distance to the blocker. Otherwise they follow his rules: one light at a fixed position with a `radius`, and moving, turning or resizing a baked area light falls back to realtime lighting until the next bake.
 - **A sun.** `LightType::Sun` is a light at infinity with a disk (0.53° by default, like the real sun). Its baked shadows are Henry's single bit per texel for a disk of 0°, and 4 bits of soft visibility otherwise, so penumbras widen with the distance to the blocker. Moving objects get its shadows from a baked sun map. It keeps Henry's model of a light: color, intensity and effects change live, and turning a baked sun falls back to realtime lighting until the next bake. Moving objects don't cast sun shadows yet, and suns bake no bounce light.
+- **An HDRI sky.** Henry's scenes get a flat ambient color; `LightType::Sky` lights them from an HDR image, with reflections on Metallic materials, and draws the image as the background. It is a light like the others (color, intensity and effects change live), but a realtime one: the sky isn't baked and casts no shadows yet, so it reaches under roofs the way ambient light does.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
 - **Clustered realtime lights.** Henry's shader visits every realtime light at every pixel; dynlight lists the realtime lights per cell of a view-space grid, so with 1000 realtime lights our lit pass takes 2.0 ms of GPU time, where Henry's whole frame takes 6.1 ms (see Performance).
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
@@ -98,9 +100,28 @@ Meshes need `DynLitMaterial`; Bevy's `StandardMaterial` is never lit by dynlight
 
 Shadow maps use the mesh's UV1, or UV0 when there is no UV1; overlapping UVs are fine for shadows. Bounce light needs non-overlapping UV1, because it is one map per mesh. Meshes that change after the bake are detected through a content hash: they lose their baked shadows, with a warning, until the next bake. Lights that move fall back to realtime lighting until the next bake. Turning a light keeps its bake, except for area lights and suns: turning or resizing an area light, or turning a sun or changing its disk, has the same effect. A sun can move freely, because it has no position.
 
+### Sun and sky
+
+```rust,ignore
+// A sun with a soft disk, shining down at a slant.
+commands.spawn((Name::new("Sun"), sun_light(Dir3::new(Vec3::new(-0.4, -1.0, -0.3)).unwrap())));
+// The sky: an equirect image, turned about +Y with its entity.
+commands.spawn((
+    Name::new("Sky"),
+    SkyEnvironment {
+        // The sun light stands for the image's sun, so leave it out of the sky's light.
+        max_radiance: Some(3.0),
+        ..SkyEnvironment::new(asset_server.load("sky.exr"))
+    },
+    Transform::from_rotation(Quat::from_rotation_y(0.5)),
+));
+```
+
+The image is equirectangular, in Blender's mapping: its center looks along +X and its top is straight up. Loading `.exr` or `.hdr` files needs Bevy's `exr` or `hdr` feature; 8-bit images work too. The sky is built on a background task once the image loads (25 ms for a 1024 × 512 image and 51 ms for 2048 × 1024 on a desktop CPU); `environment::SkyStatus::building` is true until it is ready. `max_radiance` limits the image's light but not the background, so a sun in the image isn't counted twice next to a sun light. Put `NoSkyBackground` on a camera to keep its clear color. One sky lights the scene at a time.
+
 ### Shader variants
 
-The lit shader is compiled for `DynamicLightingSettings::quality` and for the lighting paths in `DynamicLightingSettings::shader_features`: light patterns and cookies, area lights, realtime lights, realtime shadows, meshes without bake data, and baked bounce light. Everything is on by default. A game that doesn't use some of them can switch them off for a faster shader:
+The lit shader is compiled for `DynamicLightingSettings::quality` and for the lighting paths in `DynamicLightingSettings::shader_features`: light patterns and cookies, area lights, the sun, the sky, realtime lights, realtime shadows, meshes without bake data, and baked bounce light. Everything is on by default. A game that doesn't use some of them can switch them off for a faster shader:
 
 ```rust,ignore
 app.insert_resource(DynamicLightingSettings {
@@ -135,7 +156,7 @@ The lit shader then waits until the scene's bake is applied and compiles once wi
 | `cargo run --example lighting_test` | Every light type, effect, shimmer, a cookie, fog volumes and bounce light, a fluorescent ceiling panel with a fog shaft and soft baked shadows, a wall tube, and a cube to drive around with a realtime-shadowed lantern. `--bake` (or B) bakes the scene; `--triangle-ids` uses the fallback path. |
 | `cargo run --example realtime_shadows` | Orbiting point and spot lights with realtime shadow cubemaps over moving crates; logs the cube faces rendered per frame. `--still` stops everything, so no face renders. |
 | `cargo run --release --example stress_lights -- --bake` | 1000 baked lights among about 1000 pillars; `--realtime` makes them all realtime (and drifting) instead. |
-| `cargo run --example outdoor -- --bake` | A courtyard under a baked soft sun, with a pergola, trees and a lamp post; a rolling ball and a spinning crate take the sun's shadows from the sun map. Later runs load the bake. |
+| `cargo run --example outdoor -- --bake` | A courtyard under a baked soft sun and a procedural sky, with a pergola, trees, a lamp post and two metal balls reflecting the sky; a rolling ball and a spinning crate take the sun's shadows from the sun map. Later runs load the bake. `--hdri path.exr` lights it with an HDR image instead, turned so its sun matches the sun light. |
 | `cargo run --example gpu_check` | Reads the rendered image back and compares it with the CPU reference of the light shaders. Exits with an error on a mismatch. |
 | `cargo run --example inspector --features inspector` | A Bevy Feathers panel for editing one light live and baking with a button. |
 

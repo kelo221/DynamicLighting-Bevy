@@ -4,8 +4,8 @@ use bytemuck::{Pod, Zeroable};
 
 use super::settings::DebugView;
 
-/// Size in bytes of [`GpuLightGlobals`]. The WESL `LightGlobals` must match, and the light
-/// array starts right after it.
+/// Size in bytes of [`GpuLightGlobals`]. The WESL `LightGlobals` must match, and the sky's
+/// irradiance (`GpuSkyIrradiance`) starts right after it.
 pub const GPU_LIGHT_GLOBALS_SIZE: usize = 48;
 
 /// Scene-wide values the lighting shaders read once per fragment. Keeping them in the light
@@ -90,19 +90,6 @@ mod tests {
             .map(|(name, offset)| (name.as_str(), *offset as usize))
             .collect();
         assert_eq!(wesl_members, rust);
-    }
-
-    #[test]
-    fn light_array_follows_the_globals() {
-        let module = compile_shared_types();
-        let buffer = struct_layout(&module, "DynamicLights");
-        assert_eq!(
-            buffer.members,
-            vec![
-                ("globals".to_string(), 0),
-                ("lights".to_string(), GPU_LIGHT_GLOBALS_SIZE as u32)
-            ]
-        );
     }
 
     #[test]

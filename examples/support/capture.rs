@@ -3,8 +3,8 @@
 //!
 //! The window is 1280×720 at a scale factor of 1, and virtual time stops at [`CAPTURE_SECONDS`],
 //! so light effects, shimmer, the shader clock and anything animated hold still. The frame is
-//! saved once a `--bake` has finished, no render pipeline has been compiling for a while, and two
-//! screenshots in a row are identical.
+//! saved once a `--bake` has finished, the sky is built, no render pipeline has been compiling for
+//! a while, and two screenshots in a row are identical.
 
 // Each example uses a different subset.
 #![allow(dead_code)]
@@ -20,6 +20,7 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::window::{PresentMode, PrimaryWindow, WindowResolution};
 use bevy::winit::WinitSettings;
 use dynlight::bake::BakeFinished;
+use dynlight::environment::SkyStatus;
 
 use crate::support;
 
@@ -116,6 +117,7 @@ fn step(
     mut commands: Commands,
     mut state: ResMut<CaptureState>,
     waiting: Res<WaitingPipelines>,
+    sky: Option<Res<SkyStatus>>,
     time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -133,7 +135,8 @@ fn step(
         state.previous = image.data;
     }
     let now = time.elapsed_secs();
-    if state.bake_pending || waiting.0.load(Ordering::Relaxed) != 0 {
+    let sky_building = sky.is_some_and(|sky| sky.building);
+    if state.bake_pending || sky_building || waiting.0.load(Ordering::Relaxed) != 0 {
         state.idle_since = None;
         state.previous = None;
         return;

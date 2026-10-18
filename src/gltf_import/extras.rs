@@ -48,7 +48,9 @@ pub fn parse(json: &str) -> NodeExtras {
         return extras;
     }
     let mut light = DynamicLight::default();
-    if let Some(kind) = name_of(&map, "dynlight_type", &LightType::ALL) {
+    // A sky needs an image, which extras can't carry.
+    let types = &LightType::ALL[..LightType::ALL.len() - 1];
+    if let Some(kind) = name_of(&map, "dynlight_type", types) {
         light.light_type = kind;
     }
     if let [r, g, b, ..] = numbers(&map, "dynlight_color")[..] {

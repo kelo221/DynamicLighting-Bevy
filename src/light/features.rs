@@ -19,12 +19,19 @@ pub fn light_features(lights: &[GpuLight], realtime_count: u32) -> ShaderFeature
             || flags.light_type == LightType::Tube as u32;
         let patterned = !matches!(
             LightType::from_bits(flags.light_type),
-            Some(LightType::Point | LightType::Rectangle | LightType::Tube | LightType::Sun)
+            Some(
+                LightType::Point
+                    | LightType::Rectangle
+                    | LightType::Tube
+                    | LightType::Sun
+                    | LightType::Sky
+            )
         );
         features.area_lights |= area;
         features.light_patterns |= flags.cookie || patterned;
         features.realtime_shadows |= flags.shadow_cubemap;
         features.sun |= flags.light_type == LightType::Sun as u32;
+        features.sky |= flags.light_type == LightType::Sky as u32;
     }
     features
 }
@@ -40,6 +47,7 @@ pub(super) fn note_light_features(
     in_use.realtime_lights |= used.realtime_lights;
     in_use.realtime_shadows |= used.realtime_shadows;
     in_use.sun |= used.sun;
+    in_use.sky |= used.sky;
 }
 
 #[cfg(test)]
@@ -70,6 +78,8 @@ mod tests {
         let shadowed = light_features(&[light(LightType::Point, ChannelFlags::SHADOW_CUBEMAP)], 1);
         assert!(shadowed.realtime_shadows && shadowed.realtime_lights);
         let sun = light_features(&[light(LightType::Sun, 0)], 0);
-        assert!(sun.sun && !sun.light_patterns && !sun.area_lights);
+        assert!(sun.sun && !sun.sky && !sun.light_patterns && !sun.area_lights);
+        let sky = light_features(&[light(LightType::Sky, 0)], 1);
+        assert!(sky.sky && !sky.sun && !sky.light_patterns && sky.realtime_lights);
     }
 }

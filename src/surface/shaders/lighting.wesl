@@ -2,8 +2,8 @@
 // (Henry's `DYNLIT_FRAGMENT_INTERNAL`). Ambient light is left to the caller.
 
 import dynlight::shared::shaders::types::{
-    GpuLight, LightGlobals, GLOBALS_FLAG_LIGHTING_ONLY, light_is_realtime,
-    light_bounce_bits_per_pixel, light_shadow_bits_per_texel, light_extent,
+    GpuLight, LightGlobals, GLOBALS_FLAG_LIGHTING_ONLY, LIGHT_TYPE_SKY, light_is_realtime,
+    light_bounce_bits_per_pixel, light_shadow_bits_per_texel, light_extent, light_type,
 };
 import dynlight::dynamic_geometry::shaders::light_bvh::{
     BvhStack, bvh_node_count, bvh_start, bvh_next,
@@ -25,6 +25,7 @@ import dynlight::surface::shaders::light_processor::{
     LightSum, Shading, SurfacePoint, add_light, add_unshadowed, bounce_mask, is_area, is_sun,
     light_geometry, light_mask,
 };
+import dynlight::surface::shaders::sky_light::add_sky;
 
 // What the lighting loops need to know about a fragment.
 struct SurfaceInput {
@@ -99,10 +100,16 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
     return sum;
 }
 
-// The realtime distant lights (suns), which reach every fragment and are in no grid cell.
+// The realtime distant lights (suns and skies), which reach every fragment and are in no grid
+// cell.
 fn add_realtime_distant(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, globals: LightGlobals) {
     for (var i = 0u; i < globals.realtime_distant; i++) {
-        add_unshadowed(sum, shading, dynamic_lights.lights[globals.baked_count + i], surface, globals.time);
+        let light = dynamic_lights.lights[globals.baked_count + i];
+        if light_type(light) == LIGHT_TYPE_SKY {
+            add_sky(sum, shading, light, surface);
+        } else {
+            add_unshadowed(sum, shading, light, surface, globals.time);
+        }
     }
 }
 

@@ -52,6 +52,7 @@ src/
   dynamic_geometry/      light BVH, distance cubes and sun maps at runtime, distance_cubes.wesl, sun_map.wesl
   realtime_shadows/      VSM shadow cubemap pass (Core3d systems), vsm.wesl, blur
   cookies/               cookie texture array
+  environment/           sky light from an equirect image: CPU prefilter (SH9 + GGX cube), sky background pass
   fog/                   volumetric fog pass
   gltf_import/           glTF extras -> DynamicLight, StandardMaterial -> DynLitMaterial
   debug/                 gizmos, debug views, diagnostics

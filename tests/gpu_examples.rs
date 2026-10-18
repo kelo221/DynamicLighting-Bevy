@@ -95,6 +95,16 @@ fn gpu_sun_shadows_match_the_cpu_mirror() {
     }
 }
 
+#[test]
+#[ignore = "needs a GPU"]
+fn gpu_sky_light_matches_the_cpu_mirror() {
+    let log = run_example("gpu_check_sky", &[]);
+    assert!(
+        log.contains("GPU sky light matches the CPU mirror"),
+        "{log}"
+    );
+}
+
 /// The faces rendered per frame from the `realtime_shadows` log line.
 fn faces_per_frame(log: &str) -> f32 {
     let line = log
