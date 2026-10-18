@@ -2,16 +2,16 @@
 
 Baked per-texel shadows with live light evaluation for [Bevy](https://bevy.org) 0.20: a port of Henry de Jongh's [Dynamic Lighting](https://github.com/Henry00IS/DynamicLighting) for Unity.
 
-A CPU raytracer bakes, for every static triangle, which lights reach it and a shadow mask per texel (1 bit, or 4 bits of soft visibility for area lights). At runtime a custom material evaluates each of those lights live (color, intensity, effects, light types, cookies, shimmer) and multiplies by the baked shadow bits, so baked lights can still flicker, pulse and change color. Moving objects, realtime lights, bounce lighting, realtime shadows and volumetric fog are layered on top.
+A CPU raytracer bakes, for every static triangle, which lights reach it and a shadow mask per texel (1 bit, or 4 bits of soft visibility for area lights and the sun). At runtime a custom material evaluates each of those lights live (color, intensity, effects, light types, cookies, shimmer) and multiplies by the baked shadow bits, so baked lights can still flicker, pulse and change color. Moving objects, realtime lights, bounce lighting, realtime shadows and volumetric fog are layered on top.
 
-The crate is its own lighting system. It never uses Bevy's lights (`PointLight`, `SpotLight`, `DirectionalLight`, ambient light, environment maps, shadow maps) or `bevy_pbr`'s lighting shaders.
+The crate is its own lighting system. It never uses Bevy's lights (`PointLight`, `SpotLight`, `DirectionalLight`, ambient light, environment maps, skyboxes, shadow maps) or `bevy_pbr`'s lighting shaders.
 
 ## Features
 
-- **Lights:** Henry's 8 types (point, spot, discoball, wave, interference, rotor, shock, disco) plus rectangle and tube area lights (shaded from their shape, with soft baked shadows; rectangles reflect through linearly transformed cosines), 15 intensity effects, water and firelight shimmer, spot cookies. Presets: `DynamicLight::spot()`, `discoball()`, `rectangle(w, h)`, `tube(length)`, and `sun_light(direction)`, a distant point light standing in for a directional light.
+- **Lights:** Henry's 8 types (point, spot, discoball, wave, interference, rotor, shock, disco) plus rectangle and tube area lights (shaded from their shape, with soft baked shadows; rectangles reflect through linearly transformed cosines) and a sun (parallel light from a disk `angular_diameter` degrees wide, with soft baked shadows), 15 intensity effects, water and firelight shimmer, spot cookies. Presets: `DynamicLight::spot()`, `discoball()`, `rectangle(w, h)`, `tube(length)`, `sun()`, and `sun_light(direction)`, a sun shining along a direction.
 - **Baked shadows:** per-texel shadow bits for every (triangle, light) pair, with seam padding, optional alpha-tested transparency, and four filtering quality tiers.
 - **Bounce light:** one baked bounce per light, stored per texel at 4 to 8 bits.
-- **Dynamic geometry:** moving meshes find the lights around them through a baked light BVH and are shadowed by baked distance cubes, with angular or cubic filtering.
+- **Dynamic geometry:** moving meshes find the lights around them through a baked light BVH and are shadowed by baked distance cubes, with angular or cubic filtering. A baked sun shadows them through its sun map, a depth map of the static scene seen from the sun.
 - **Realtime lights and shadows:** lights marked `realtime` are evaluated every frame, nearest first within a budget, and each pixel only visits the realtime lights that reach its cell of a view-space grid. `ShadowMode::Realtime` adds a variance shadow cubemap so moving objects cast shadows. A cubemap only redraws the faces where something changed, and a light at its baked position leaves baked meshes out of it, so a still scene renders no shadow faces at all. Area lights blur their cubemaps wider.
 - **Materials:** `DynLitMaterial` covers Henry's Diffuse, Metallic (GGX) and Unlit shaders, with normal, occlusion and metallic-roughness maps. glTF `StandardMaterial`s and light extras are converted on load.
 - **Volumetric fog:** sphere, box, cone and square-shaft (`Frustum`) fog volumes per light, as a post-process pass. The shaft starts at an area light's size, for fluorescent fixtures.
@@ -24,6 +24,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 **New in dynlight**
 
 - **Area lights.** Rectangle and tube lights are shaded from their shape and bake soft shadows: each texel stores how much of the shape it sees in 4 bits (16 levels) instead of Henry's single shadow bit, so penumbras are smooth and harden where objects touch the ground. Moving objects get soft shadows from the light's distance cube, with penumbras that widen with the distance to the blocker. Otherwise they follow his rules: one light at a fixed position with a `radius`, and moving, turning or resizing a baked area light falls back to realtime lighting until the next bake.
+- **A sun.** `LightType::Sun` is a light at infinity with a disk (0.53° by default, like the real sun). Its baked shadows are Henry's single bit per texel for a disk of 0°, and 4 bits of soft visibility otherwise, so penumbras widen with the distance to the blocker. Moving objects get its shadows from a baked sun map. It keeps Henry's model of a light: color, intensity and effects change live, and turning a baked sun falls back to realtime lighting until the next bake. Moving objects don't cast sun shadows yet, and suns bake no bounce light.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
 - **Clustered realtime lights.** Henry's shader visits every realtime light at every pixel; dynlight lists the realtime lights per cell of a view-space grid, so with 1000 realtime lights our lit pass takes 2.0 ms of GPU time, where Henry's whole frame takes 6.1 ms (see Performance).
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
@@ -95,7 +96,7 @@ Meshes need `DynLitMaterial`; Bevy's `StandardMaterial` is never lit by dynlight
 2. Send a `BakeRequest { output: Some("assets/level.dynlight".into()), preset: BakePreset::Full }` message on native, or use `output: None` for an in-memory bake on any platform. The bake runs on the async compute pool and ends with a `BakeFinished` message. Use `BakePreset::Preview` to skip bounce light, and `BakeSettings` to set the texel density.
 3. On success, put `report.handle` from `BakeFinished.result` into `ActiveBake.0`. Every successful bake is available immediately in `Assets<DynLightBake>`, whether or not a file was requested. Saved `.dynlight` files can also be loaded later through the asset server. Browser file outputs are rejected with a clear error; use `None` there.
 
-Shadow maps use the mesh's UV1, or UV0 when there is no UV1; overlapping UVs are fine for shadows. Bounce light needs non-overlapping UV1, because it is one map per mesh. Meshes that change after the bake are detected through a content hash: they lose their baked shadows, with a warning, until the next bake. Lights that move fall back to realtime lighting until the next bake. Turning a light keeps its bake, except for an area light baked from several points: turning it, or changing its length, moves the points.
+Shadow maps use the mesh's UV1, or UV0 when there is no UV1; overlapping UVs are fine for shadows. Bounce light needs non-overlapping UV1, because it is one map per mesh. Meshes that change after the bake are detected through a content hash: they lose their baked shadows, with a warning, until the next bake. Lights that move fall back to realtime lighting until the next bake. Turning a light keeps its bake, except for area lights and suns: turning or resizing an area light, or turning a sun or changing its disk, has the same effect. A sun can move freely, because it has no position.
 
 ### Shader variants
 
@@ -131,9 +132,10 @@ The lit shader then waits until the scene's bake is applied and compiles once wi
 
 | Example | What it shows |
 |---|---|
-| `cargo run --example lighting_test` | Every light type, effect, shimmer, a cookie, fog volumes and bounce light, a fluorescent ceiling panel with a fog shaft and soft baked shadows from 5 points, a wall tube, and a cube to drive around with a realtime-shadowed lantern. `--bake` (or B) bakes the scene; `--triangle-ids` uses the fallback path. |
+| `cargo run --example lighting_test` | Every light type, effect, shimmer, a cookie, fog volumes and bounce light, a fluorescent ceiling panel with a fog shaft and soft baked shadows, a wall tube, and a cube to drive around with a realtime-shadowed lantern. `--bake` (or B) bakes the scene; `--triangle-ids` uses the fallback path. |
 | `cargo run --example realtime_shadows` | Orbiting point and spot lights with realtime shadow cubemaps over moving crates; logs the cube faces rendered per frame. `--still` stops everything, so no face renders. |
 | `cargo run --release --example stress_lights -- --bake` | 1000 baked lights among about 1000 pillars; `--realtime` makes them all realtime (and drifting) instead. |
+| `cargo run --example outdoor -- --bake` | A courtyard under a baked soft sun, with a pergola, trees and a lamp post; a rolling ball and a spinning crate take the sun's shadows from the sun map. Later runs load the bake. |
 | `cargo run --example gpu_check` | Reads the rendered image back and compares it with the CPU reference of the light shaders. Exits with an error on a mismatch. |
 | `cargo run --example inspector --features inspector` | A Bevy Feathers panel for editing one light live and baking with a button. |
 
@@ -141,7 +143,7 @@ All examples except `gpu_check` accept `--frames N` (exit after N frames) and `-
 
 The GPU checks need a GPU, so they are skipped by `cargo test`; run them with `cargo test --test gpu_examples -- --ignored --test-threads=1`.
 
-Visual baselines guard the look: `cargo test --test gpu_baselines -- --ignored --test-threads=1` renders still frames of `lighting_test`, `realtime_shadows` and `stress_lights` (`--capture path.png` freezes time and waits for the bake and the shaders) and compares them with `tests/baselines/` using NVIDIA's [FLIP](https://github.com/NVlabs/flip) metric. A failure leaves the new frame and an error map in `target/tmp/baselines/`. After an intended change to the look, rerun with `DYNLIGHT_BLESS=1` and review the new images before committing them.
+Visual baselines guard the look: `cargo test --test gpu_baselines -- --ignored --test-threads=1` renders still frames of `lighting_test`, `outdoor`, `realtime_shadows` and `stress_lights` (`--capture path.png` freezes time and waits for the bake and the shaders) and compares them with `tests/baselines/` using NVIDIA's [FLIP](https://github.com/NVlabs/flip) metric. A failure leaves the new frame and an error map in `target/tmp/baselines/`. After an intended change to the look, rerun with `DYNLIGHT_BLESS=1` and review the new images before committing them.
 
 ## Performance
 

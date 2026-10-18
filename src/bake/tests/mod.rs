@@ -6,10 +6,11 @@ mod determinism;
 mod footprint;
 mod layout;
 mod occluder;
+mod sun;
 
 use bevy::math::{Quat, Vec2, Vec3};
 
-use crate::light::{AreaLightShape, Illumination, LightType, Transparency};
+use crate::light::{AreaLightShape, Illumination, LightShape, LightType, SunDisk, Transparency};
 use crate::shared::{BakeId, mesh_content_hash};
 
 use super::input::{BakeBounce, BakeLight, BakeMesh};
@@ -88,7 +89,7 @@ pub fn point_light(id: u64, position: Vec3, radius: f32) -> BakeLight {
         illumination: Illumination::Direct,
         transparency: Transparency::Disabled,
         bounce: BakeBounce::default(),
-        area: None,
+        shape: LightShape::Point,
     }
 }
 
@@ -100,11 +101,23 @@ pub fn area_light(id: u64, position: Vec3, radius: f32, rotation: Quat, size: Ve
         LightType::Tube
     };
     BakeLight {
-        area: Some(AreaLightShape {
+        shape: LightShape::Area(AreaLightShape {
             kind,
             rotation,
             size,
         }),
         ..point_light(id, position, radius)
+    }
+}
+
+/// A sun `degrees` wide in direction `toward` (from the scene), far away from the origin to
+/// show that its position doesn't count.
+pub fn sun_light(id: u64, toward: Vec3, degrees: f32) -> BakeLight {
+    BakeLight {
+        shape: LightShape::Sun(SunDisk {
+            rotation: Quat::from_rotation_arc(Vec3::Z, toward.normalize()),
+            angular_diameter: degrees,
+        }),
+        ..point_light(id, Vec3::new(500.0, -300.0, 70.0), 0.5)
     }
 }

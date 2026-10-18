@@ -273,6 +273,15 @@ fn area_lights_reach_past_their_shape() {
 }
 
 #[test]
+fn suns_are_in_no_cell() {
+    let sun = GpuLight {
+        radius_sqr: f32::MAX,
+        ..light(LightType::Sun, Vec3::ZERO, 1.0, (1.0, 0.0))
+    };
+    assert_eq!(light_sphere(&sun), None);
+}
+
+#[test]
 fn the_grid_stays_off_when_it_cant_help() {
     let lights = vec![light(LightType::Point, Vec3::ZERO, 2.0, (0.0, 0.0)); 8];
     assert_eq!(build(None, &lights, 0), Err(GridOff::NoCamera));

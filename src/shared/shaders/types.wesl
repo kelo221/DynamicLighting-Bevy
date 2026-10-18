@@ -23,7 +23,7 @@ struct GpuLight {
     falloff: f32,
 }
 
-// The light buffer header. Mirrors `dynlight::shared::GpuLightGlobals` (32 bytes).
+// The light buffer header. Mirrors `dynlight::shared::GpuLightGlobals` (48 bytes).
 struct LightGlobals {
     // Linear RGB, already scaled by alpha².
     ambient: vec3<f32>,
@@ -35,6 +35,13 @@ struct LightGlobals {
     quality: u32,
     // `GLOBALS_FLAG_*` bits.
     flags: u32,
+    // Distant lights (suns) among the baked slots: the last `baked_distant` of them. The light
+    // BVH holds only the slots before them.
+    baked_distant: u32,
+    // Distant lights among the realtime lights: the first `realtime_distant` of them. The
+    // realtime light grid holds only the lights after them.
+    realtime_distant: u32,
+    _padding: vec2<u32>,
 }
 
 // Dynamic geometry ignores the baked distance cubes.
@@ -68,6 +75,7 @@ const LIGHT_TYPE_SHOCK: u32 = 384u;
 const LIGHT_TYPE_DISCO: u32 = 448u;
 const LIGHT_TYPE_RECTANGLE: u32 = 512u;
 const LIGHT_TYPE_TUBE: u32 = 576u;
+const LIGHT_TYPE_SUN: u32 = 640u;
 
 const LIGHT_SHIMMER_NONE: u32 = 0u;
 const LIGHT_SHIMMER_WATER: u32 = 1024u;
@@ -86,6 +94,12 @@ fn light_type(light: GpuLight) -> u32 {
 fn light_is_area(light: GpuLight) -> bool {
     let kind = light_type(light);
     return kind == LIGHT_TYPE_RECTANGLE || kind == LIGHT_TYPE_TUBE;
+}
+
+// Light from infinitely far away, without a position or radius: suns. `forward` points towards
+// a sun; `gp1` and `gp2` are the cosine and sine of its disk's angular radius.
+fn light_is_distant(light: GpuLight) -> bool {
+    return light_type(light) == LIGHT_TYPE_SUN;
 }
 
 // How far an area light's shape reaches from its position; 0 for the other types. An area

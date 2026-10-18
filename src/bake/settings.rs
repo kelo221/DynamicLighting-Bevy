@@ -28,10 +28,16 @@ pub struct BakeSettings {
     /// They catch thin occluders, such as poles and railings, that pass between the probes. 0
     /// trusts the probes alone, as Preview bakes do.
     pub area_light_min_samples: u32,
+    /// Side in texels of each baked sun's sun map, the depth map of the static scene seen from
+    /// the sun that gives moving meshes its static shadows. Its texels span the whole scene, so
+    /// large scenes need more. Preview bakes use at most [`PREVIEW_SUN_MAP_RESOLUTION`].
+    pub sun_map_resolution: u32,
 }
 
 /// Area light samples per texel in Preview bakes, which also skip the minimum samples.
 pub const PREVIEW_AREA_LIGHT_SAMPLES: u32 = 32;
+/// Sun map side in Preview bakes.
+pub const PREVIEW_SUN_MAP_RESOLUTION: u32 = 512;
 
 impl Default for BakeSettings {
     fn default() -> Self {
@@ -41,6 +47,7 @@ impl Default for BakeSettings {
             bounce_compression: BounceCompression::Bits8,
             area_light_samples: 64,
             area_light_min_samples: 16,
+            sun_map_resolution: super::sun_map::SUN_MAP_RESOLUTION,
         }
     }
 }

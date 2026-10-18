@@ -19,10 +19,10 @@ pub struct DynamicLight {
     pub intensity: f32,
     /// Distance in meters from the light's position where the light ends completely. Area
     /// lights are measured from their position too: past their shape they reach `radius` minus
-    /// half the shape's diagonal ([`Self::shape_reach`]).
+    /// half the shape's diagonal ([`Self::shape_reach`]). Suns ignore it: they reach everything.
     pub radius: f32,
     /// Extra decay within the radius for an artistic look, such as a bright desk lamp. 0 is
-    /// physically based; 1 roughly matches the falloff to the radius.
+    /// physically based; 1 roughly matches the falloff to the radius. Suns ignore it.
     pub falloff: f32,
     /// Never baked: evaluated every frame without baked shadows, so it can move freely.
     pub realtime: bool,
@@ -48,6 +48,11 @@ pub struct DynamicLight {
     /// Baked area lights get soft shadows traced over this shape; moving, turning or resizing
     /// one drops it to realtime lighting until the next bake.
     pub size: Vec2,
+    /// Sun: how wide the sun's disk looks, in degrees (the real sun is 0.53°), 0 to
+    /// [`Self::MAX_ANGULAR_DIAMETER`]. Larger disks cast softer baked shadows; 0 gives Henry's
+    /// hard one-bit shadows. Changing it drops a baked sun to realtime lighting until the next
+    /// bake.
+    pub angular_diameter: f32,
     pub shadows: ShadowMode,
     pub illumination: Illumination,
     pub transparency: Transparency,
@@ -76,6 +81,7 @@ impl Default for DynamicLight {
             rotor_center: 0.1,
             disco_vertical_speed: 1.0,
             size: Vec2::ZERO,
+            angular_diameter: Self::SUN_ANGULAR_DIAMETER,
             shadows: ShadowMode::Raytraced,
             illumination: Illumination::Direct,
             transparency: Transparency::Disabled,
@@ -88,9 +94,16 @@ impl Default for DynamicLight {
 }
 
 impl DynamicLight {
+    /// The apparent size of the sun's disk in degrees.
+    pub const SUN_ANGULAR_DIAMETER: f32 = 0.53;
+    /// The largest sun disk, in degrees. Wider disks would light around corners that a disk at
+    /// infinity can't.
+    pub const MAX_ANGULAR_DIAMETER: f32 = 10.0;
+
     /// Spot and discoball lights need `outer_cutoff >= inner_cutoff` and a non-zero
-    /// `outer_cutoff`; area lights a size that isn't negative and a radius beyond their shape.
-    /// Invalid lights are disabled in every render path.
+    /// `outer_cutoff`; area lights a size that isn't negative and a radius beyond their shape;
+    /// suns an angular diameter from 0 to [`Self::MAX_ANGULAR_DIAMETER`]. Invalid lights are
+    /// disabled in every render path.
     pub fn is_valid(&self) -> bool {
         match self.light_type {
             LightType::Spot | LightType::Discoball => {
@@ -99,7 +112,16 @@ impl DynamicLight {
             LightType::Rectangle | LightType::Tube => {
                 self.size.cmpge(Vec2::ZERO).all() && self.shape_reach() > 0.0
             }
+            LightType::Sun => (0.0..=Self::MAX_ANGULAR_DIAMETER).contains(&self.angular_diameter),
             _ => true,
+        }
+    }
+
+    /// Half the sun's angular diameter in radians; 0 for every other type.
+    pub fn angular_radius(&self) -> f32 {
+        match self.light_type {
+            LightType::Sun => (self.angular_diameter * 0.5).to_radians(),
+            _ => 0.0,
         }
     }
 

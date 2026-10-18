@@ -7,7 +7,7 @@ use core::f32::consts::FRAC_PI_2;
 use bevy::prelude::*;
 use dynlight::prelude::*;
 
-use crate::box_with_lightmap_uvs;
+use crate::lightmap_uvs::box_with_lightmap_uvs;
 use crate::player::Solid;
 
 /// Where the ceiling panel hangs, and its size (long along X).

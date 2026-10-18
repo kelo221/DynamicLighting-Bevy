@@ -1,11 +1,10 @@
 //! One mesh's bake (Henry's `Raytrace`): associate lights with triangles, trace shadow rays per
-//! texel and light (one to a point light, several over an area light), then hand over to bounce,
-//! optimization, seams and serialization.
+//! texel and light (one to a point light, several over an area light or a sun's disk), then hand
+//! over to bounce, optimization, seams and serialization.
 
 use bevy::math::Vec3;
 use rayon::prelude::*;
 
-use super::area::{AreaSampling, texel_visibility};
 use super::bits::{AtomicBitGrid, BitGrid, TexelRect};
 use super::bounce::{self, PhotonCube};
 use super::format::BakedMesh;
@@ -16,10 +15,10 @@ use super::mesh_builder::{PreparedMesh, crop_rect};
 use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::{Occluders, RayCaster};
 use super::progress::BakeProgress;
-use super::random;
-use super::shadow_grid::{AtomicShadowGrid, ShadowRegion, level};
+use super::shadow_grid::{AtomicShadowGrid, ShadowRegion};
 use super::shadows;
-use super::texels::{SurfaceTexel, triangle_texels};
+use super::texel_shadow::texel_shadow;
+use super::texels::triangle_texels;
 use super::triangle_words::{TriangleRecord, serialize_triangles};
 
 /// Henry's tolerance for surfaces facing slightly away from a light.
@@ -30,8 +29,10 @@ pub const RAY_OFFSET: f32 = 0.001;
 /// Scene-wide state shared by every mesh's bake.
 pub struct Scene<'a> {
     pub options: &'a BakeOptions,
-    /// Baked lights in BVH order.
+    /// Baked lights in BVH order, then the suns in [`crate::shared::BakeId`] order.
     pub lights: Vec<&'a BakeLight>,
+    /// The lights in the BVH: all but the trailing suns.
+    pub local_lights: usize,
     pub light_bvh: LightBvh,
     pub occluders: Occluders<'a>,
     /// Any light bakes bounce: triangle light entries use the 3-word layout.
@@ -134,7 +135,7 @@ impl Crowding {
 
 /// Henry's light association: lights whose sphere touches the triangle, skipping lights the
 /// (flat-shaded) triangle faces away from, unless the light bakes bounce. An area light's sphere
-/// holds its shape and everything it reaches past it.
+/// holds its shape and everything it reaches past it; suns reach every triangle.
 fn associate(scene: &Scene, prepared: &PreparedMesh, triangle: usize) -> TriangleSetup {
     let [a, b, c] = prepared.vertices(triangle);
     let [n1, n2, n3] = prepared.normals(triangle);
@@ -146,6 +147,7 @@ fn associate(scene: &Scene, prepared: &PreparedMesh, triangle: usize) -> Triangl
     scene
         .light_bvh
         .query(&Aabb::from_points(&[a, b, c]), &mut candidates);
+    candidates.extend(scene.local_lights as u32..scene.lights.len() as u32);
     let lights = candidates
         .into_iter()
         .filter(|&slot| {
@@ -157,7 +159,8 @@ fn associate(scene: &Scene, prepared: &PreparedMesh, triangle: usize) -> Triangl
             {
                 return false;
             }
-            sphere_intersects_triangle(light.position, light.radius, a, b, c)
+            light.shape.is_distant()
+                || sphere_intersects_triangle(light.position, light.radius, a, b, c)
         })
         .collect();
     TriangleSetup {
@@ -238,11 +241,7 @@ fn trace(
                         let caster = &scene.occluders;
                         caster.occluded(origin, direction, distance, light.alpha_tested())
                     };
-                    let traced = if light.area.is_some() {
-                        area_texel(scene, prepared, light, texel, occluded)
-                    } else {
-                        point_texel(light, texel, occluded)
-                    };
+                    let traced = texel_shadow(scene, prepared, light, texel, occluded);
                     let Some((lit, traced_rays)) = traced else {
                         continue;
                     };
@@ -268,61 +267,6 @@ fn trace(
         texels,
         rays,
     }
-}
-
-/// One texel's hard shadow from a point-like light: its level (0 or 1) and rays traced, or `None`
-/// when the light is out of range or behind the texel.
-fn point_texel(
-    light: &BakeLight,
-    texel: &SurfaceTexel,
-    occluded: impl Fn(Vec3, f32) -> bool,
-) -> Option<(u8, u32)> {
-    let to_light = light.position - texel.position;
-    let distance_sqr = to_light.length_squared();
-    if distance_sqr > light.radius * light.radius {
-        return None;
-    }
-    let distance = distance_sqr.sqrt();
-    if distance == 0.0 {
-        return Some((1, 0));
-    }
-    let direction = to_light / distance;
-    if texel.normal.dot(direction) <= NDOTL_TOLERANCE {
-        return None;
-    }
-    Some((u8::from(!occluded(direction, distance)), 1))
-}
-
-/// One texel's soft shadow from an area light, as a level and rays traced. Samples are seeded
-/// per (mesh, light, texel).
-fn area_texel(
-    scene: &Scene,
-    prepared: &PreparedMesh,
-    light: &BakeLight,
-    texel: &SurfaceTexel,
-    occluded: impl Fn(Vec3, f32) -> bool,
-) -> Option<(u8, u32)> {
-    let shape = light.area_shape()?;
-    let mut rng = random::stream(&[
-        scene.options.seed,
-        prepared.mesh.id.0,
-        light.id.0,
-        u64::from(texel.x),
-        u64::from(texel.y),
-    ]);
-    let visibility = texel_visibility(
-        &shape,
-        light.shape_reach(),
-        (texel.position, texel.normal),
-        AreaSampling {
-            samples: scene.options.area_light_samples,
-            minimum: scene.options.area_light_min_samples,
-        },
-        &mut rng,
-        occluded,
-    )?;
-    let lit = level(visibility.fraction, light.shadow_bits_per_texel());
-    Some((lit, visibility.rays))
 }
 
 #[cfg(test)]

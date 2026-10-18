@@ -6,7 +6,7 @@ use core::f32::consts::PI;
 use bevy::math::Vec3;
 
 use crate::light::area::{self, AreaShape};
-use crate::light::{ltc, mirror};
+use crate::light::{ltc, mirror, sun};
 use crate::shared::GpuLight;
 
 fn ggx_distribution(n_dot_h: f32, roughness: f32) -> f32 {
@@ -72,9 +72,14 @@ pub struct Viewer {
 
 /// The specular light of `light` per unit of its strength (color times attenuation) and
 /// pattern: a rectangle's LTC integral, a tube's (or a too small rectangle's) representative
-/// point, or the light's position.
+/// point, a sun's direction within its disk, or the light's position.
 pub fn specular(light: &GpuLight, at: &Viewer) -> Vec3 {
     let (mut direction, mut scale) = ((mirror::source_point(light, at.world) - at.world), 1.0);
+    if mirror::is_distant(light) {
+        let reflection = (-at.view).reflect(at.normal);
+        direction = sun::specular_direction(light, reflection);
+        scale = sun::specular_scale(light, at.roughness);
+    }
     let shape = AreaShape::of(light);
     if let Some(shape) = &shape {
         let reflection = (-at.view).reflect(at.normal);

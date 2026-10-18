@@ -9,5 +9,8 @@
 # Screenshot harness output.
 /screenshots/
 
+# Local test inputs that aren't ours to ship (HDRIs and the like).
+/test-files/
+
 # Agent worktrees and scratch.
 /.claude/worktrees/

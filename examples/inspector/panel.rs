@@ -128,6 +128,15 @@ fn panel() -> impl Scene {
                 light.size = Vec2::new(width, width * 0.5);
             })
             --
+            @label("Disk (sun) (°)")
+            --
+            @FeathersSlider { @max: 10.0 }
+            SliderValue(0.53)
+            SliderPrecision(2)
+            on(|change: On<ValueChange<f32>>, mut light: Light, mut commands: Commands| {
+                light.angular_diameter = slide(&change, &mut commands);
+            })
+            --
             @label("Falloff")
             --
             @FeathersSlider { @max: 4.0 }

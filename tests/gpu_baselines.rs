@@ -159,6 +159,35 @@ fn stress_lights_baked() {
     );
 }
 
+/// A baked soft sun over a courtyard, with a lamp; the ball and the crate aren't baked and take
+/// the pergola's and a tree's shadows from the sun map.
+#[test]
+#[ignore = "needs a GPU"]
+fn outdoor() {
+    check("outdoor", "outdoor", &["--bake"]);
+}
+
+/// The sun's shader paths through FXC, which lighting_test's scene doesn't compile.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs a GPU"]
+fn outdoor_on_fxc_matches() {
+    check_with_env(
+        "outdoor_fxc",
+        "outdoor",
+        "outdoor",
+        &["--bake"],
+        &[("WGPU_BACKEND", "dx12"), ("WGPU_DX12_COMPILER", "fxc")],
+    );
+}
+
+/// Without a bake the sun shines unshadowed through the dynamic-geometry path.
+#[test]
+#[ignore = "needs a GPU"]
+fn outdoor_unbaked() {
+    check("outdoor_unbaked", "outdoor", &[]);
+}
+
 fn check(name: &str, example: &str, args: &[&str]) {
     check_against(name, name, example, args);
 }

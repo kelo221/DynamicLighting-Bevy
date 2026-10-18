@@ -10,7 +10,7 @@ use bevy::math::{Vec2, Vec3};
 use dynlight::bake::{
     BakeBounce, BakeInput, BakeLight, BakeMesh, BakeOptions, BakeProgress, BakedScene, bake,
 };
-use dynlight::light::{Illumination, Transparency};
+use dynlight::light::{Illumination, LightShape, Transparency};
 use dynlight::shared::{BakeId, DynamicGeometryMode, mesh_content_hash};
 
 const ROOM: f32 = 24.0;
@@ -121,7 +121,7 @@ fn scene(lights_per_side: u32, bounce: bool) -> BakeInput {
                 },
                 transparency: Transparency::Disabled,
                 bounce: BakeBounce::default(),
-                area: None,
+                shape: LightShape::Point,
             }
         })
         .collect();

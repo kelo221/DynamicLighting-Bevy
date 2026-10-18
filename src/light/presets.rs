@@ -5,11 +5,6 @@ use bevy::prelude::*;
 use super::component::DynamicLight;
 use super::kinds::LightType;
 
-/// How far [`sun_light`] places its light from the world origin, in meters.
-pub const SUN_DISTANCE: f32 = 2500.0;
-/// The radius of [`sun_light`]'s light: far enough past [`SUN_DISTANCE`] to cover a level.
-pub const SUN_RADIUS: f32 = 10_000.0;
-
 impl DynamicLight {
     /// A point light with the default color, intensity and 4 m radius.
     pub fn point() -> Self {
@@ -53,19 +48,24 @@ impl DynamicLight {
             ..default()
         }
     }
+
+    /// A sun shining along the entity's forward axis (`Transform::forward`), with Henry's sun
+    /// intensity of 2 and the real sun's 0.53° disk, which gives slightly soft baked shadows.
+    pub fn sun() -> Self {
+        Self {
+            light_type: LightType::Sun,
+            ..default()
+        }
+    }
 }
 
-/// A sun: DynLight has no directional lights, so this is a point light [`SUN_DISTANCE`] away
-/// against `direction` (the way the light travels), with a radius that reaches the whole
-/// level. Its rays are nearly parallel and its baked shadows sharp. Spawn the returned bundle.
+/// A [`DynamicLight::sun`] whose light travels along `direction`. Henry's editor menu makes a
+/// point light 2.5 km away instead, because his package has no directional lights. Spawn the
+/// returned bundle; the position only places the gizmo.
 pub fn sun_light(direction: Dir3) -> (DynamicLight, Transform) {
     (
-        DynamicLight {
-            radius: SUN_RADIUS,
-            ..default()
-        },
-        Transform::from_translation(-direction.as_vec3() * SUN_DISTANCE)
-            .looking_to(direction, perpendicular(direction)),
+        DynamicLight::sun(),
+        Transform::default().looking_to(direction, perpendicular(direction)),
     )
 }
 
@@ -88,7 +88,9 @@ mod tests {
             DynamicLight::point(),
             DynamicLight::spot(),
             DynamicLight::discoball(),
-            sun_light(Dir3::NEG_Y).0,
+            DynamicLight::rectangle(1.0, 0.5),
+            DynamicLight::tube(1.2),
+            DynamicLight::sun(),
         ] {
             assert!(light.is_valid(), "{light:?}");
         }
@@ -98,14 +100,13 @@ mod tests {
     }
 
     #[test]
-    fn the_sun_shines_along_its_direction_and_reaches_the_level() {
+    fn the_sun_shines_along_its_direction() {
         let direction = Dir3::new(Vec3::new(1.0, -2.0, 0.5)).unwrap();
         let (light, transform) = sun_light(direction);
-        assert!((transform.translation.length() - SUN_DISTANCE).abs() < 1e-2);
+        assert_eq!(light.light_type, LightType::Sun);
         assert!(transform.forward().dot(direction.as_vec3()) > 0.9999);
-        assert!(light.radius > SUN_DISTANCE * 2.0);
         let (_, straight_down) = sun_light(Dir3::NEG_Y);
         assert!(straight_down.forward().dot(Vec3::NEG_Y) > 0.9999);
-        assert!(straight_down.translation.is_finite());
+        assert!(straight_down.rotation.is_finite());
     }
 }

@@ -103,3 +103,15 @@ fn alpha_tested_rays_pass_transparent_texels() {
     assert!(!texture.is_opaque(Vec2::new(0.25, 0.5)));
     assert!(texture.is_opaque(Vec2::new(1.75, -3.5)), "repeats");
 }
+
+#[test]
+fn negative_zero_directions_still_hit() {
+    let floor = floor(1, Vec3::ZERO, 2.0);
+    let meshes = [&floor];
+    let occluders = Occluders::build(&meshes);
+    let origin = Vec3::new(0.2, 1.0, -0.3);
+    let down = Vec3::new(-0.0, -1.0, -0.0);
+    assert!(occluders.occluded(origin, down, 2.0, false));
+    let hit = occluders.closest_hit(origin, down, 2.0, false).unwrap();
+    assert!((hit.distance - 1.0).abs() < 1e-6);
+}

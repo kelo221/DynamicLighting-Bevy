@@ -7,7 +7,7 @@ use dynlight::bake::{
     BakeInput, BakeLight, BakeMesh, BakeOptions, BakeProgress, BakeStage, FORMAT_VERSION,
     FormatError, LIGHT_BVH_NODE_SIZE, LightBvhNode, bake, decode, encode,
 };
-use dynlight::light::{Illumination, Transparency};
+use dynlight::light::{Illumination, LightShape, Transparency};
 use dynlight::shared::cube::{direction_to_texel, texel_index};
 use dynlight::shared::{BakeId, DynamicGeometryMode, mesh_content_hash};
 
@@ -40,7 +40,7 @@ fn light(id: u64, position: Vec3) -> BakeLight {
         illumination: Illumination::Direct,
         transparency: Transparency::Disabled,
         bounce: Default::default(),
-        area: None,
+        shape: LightShape::Point,
     }
 }
 

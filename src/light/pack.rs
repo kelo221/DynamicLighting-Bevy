@@ -75,15 +75,23 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         Shimmer::Random => (light.shimmer_scale, light.shimmer_modifier),
     };
     let forward = match light.light_type {
-        // Henry stores the spot axis negated so `dot(to_light, forward)` is the cone cosine.
-        LightType::Spot => pose.rotation * Vec3::Z,
+        // Henry stores the spot axis negated so `dot(to_light, forward)` is the cone cosine. A
+        // sun's is the direction towards it, the same for every surface.
+        LightType::Spot | LightType::Sun => pose.rotation * Vec3::Z,
         _ => pose.rotation * Vec3::NEG_Z,
     };
-    // Area lights attenuate from the nearest point of their shape over the reach past it.
-    let reach = light.shape_reach();
+    // Area lights attenuate from the nearest point of their shape over the reach past it. Distant
+    // lights have no radius: the shaders measure no distance to them, so any positive radius
+    // leaves their attenuation at their intensity.
+    let (radius_sqr, falloff) = if light.light_type.is_distant() {
+        (f32::MAX, 0.0)
+    } else {
+        let reach = light.shape_reach();
+        (reach * reach, reach * light.falloff * light.falloff)
+    };
     GpuLight {
         position: pose.position.to_array(),
-        radius_sqr: reach * reach,
+        radius_sqr,
         channel,
         intensity: light.intensity * context.effect_intensity,
         gp1,
@@ -99,7 +107,7 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         cookie_index: context.cookie_index.unwrap_or(0),
         shadow_cubemap_index: context.shadow_cubemap_index.unwrap_or(0),
         bounce_color: bounce_color(light),
-        falloff: reach * light.falloff * light.falloff,
+        falloff,
     }
 }
 
@@ -208,6 +216,20 @@ mod tests {
         assert!(ChannelFlags::unpack(record.channel).cookie);
         assert_eq!(record.cookie_index, 3);
         assert_eq!(record.gp3, cookie_projection_scale(spot.outer_cutoff));
+    }
+
+    #[test]
+    fn suns_point_towards_the_sun_and_never_fade() {
+        let sun = DynamicLight {
+            falloff: 1.0,
+            ..DynamicLight::sun()
+        };
+        let record = pack(&sun, pose_looking_down(), PackContext::default());
+        assert!(Vec3::from(record.forward).abs_diff_eq(Vec3::Y, 1e-6));
+        assert_eq!((record.radius_sqr, record.falloff), (f32::MAX, 0.0));
+        for world in [Vec3::ZERO, Vec3::splat(1.0e4), Vec3::new(0.0, 3.0, 0.0)] {
+            assert_eq!(mirror::radiance(&record, world), sun.intensity);
+        }
     }
 
     #[test]

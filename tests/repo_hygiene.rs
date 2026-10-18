@@ -8,14 +8,19 @@ const MAX_LINES: usize = 400;
 const SOURCE_DIRS: [&str; 5] = ["src", "tests", "examples", "benches", "features"];
 const SOURCE_EXTENSIONS: [&str; 4] = ["rs", "wesl", "wgsl", "feature"];
 
-/// Identifiers that must not appear in code: Bevy light types and Unity reimplementations.
-const FORBIDDEN_IDENTIFIERS: [&str; 14] = [
+/// Identifiers that must not appear in code: Bevy light, sky and environment types, and Unity
+/// reimplementations.
+const FORBIDDEN_IDENTIFIERS: [&str; 18] = [
     "PointLight",
     "SpotLight",
     "DirectionalLight",
+    "RectLight",
     "AmbientLight",
     "GlobalAmbientLight",
     "EnvironmentMapLight",
+    "GeneratedEnvironmentMapLight",
+    "Skybox",
+    "Atmosphere",
     "IrradianceVolume",
     "LightProbe",
     "Lightmap",

@@ -7,7 +7,6 @@ use bevy::math::{Vec2, Vec3};
 use crate::effects::EffectRng;
 use crate::light::area::AreaShape;
 
-use super::input::BakeLight;
 use super::mesh_bake::NDOTL_TOLERANCE;
 use super::spread::spread;
 
@@ -33,47 +32,7 @@ const TUBE_PROBES: [Vec2; 3] = [
 /// shadow itself.
 const END_GAP: f32 = 1.0e-3;
 
-impl BakeLight {
-    /// The world-space shape of an area light.
-    pub fn area_shape(&self) -> Option<AreaShape> {
-        self.area.map(|area| area.at(self.position))
-    }
-
-    /// How far the light reaches past its shape: the radius minus half the shape's diagonal, as
-    /// at runtime, so every lit texel lies within `radius` of the position. The radius itself
-    /// for point-like lights.
-    pub fn shape_reach(&self) -> f32 {
-        self.radius - self.area.map_or(0.0, |area| area.half_extents().length())
-    }
-
-    /// Bits per texel of the light's baked shadows.
-    pub fn shadow_bits_per_texel(&self) -> u32 {
-        if self.area.is_some() {
-            AREA_SHADOW_BITS
-        } else {
-            1
-        }
-    }
-
-    /// Henry's facing test for a flat triangle with unit face `normal`: whether the light may be
-    /// in front of it, seen from its center. An area light passes when any corner of its shape
-    /// does; a rectangle also needs a vertex of the triangle on its lit side.
-    pub fn may_face(&self, vertices: [Vec3; 3], normal: Vec3) -> bool {
-        let center = (vertices[0] + vertices[1] + vertices[2]) / 3.0;
-        let faces =
-            |point: Vec3| normal.dot((point - center).normalize_or_zero()) > NDOTL_TOLERANCE;
-        let Some(shape) = self.area_shape() else {
-            return faces(self.position);
-        };
-        let lit_side = !shape.rectangle
-            || vertices
-                .iter()
-                .any(|&vertex| shape.forward.dot(vertex - shape.center) > 0.0);
-        lit_side && shape.corners().into_iter().any(faces)
-    }
-}
-
-/// What one texel sees of an area light.
+/// What one texel sees of an area light or a sun's disk.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TexelVisibility {
     /// The share of the light reaching the texel unblocked, 0 to 1.
@@ -114,42 +73,56 @@ pub fn texel_visibility(
         return None;
     }
     let mut rays = 0;
-    let mut trace = |uv: Vec2| {
+    let trace = |uv: Vec2| {
         let (direction, distance, weight) = toward(shape, position, normal, uv)?;
         rays += 1;
         Some((weight, !occluded(direction, (distance - END_GAP).max(0.0))))
     };
-
     let probes = if shape.rectangle {
         &RECTANGLE_PROBES[..]
     } else {
         &TUBE_PROBES[..]
     };
+    let offset = Vec2::new(rng.next_f32(), rng.next_f32());
+    let spread_point = |taken| spread(taken, offset, shape.rectangle);
+    let fraction = adaptive_share(probes, sampling, spread_point, trace);
+    fraction.map(|fraction| TexelVisibility { fraction, rays })
+}
+
+/// The lit share of a light seen through shadow rays: first to the `probes`, then to the first
+/// `sampling.minimum` spread points (`spread_point(i)`); when they all agree the share is 0 or 1.
+/// Otherwise the spread continues to `sampling.samples` points and the share is their
+/// weighted average. The probes only decide whether to sample; the share comes from the evenly
+/// spread points. `trace(point)` gives a ray's weight and whether it is unblocked, or `None`
+/// when that point sends no light; `None` overall when no point does.
+pub fn adaptive_share<P: Copy>(
+    probes: &[P],
+    sampling: AreaSampling,
+    spread_point: impl Fn(u32) -> P,
+    mut trace: impl FnMut(P) -> Option<(f32, bool)>,
+) -> Option<f32> {
     let (mut any_lit, mut any_blocked) = (false, false);
-    for (_, lit) in probes.iter().filter_map(|&uv| trace(uv)) {
+    for (_, lit) in probes.iter().filter_map(|&point| trace(point)) {
         any_lit |= lit;
         any_blocked |= !lit;
     }
-    // The probes only decide whether to sample; the lit share comes from the evenly spread points.
-    let offset = Vec2::new(rng.next_f32(), rng.next_f32());
     let (mut lit, mut total) = (0.0, 0.0);
     for taken in 0..sampling.samples {
         if taken == sampling.minimum && any_lit != any_blocked {
             break;
         }
-        if let Some((weight, unblocked)) = trace(spread(taken, offset, shape.rectangle)) {
+        if let Some((weight, unblocked)) = trace(spread_point(taken)) {
             total += weight;
             lit += if unblocked { weight } else { 0.0 };
             any_lit |= unblocked;
             any_blocked |= !unblocked;
         }
     }
-    let fraction = if any_lit != any_blocked {
+    if any_lit != any_blocked {
         Some(if any_lit { 1.0 } else { 0.0 })
     } else {
         (total > 0.0).then(|| lit / total)
-    };
-    fraction.map(|fraction| TexelVisibility { fraction, rays })
+    }
 }
 
 /// The direction, distance and weight of the shape's point at `uv` seen from a texel, or `None`
@@ -322,42 +295,5 @@ mod tests {
             reach(-2.0).is_none(),
             "a radius inside the shape lights nothing"
         );
-    }
-
-    #[test]
-    fn area_lights_reach_and_face_with_their_shape() {
-        let mut light = crate::bake::tests::point_light(1, Vec3::Y * 2.0, 3.0);
-        assert_eq!(
-            (light.shape_reach(), light.shadow_bits_per_texel()),
-            (3.0, 1)
-        );
-        light.radius = 5.0;
-        light.area = Some(AreaLightShape {
-            kind: LightType::Tube,
-            rotation: Quat::IDENTITY,
-            size: Vec2::new(4.0, 0.0),
-        });
-        assert_eq!(
-            (light.shape_reach(), light.shadow_bits_per_texel()),
-            (3.0, 4)
-        );
-        // A wall facing +X at x = 1.5 still sees the tube's far end.
-        let wall = [
-            Vec3::new(1.5, 0.0, 0.0),
-            Vec3::new(1.5, 1.0, 0.0),
-            Vec3::new(1.5, 0.0, 1.0),
-        ];
-        assert!(light.may_face(wall, Vec3::X));
-        let far_wall = wall.map(|v| v + Vec3::X * 1.0);
-        assert!(!light.may_face(far_wall, Vec3::X));
-        // A floor above a downward panel is on its dark side.
-        light.area = Some(AreaLightShape {
-            kind: LightType::Rectangle,
-            rotation: Quat::from_rotation_x(-core::f32::consts::FRAC_PI_2),
-            size: Vec2::ONE,
-        });
-        let floor = [Vec3::ZERO, Vec3::Z, Vec3::X].map(|v| v + Vec3::Y * 3.0);
-        assert!(!light.may_face(floor, Vec3::Y));
-        assert!(light.may_face(floor.map(|v| v - Vec3::Y * 3.0), Vec3::Y));
     }
 }

@@ -2,8 +2,10 @@
 
 use rayon::prelude::*;
 
+use crate::shared::DynamicGeometryMode;
+
 use super::distance_cubes::{DISTANCE_CUBE_RESOLUTION, bake_distance_cubes};
-use super::format::{BakeStats, BakedLight, BakedScene, BakedSettings};
+use super::format::{BakeStats, BakedLight, BakedScene, BakedSettings, SunMap};
 use super::input::{BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
 use super::light_bvh::build_light_bvh;
 use super::mesh_bake::{MeshOutput, Scene, bake_mesh};
@@ -11,13 +13,15 @@ use super::mesh_builder::PreparedMesh;
 use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::Occluders;
 use super::progress::{BakeProgress, BakeStage};
+use super::sun_map::{bake_sun_map, occluder_vertices};
 
 /// Bakes `input`. Runs on the current rayon thread pool and gives byte-identical results for
 /// the same input and options on any number of threads.
 ///
-/// Steps, in Henry's order: light BVH (fixing the baked light order), occluder BVH, photon cubes
-/// for bounce lights, then per mesh: light association, shadow rays, bounce, optimization,
-/// seam padding, dilation and serialization; finally the distance cubes.
+/// Steps, in Henry's order: light BVH (fixing the baked light order; suns follow the BVH's
+/// lights), occluder BVH, photon cubes for bounce lights, then per mesh: light association,
+/// shadow rays, bounce, optimization, seam padding, dilation and serialization; finally the
+/// distance cubes of the BVH's lights.
 pub fn bake(
     input: &BakeInput,
     options: &BakeOptions,
@@ -27,12 +31,20 @@ pub fn bake(
     progress.begin(BakeStage::Preparing, 0);
 
     let meshes = sorted_meshes(&input.meshes)?;
-    let lights = sorted_lights(&input.lights)?;
+    let (local, suns): (Vec<&BakeLight>, Vec<&BakeLight>) = sorted_lights(&input.lights)?
+        .into_iter()
+        .partition(|light| !light.shape.is_distant());
 
-    let positions: Vec<_> = lights.iter().map(|l| l.position).collect();
-    let radii: Vec<_> = lights.iter().map(|l| l.radius).collect();
+    let positions: Vec<_> = local.iter().map(|l| l.position).collect();
+    let radii: Vec<_> = local.iter().map(|l| l.radius).collect();
     let light_bvh = build_light_bvh(&positions, &radii);
-    let lights: Vec<&BakeLight> = light_bvh.order.iter().map(|&i| lights[i]).collect();
+    let local_lights = local.len();
+    let lights: Vec<&BakeLight> = light_bvh
+        .order
+        .iter()
+        .map(|&i| local[i])
+        .chain(suns)
+        .collect();
     let bounce_in_scene = lights.iter().any(|light| light.bakes_bounce(options));
 
     let occluders = Occluders::build(&meshes);
@@ -46,6 +58,7 @@ pub fn bake(
     let mut scene = Scene {
         options,
         lights,
+        local_lights,
         light_bvh,
         occluders,
         bounce_in_scene,
@@ -86,13 +99,33 @@ pub fn bake(
         );
     }
 
-    progress.begin(BakeStage::DistanceCubes, scene.lights.len() as u64 * 6);
+    let suns = &scene.lights[local_lights..];
+    let maps = options.dynamic_geometry != DynamicGeometryMode::LightingOnly;
+    let map_count = if maps { suns.len() } else { 0 };
+    progress.begin(
+        BakeStage::DistanceCubes,
+        local_lights as u64 * 6 + map_count as u64,
+    );
     let distance_cubes = bake_distance_cubes(
-        &scene.lights,
+        &scene.lights[..local_lights],
         &scene.occluders,
         options.dynamic_geometry,
         progress,
     )?;
+    let sun_maps: Vec<SunMap> = suns[..map_count]
+        .iter()
+        .filter_map(|light| {
+            Some(bake_sun_map(
+                &light.shape.sun()?,
+                &scene.occluders,
+                occluder_vertices(&scene.occluders),
+                options.sun_map_resolution,
+                light.alpha_tested(),
+                progress,
+            ))
+        })
+        .collect();
+    progress.check()?;
 
     let mut stats = BakeStats {
         meshes: outputs.len() as u32,
@@ -122,7 +155,7 @@ pub fn bake(
                 id: light.id,
                 origin: light.position,
                 radius: light.radius,
-                area: light.area,
+                shape: light.shape,
                 shadow_bits_per_texel: light.shadow_bits_per_texel(),
                 bounce_compression: light.bakes_bounce(options).then(|| {
                     light
@@ -135,6 +168,7 @@ pub fn bake(
         light_bvh: scene.light_bvh.nodes.clone(),
         meshes: outputs.into_iter().map(|output| output.mesh).collect(),
         distance_cubes,
+        sun_maps,
         stats,
     };
     progress.begin(BakeStage::Done, 0);

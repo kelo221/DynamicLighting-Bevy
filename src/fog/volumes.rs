@@ -60,7 +60,11 @@ pub(super) fn pack_fog_volumes(
     }
     for (light, fog, transform, visibility, effect) in &lights {
         let effect_intensity = effect.map_or(1.0, LightEffectState::intensity);
-        if !visibility.get() || !is_active(light, fog, effect_intensity) {
+        // Fog volumes sit around a light's position, which suns don't have.
+        if !visibility.get()
+            || light.light_type.is_distant()
+            || !is_active(light, fog, effect_intensity)
+        {
             continue;
         }
         let (scale, rotation, position) = transform.to_scale_rotation_translation();

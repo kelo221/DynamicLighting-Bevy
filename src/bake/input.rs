@@ -6,9 +6,10 @@ use std::fmt;
 
 use bevy::math::{Vec2, Vec3};
 
-use crate::light::{AreaLightShape, BounceCompression, Illumination, Transparency};
+use crate::light::{BounceCompression, DynamicLight, Illumination, LightShape, Transparency};
 use crate::shared::{BakeId, DynamicGeometryMode};
 
+use super::format::MAX_SUN_MAP_RESOLUTION;
 use super::settings::BakeSettings;
 
 /// Everything a bake needs. Order doesn't matter: meshes and lights are sorted by [`BakeId`].
@@ -97,9 +98,10 @@ pub struct BakeLight {
     pub illumination: Illumination,
     pub transparency: Transparency,
     pub bounce: BakeBounce,
-    /// Rectangle and tube lights: the shape centered at [`Self::position`] that soft shadows
-    /// are traced to. `None` traces hard shadows from the position.
-    pub area: Option<AreaLightShape>,
+    /// What shadow rays are traced to: the position for point-like lights, the shape of a
+    /// rectangle or tube light centered at [`Self::position`], or a sun's disk. Suns ignore the
+    /// position and radius.
+    pub shape: LightShape,
 }
 
 /// The bounce settings the tracer reads, from [`crate::light::LightBounce`].
@@ -141,6 +143,8 @@ pub struct BakeOptions {
     pub area_light_samples: u32,
     /// Of those, the rays every texel takes before it may count as fully lit or shadowed.
     pub area_light_min_samples: u32,
+    /// Side of each baked sun's sun map in texels.
+    pub sun_map_resolution: u32,
     /// Seed for every random choice (bounce directions, dithering, area light samples).
     pub seed: u64,
 }
@@ -166,6 +170,7 @@ impl BakeOptions {
             photon_cube_resolution: 512,
             area_light_samples: settings.area_light_samples,
             area_light_min_samples: settings.area_light_min_samples,
+            sun_map_resolution: settings.sun_map_resolution,
             seed,
         }
     }
@@ -270,23 +275,37 @@ impl BakeLight {
         if !self.position.is_finite() {
             return Err(invalid("non-finite position"));
         }
-        if !(self.radius.is_finite() && self.radius > 0.0) {
+        if !self.shape.is_distant() && !(self.radius.is_finite() && self.radius > 0.0) {
             return Err(invalid("radius must be positive and finite"));
         }
-        if let Some(area) = self.area {
-            if !area.size.is_finite() || area.size.cmplt(Vec2::ZERO).any() {
-                return Err(invalid("area light size must be finite and not negative"));
+        match self.shape {
+            LightShape::Point => {}
+            LightShape::Area(area) => {
+                if !area.size.is_finite() || area.size.cmplt(Vec2::ZERO).any() {
+                    return Err(invalid("area light size must be finite and not negative"));
+                }
+                if !area.rotation.is_finite() || !area.rotation.is_normalized() {
+                    return Err(invalid("area light rotation must be a unit quaternion"));
+                }
             }
-            if !area.rotation.is_finite() || !area.rotation.is_normalized() {
-                return Err(invalid("area light rotation must be a unit quaternion"));
+            LightShape::Sun(sun) => {
+                if !sun.rotation.is_finite() || !sun.rotation.is_normalized() {
+                    return Err(invalid("sun rotation must be a unit quaternion"));
+                }
+                if !(0.0..=DynamicLight::MAX_ANGULAR_DIAMETER).contains(&sun.angular_diameter) {
+                    return Err(invalid("sun angular diameter must be 0 to 10 degrees"));
+                }
             }
         }
         Ok(())
     }
 
-    /// Whether the tracer bakes bounce lighting for this light.
+    /// Whether the tracer bakes bounce lighting for this light. Suns never do: their light has
+    /// no position for photon cubes.
     pub fn bakes_bounce(&self, options: &BakeOptions) -> bool {
-        self.illumination == Illumination::SingleBounce && !options.skip_bounce
+        self.illumination == Illumination::SingleBounce
+            && !options.skip_bounce
+            && !self.shape.is_distant()
     }
 
     /// Whether shadow rays of this light alpha-test transparent surfaces.
@@ -316,6 +335,11 @@ impl BakeOptions {
             return Err(BakeError::InvalidOptions(
                 "area lights need at least one sample".into(),
             ));
+        }
+        if !(1..=MAX_SUN_MAP_RESOLUTION).contains(&self.sun_map_resolution) {
+            return Err(BakeError::InvalidOptions(format!(
+                "the sun map resolution must be 1 to {MAX_SUN_MAP_RESOLUTION}"
+            )));
         }
         Ok(())
     }

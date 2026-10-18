@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::transform::TransformPlugin;
 use dynlight::bake::mirror::TriangleView;
 use dynlight::bake::{BakeFinished, BakePreset, BakeRequest, BakedScene, DynLightBake};
+use dynlight::light::LightShape;
 use dynlight::prelude::*;
 
 const LAMP: Vec3 = Vec3::new(0.3, 3.0, 0.2);
@@ -156,7 +157,7 @@ fn panels_bake_their_shape_with_soft_shadows() {
     let light = &scene.lights[0];
     assert_eq!((light.origin, light.radius), (LAMP, 6.0));
     assert_eq!(light.shadow_bits_per_texel, 4);
-    let shape = light.area.expect("the panel's shape");
+    let shape = light.shape.area().expect("the panel's shape");
     assert_eq!(shape.kind, LightType::Rectangle);
     assert!(shape.rotation.abs_diff_eq(down, 1e-6));
     assert_eq!(shape.size, Vec2::splat(1.5));
@@ -209,7 +210,7 @@ fn tubes_soften_shadows_only_along_their_length() {
         BakePreset::Preview,
     );
     assert_eq!(
-        along_x.lights[0].area.map(|a| a.kind),
+        along_x.lights[0].shape.area().map(|a| a.kind),
         Some(LightType::Tube)
     );
     let (size, texels) = floor_shadows(&along_x);
@@ -228,7 +229,10 @@ fn point_lights_keep_one_shadow_bit() {
     };
     let scene = bake_with(point, Quat::IDENTITY, BakePreset::Preview);
     let light = &scene.lights[0];
-    assert_eq!((light.shadow_bits_per_texel, light.area), (1, None));
+    assert_eq!(
+        (light.shadow_bits_per_texel, light.shape),
+        (1, LightShape::Point)
+    );
     assert!(scene.stats.rays > 0 && scene.stats.texels > 0);
     let (_, texels) = floor_shadows(&scene);
     assert!(texels.iter().all(|&(v, _)| v == 0.0 || v == 1.0));

@@ -3,7 +3,7 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT, LIGHT_TYPE_DISCOBALL, LIGHT_TYPE_RECTANGLE,
-    light_type, light_has_cookie, light_has_shadow_cubemap, light_is_area,
+    light_type, light_has_cookie, light_has_shadow_cubemap, light_is_area, light_is_distant,
 };
 import dynlight::light::shaders::light_types::{
     attenuation, cone, discoball_theta, pattern, shimmer, spot_theta, to_light_space,
@@ -13,19 +13,25 @@ import dynlight::light::shaders::area::{
     area_specular_scale, nearest_point,
 };
 import dynlight::light::shaders::ltc::ltc_uv;
+import dynlight::light::shaders::sun::{sun_specular_direction, sun_specular_scale};
 import dynlight::surface::shaders::bindings::{
     light_cookies, light_cookie_sampler, area_light_lut, area_light_lut_sampler,
 };
 import dynlight::surface::shaders::brdf::{PI, reflectance};
 import dynlight::realtime_shadows::shaders::vsm::realtime_shadow;
 import dynlight::shared::shaders::variant::{
-    FEATURE_LIGHT_PATTERNS, FEATURE_AREA_LIGHTS, FEATURE_REALTIME_SHADOWS,
+    FEATURE_LIGHT_PATTERNS, FEATURE_AREA_LIGHTS, FEATURE_REALTIME_SHADOWS, FEATURE_SUN,
 };
 
 // An area light, when area lights are compiled in (`ShaderFeatures`); otherwise every light
 // shines like a point light.
 fn is_area(light: GpuLight) -> bool {
     return FEATURE_AREA_LIGHTS && light_is_area(light);
+}
+
+// A sun, when suns are compiled in (`ShaderFeatures`); otherwise it shines like a point light.
+fn is_sun(light: GpuLight) -> bool {
+    return FEATURE_SUN && light_is_distant(light);
 }
 
 struct SurfacePoint {
@@ -37,14 +43,15 @@ struct SurfacePoint {
 }
 
 struct LightGeometry {
-    // From the surface to where the light comes from: the light position, or the nearest point
-    // of an area light's shape.
+    // From the surface to where the light comes from: the light position, the nearest point of
+    // an area light's shape, or a sun's unit direction.
     to_light: vec3<f32>,
     distance_sqr: f32,
     // Normalized `to_light`.
     direction: vec3<f32>,
     // The light's entity position minus the surface position: the record's position, or an
-    // area light's center. Shadow cubemaps are seen from there; only the lookup uses it.
+    // area light's center. Shadow cubemaps are seen from there; only the lookup uses it. A sun's
+    // unit direction.
     to_center: vec3<f32>,
     // Diffuse term; 0 means no direct light (bounce light may still arrive).
     ndotl: f32,
@@ -52,9 +59,21 @@ struct LightGeometry {
     in_range: bool,
 }
 
-// Distance and diffuse term.
+// Distance and diffuse term. A sun is no distance away: its attenuation is its intensity.
 fn light_geometry(light: GpuLight, surface: SurfacePoint) -> LightGeometry {
     var geometry: LightGeometry;
+    if is_sun(light) {
+        geometry.to_center = light.forward;
+        geometry.to_light = light.forward;
+        geometry.distance_sqr = 0.0;
+        geometry.direction = light.forward;
+        geometry.in_range = light.radius_sqr >= 0.0;
+        geometry.ndotl = 0.0;
+        if geometry.in_range {
+            geometry.ndotl = diffuse_cosine(dot(surface.normal, light.forward), surface.baked);
+        }
+        return geometry;
+    }
     geometry.to_center = light.position - surface.world;
     let area = is_area(light);
     if area {
@@ -76,14 +95,17 @@ fn light_geometry(light: GpuLight, surface: SurfacePoint) -> LightGeometry {
         return geometry;
     }
     geometry.direction = normalize(geometry.to_light);
-    let ndotl = dot(surface.normal, geometry.direction);
-    if surface.baked {
-        geometry.ndotl = max(ndotl, 0.0);
-    } else {
-        let half_lambert = 0.5 + ndotl * 0.5;
-        geometry.ndotl = half_lambert * half_lambert;
-    }
+    geometry.ndotl = diffuse_cosine(dot(surface.normal, geometry.direction), surface.baked);
     return geometry;
+}
+
+// Lambert on baked static geometry, Henry's squared half-Lambert everywhere else.
+fn diffuse_cosine(ndotl: f32, baked: bool) -> f32 {
+    if baked {
+        return max(ndotl, 0.0);
+    }
+    let half_lambert = 0.5 + ndotl * 0.5;
+    return half_lambert * half_lambert;
 }
 
 // The spot cookie at `direction`; `theta` is the spot cone cosine.
@@ -193,7 +215,8 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
     }
     let bounce_light = light.bounce_color * (attenuation(light, geometry.distance_sqr) * bounce * (1.0 - shading.metallic));
     // Area lights weight diffuse light by the Fresnel term at the point of their shape the mirror
-    // direction points at, and tubes also reflect from it.
+    // direction points at, and tubes also reflect from it. Suns reflect from the direction within
+    // their disk nearest the mirror direction.
     var direction = geometry.direction;
     var scale = 1.0;
     if is_area(light) {
@@ -201,6 +224,9 @@ fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoi
         let point = area_representative_point(light, surface.world, reflection);
         direction = normalize(point - surface.world);
         scale = area_specular_scale(light, surface.world, point, shading.roughness);
+    } else if is_sun(light) {
+        direction = sun_specular_direction(light, reflect(-shading.view, surface.normal));
+        scale = sun_specular_scale(light, shading.roughness);
     }
     let reflected = reflectance(surface.normal, shading.view, direction, shading.roughness, shading.metallic, shading.f0);
     let lambert = max(dot(surface.normal, direction), 0.0);

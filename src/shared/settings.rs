@@ -87,6 +87,8 @@ pub struct ShaderFeatures {
     pub unbaked_meshes: bool,
     /// Baked bounce light. Off: baked lights add only their direct light.
     pub bounce: bool,
+    /// Suns. Off: they shine like point lights at their position.
+    pub sun: bool,
 }
 
 impl ShaderFeatures {
@@ -97,6 +99,7 @@ impl ShaderFeatures {
         realtime_shadows: true,
         unbaked_meshes: true,
         bounce: true,
+        sun: true,
     };
     pub const NONE: Self = Self {
         light_patterns: false,
@@ -105,10 +108,11 @@ impl ShaderFeatures {
         realtime_shadows: false,
         unbaked_meshes: false,
         bounce: false,
+        sun: false,
     };
 
     /// The number of features in [`Self::list`].
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     /// `(name, enabled)` of every feature, for messages and the variant module.
     pub fn list(&self) -> [(&'static str, bool); Self::COUNT] {
@@ -119,6 +123,7 @@ impl ShaderFeatures {
             ("realtime_shadows", self.realtime_shadows),
             ("unbaked_meshes", self.unbaked_meshes),
             ("bounce", self.bounce),
+            ("sun", self.sun),
         ]
     }
 
@@ -140,6 +145,7 @@ impl ShaderFeatures {
             realtime_shadows: f(self.realtime_shadows, other.realtime_shadows),
             unbaked_meshes: f(self.unbaked_meshes, other.unbaked_meshes),
             bounce: f(self.bounce, other.bounce),
+            sun: f(self.sun, other.sun),
         }
     }
 }

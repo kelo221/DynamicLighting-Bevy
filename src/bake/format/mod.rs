@@ -12,11 +12,12 @@
 //! settings (flags u32 [bit 0 bounce], dynamic geometry u32 [0 LightingOnly, 1 DistanceCubes,
 //! 2 Angular], pixel density f32, max lightmap size u32, distance cube resolution u32);
 //! lights (count; id u64, origin 3×f32, radius f32, bounce bits per pixel u32 [0 = none], shape
-//! u32 [0 point-like, 1 rectangle, 2 tube], rotation 4×f32 (x y z w), size 2×f32, shadow bits per
-//! texel u32 [1, 2 or 4]);
+//! u32 [0 point-like, 1 rectangle, 2 tube, 3 sun], rotation 4×f32 (x y z w), size 2×f32 [a sun's
+//! angular diameter in degrees, 0], shadow bits per texel u32 [1, 2 or 4]; suns come last);
 //! light BVH (count; 8 words per node); meshes (count; id u64, content hash u64, resolution u32,
-//! words); distance cube words; stats (meshes u32, then triangles, texels, rays, lights removed,
-//! bounce rays, triangle words as u64).
+//! words); distance cube words; sun maps (count [0 or one per sun]; resolution u32, rows 12×f32,
+//! words); stats (meshes u32, then triangles, texels, rays, lights removed, bounce rays,
+//! triangle words as u64).
 
 mod codec;
 mod types;
@@ -24,23 +25,27 @@ mod types;
 use std::fmt;
 use std::io::{Read, Write};
 
-use bevy::math::{Quat, Vec2, Vec3};
+use bevy::math::{Quat, Vec2, Vec3, Vec4};
 use flate2::{Compression, GzBuilder, read::GzDecoder};
 
-use crate::light::{AreaLightShape, BounceCompression, LightType};
+use crate::light::{AreaLightShape, BounceCompression, LightShape, LightType, SunDisk};
 use crate::shared::{BakeId, DynamicGeometryMode};
 
 use super::light_bvh::LightBvhNode;
 use codec::{Reader, Writer};
-pub use types::{BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings};
+pub use types::{BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, SunMap};
 
 pub const MAGIC: [u8; 8] = *b"DYNLIGHT";
 /// Bumped on every layout change; loaders reject other versions. Version 2 added each light's
-/// area shape and shadow bits per texel.
-pub const FORMAT_VERSION: u32 = 2;
+/// area shape and shadow bits per texel, version 3 suns and their sun maps.
+pub const FORMAT_VERSION: u32 = 3;
 const HEADER_BYTES: usize = 24;
 /// Bytes per light record.
 const LIGHT_BYTES: usize = 60;
+/// Bytes per sun map before its words: resolution, rows and the word count.
+const SUN_MAP_BYTES: usize = 60;
+/// The largest sun map side a file may hold.
+pub const MAX_SUN_MAP_RESOLUTION: u32 = 8192;
 
 /// Why a `.dynlight` file couldn't be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,13 +149,14 @@ fn encode_payload(scene: &BakedScene) -> Vec<u8> {
         }
         w.f32(light.radius);
         w.u32(light.bounce_compression.map_or(0, |c| c.bits_per_pixel()));
-        let (kind, rotation, size) = match light.area {
-            None => (0, Quat::IDENTITY, Vec2::ZERO),
-            Some(area) => (
+        let (kind, rotation, size) = match light.shape {
+            LightShape::Point => (0, Quat::IDENTITY, Vec2::ZERO),
+            LightShape::Area(area) => (
                 if area.kind == LightType::Tube { 2 } else { 1 },
                 area.rotation,
                 area.size,
             ),
+            LightShape::Sun(sun) => (3, sun.rotation, Vec2::new(sun.angular_diameter, 0.0)),
         };
         w.u32(kind);
         for value in rotation.to_array().into_iter().chain(size.to_array()) {
@@ -170,6 +176,15 @@ fn encode_payload(scene: &BakedScene) -> Vec<u8> {
     }
 
     w.words(&scene.distance_cubes);
+
+    w.count(scene.sun_maps.len());
+    for map in &scene.sun_maps {
+        w.u32(map.resolution);
+        for value in map.rows.iter().flat_map(|row| row.to_array()) {
+            w.f32(value);
+        }
+        w.words(&map.texels);
+    }
 
     let stats = &scene.stats;
     w.u32(stats.meshes);
@@ -220,16 +235,35 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
             4 => Some(BounceCompression::Bits4),
             _ => return Err(FormatError::Invalid("bounce compression")),
         };
-        let kind = match r.u32()? {
-            0 => None,
-            1 => Some(LightType::Rectangle),
-            2 => Some(LightType::Tube),
-            _ => return Err(FormatError::Invalid("light shape")),
-        };
+        let kind = r.u32()?;
         let rotation = Quat::from_xyzw(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
         let size = Vec2::new(r.f32()?, r.f32()?);
         if !(rotation.is_finite() && size.is_finite()) {
             return Err(FormatError::Invalid("light shape"));
+        }
+        let area = |kind| {
+            LightShape::Area(AreaLightShape {
+                kind,
+                rotation,
+                size,
+            })
+        };
+        let shape = match kind {
+            0 => LightShape::Point,
+            1 => area(LightType::Rectangle),
+            2 => area(LightType::Tube),
+            3 => LightShape::Sun(SunDisk {
+                rotation,
+                angular_diameter: size.x,
+            }),
+            _ => return Err(FormatError::Invalid("light shape")),
+        };
+        if !shape.is_distant()
+            && lights
+                .last()
+                .is_some_and(|l: &BakedLight| l.shape.is_distant())
+        {
+            return Err(FormatError::Invalid("light order"));
         }
         let shadow_bits_per_texel = r.u32()?;
         if ![1, 2, 4].contains(&shadow_bits_per_texel) {
@@ -239,11 +273,7 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
             id,
             origin,
             radius,
-            area: kind.map(|kind| AreaLightShape {
-                kind,
-                rotation,
-                size,
-            }),
+            shape,
             bounce_compression,
             shadow_bits_per_texel,
         });
@@ -272,6 +302,36 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
     }
 
     let distance_cubes = r.words()?;
+
+    let map_count = r.count(SUN_MAP_BYTES)?;
+    let suns = lights
+        .iter()
+        .filter(|light| light.shape.is_distant())
+        .count();
+    if map_count != 0 && map_count != suns {
+        return Err(FormatError::Invalid("sun map count"));
+    }
+    let mut sun_maps = Vec::with_capacity(map_count);
+    for _ in 0..map_count {
+        let resolution = r.u32()?;
+        let mut rows = [Vec4::ZERO; 3];
+        for row in &mut rows {
+            *row = Vec4::new(r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+        }
+        let texels = r.words()?;
+        let valid = (1..=MAX_SUN_MAP_RESOLUTION).contains(&resolution)
+            && rows.iter().all(|row| row.is_finite())
+            && texels.len() == SunMap::words(resolution);
+        if !valid {
+            return Err(FormatError::Invalid("sun map"));
+        }
+        sun_maps.push(SunMap {
+            rows,
+            resolution,
+            texels,
+        });
+    }
+
     let stats = BakeStats {
         meshes: r.u32()?,
         triangles: r.u64()?,
@@ -290,6 +350,7 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
         light_bvh,
         meshes,
         distance_cubes,
+        sun_maps,
         stats,
     })
 }

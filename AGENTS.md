@@ -10,7 +10,7 @@ DynLight ports Henry de Jongh's Unity package "Dynamic Lighting" to a standalone
 ## Hard rules
 
 1. **No Bevy lights.**
-   - Never spawn, read or depend on `PointLight`, `SpotLight`, `DirectionalLight`, `AmbientLight`, `EnvironmentMapLight`, irradiance volumes, `Lightmap`, Bevy shadow maps or Solari.
+   - Never spawn, read or depend on `PointLight`, `SpotLight`, `DirectionalLight`, `RectLight`, `AmbientLight`, `EnvironmentMapLight`, `GeneratedEnvironmentMapLight`, `Skybox`, `Atmosphere`, irradiance volumes, `Lightmap`, Bevy shadow maps or Solari. Suns and skies are our own light types and passes.
    - Never import `bevy_pbr` lighting, shadow or clustering shader modules (`pbr_functions`, `lighting`, `shadows`, `shadow_sampling`, `clustered_forward`, `fog`, or the light data in `mesh_view_bindings`).
    - `StandardMaterial` may only be *read* by `gltf_import` in order to convert it.
    - No vendored or patched `bevy_pbr`, and no `[patch.crates-io]` for Bevy crates.
@@ -46,10 +46,10 @@ src/
   effects/               intensity effects, noise, RNG, fixed timestep
   surface/               DynLitMaterial (diffuse / metallic / unlit), prepass, BRDF, lighting composition WESL
   bake/                  CPU baker (light BVH, occluder BVH, triangle builder, rays, seams, bounce,
-                         distance cubes), .dynlight format writer + reader, BakeRequest + progress
+                         distance cubes, sun maps), .dynlight format writer + reader, BakeRequest + progress
   baked_lighting/        .dynlight asset loading, triangle / aux buffers, receiver records via MeshTag,
                          primitive-index path + triangle-ID fallback, stale-bake detection, triangles.wesl
-  dynamic_geometry/      light BVH + distance cubes at runtime, distance_cubes.wesl
+  dynamic_geometry/      light BVH, distance cubes and sun maps at runtime, distance_cubes.wesl, sun_map.wesl
   realtime_shadows/      VSM shadow cubemap pass (Core3d systems), vsm.wesl, blur
   cookies/               cookie texture array
   fog/                   volumetric fog pass
@@ -102,7 +102,7 @@ src/<slice>/
 - **Files already over the limit:** ported sources that exceed 400 lines are split while porting.
   - Henry: `DynamicLighting.cginc` (1174), `DynamicLightManager.cs` (1621), `DynamicLightingTracer.cs` (1273).
   - bevyout: `render/gpu.rs` (801), `baker.rs` (926), `core/volumetric.rs` (519), `bevy_bridge/mod.rs` (504), `core/runtime.rs` (443).
-- **Enforcement:** `tests/repo_hygiene.rs` fails on any file over 400 lines and on forbidden identifiers (Bevy light types, banned `bevy_pbr` modules, naga_oil syntax, `unity_random`, `PerlinNoise`, `1812433253`, `[patch.` in `Cargo.toml`). Extend it when you add a rule. The same line check by hand:
+- **Enforcement:** `tests/repo_hygiene.rs` fails on any file over 400 lines and on forbidden identifiers (Bevy light, sky and environment types, banned `bevy_pbr` modules, naga_oil syntax, `unity_random`, `PerlinNoise`, `1812433253`, `[patch.` in `Cargo.toml`). Extend it when you add a rule. The same line check by hand:
 
 ```bash
 find src tests examples benches features -type f \( -name '*.rs' -o -name '*.wesl' -o -name '*.wgsl' -o -name '*.feature' \) \

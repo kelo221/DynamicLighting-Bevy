@@ -20,8 +20,9 @@ pub(super) fn build_clusters(
     packed: Res<PackedLights>,
     mut clusters: ResMut<RealtimeClusters>,
 ) {
-    let baked = packed.globals.baked_count as usize;
-    let realtime = packed.lights.get(baked..).unwrap_or_default();
+    // Distant lights reach every cell; the shader visits them on their own.
+    let first = (packed.globals.baked_count + packed.globals.realtime_distant) as usize;
+    let realtime = packed.lights.get(first..).unwrap_or_default();
     let built = build(
         packed.viewer,
         realtime,

@@ -12,6 +12,7 @@ use super::{component::DynamicLight, kinds::LightType};
 /// - rotor: wave phase, blade count and center size
 /// - disco: horizontal phase, spot count and vertical phase
 /// - rectangle, tube: half extents of the shape in its local X and Y
+/// - sun: cosine and sine of the disk's angular radius
 ///
 /// Spot lights with a cookie overwrite `gp3` with the cookie projection scale.
 pub fn type_parameters(light: &DynamicLight, seconds: f32) -> [f32; 3] {
@@ -35,6 +36,10 @@ pub fn type_parameters(light: &DynamicLight, seconds: f32) -> [f32; 3] {
             light.rotor_center,
         ],
         LightType::Shock => [wave_time, light.wave_frequency, 0.0],
+        LightType::Sun => {
+            let radius = light.angular_radius();
+            [radius.cos(), radius.sin(), 0.0]
+        }
         LightType::Disco => [
             wave_time * TAU,
             light.wave_frequency.round(),
@@ -104,6 +109,25 @@ mod tests {
         assert_eq!(spots, 3.0);
         assert!((phase - (0.25 + 4.0) * TAU).abs() < 1e-4);
         assert!((vertical - (0.25 + 2.0) * TAU).abs() < 1e-4);
+    }
+
+    #[test]
+    fn suns_store_their_disk_and_reject_huge_ones() {
+        let sun = DynamicLight::sun();
+        let [cos, sin, _] = type_parameters(&sun, 0.0);
+        let radius = 0.265_f32.to_radians();
+        assert!((cos - radius.cos()).abs() < 1e-7 && (sin - radius.sin()).abs() < 1e-7);
+        let huge = DynamicLight {
+            angular_diameter: DynamicLight::MAX_ANGULAR_DIAMETER + 1.0,
+            ..sun.clone()
+        };
+        assert!(sun.is_valid() && !huge.is_valid());
+        let hard = DynamicLight {
+            angular_diameter: 0.0,
+            ..sun
+        };
+        assert!(hard.is_valid());
+        assert_eq!(type_parameters(&hard, 0.0), [1.0, 0.0, 0.0]);
     }
 
     #[test]

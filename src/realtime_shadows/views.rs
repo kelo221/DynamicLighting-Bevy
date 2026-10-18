@@ -126,8 +126,12 @@ pub(super) fn place_shadow_faces(
     };
     let candidates = lights
         .iter()
+        // Suns have no position to see a cubemap from.
         .filter(|(_, light, _, visibility, _)| {
-            light.shadows == ShadowMode::Realtime && light.is_valid() && visibility.get()
+            light.shadows == ShadowMode::Realtime
+                && !light.light_type.is_distant()
+                && light.is_valid()
+                && visibility.get()
         })
         .map(|(entity, light, transform, ..)| (entity, transform.translation(), light.radius))
         .filter(|&(_, position, radius)| seen(position, radius))

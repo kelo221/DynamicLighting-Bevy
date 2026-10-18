@@ -32,10 +32,14 @@ pub enum LightType {
     /// around, like a fluorescent tube. Like every type, it is shadowed from its position and
     /// ends within `radius` of it.
     Tube = 9,
+    /// A distant light: parallel light from a disk at infinity, shining along the light's
+    /// forward axis (`Transform::forward`). It has no position or radius and reaches everything;
+    /// `angular_diameter` is the disk's size, which softens its baked shadows.
+    Sun = 10,
 }
 
 impl LightType {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Point,
         Self::Spot,
         Self::Discoball,
@@ -46,6 +50,7 @@ impl LightType {
         Self::Disco,
         Self::Rectangle,
         Self::Tube,
+        Self::Sun,
     ];
 
     /// The type with GPU discriminant `bits`, if there is one.
@@ -56,6 +61,13 @@ impl LightType {
     /// Light comes from a shape instead of a point: [`Self::Rectangle`] and [`Self::Tube`].
     pub fn is_area(self) -> bool {
         matches!(self, Self::Rectangle | Self::Tube)
+    }
+
+    /// Light from infinitely far away, without a position or radius: [`Self::Sun`]. Distant
+    /// lights reach every fragment, so they are kept out of the light BVH and the realtime
+    /// light grid, and each fragment visits them in a list of their own.
+    pub fn is_distant(self) -> bool {
+        matches!(self, Self::Sun)
     }
 }
 

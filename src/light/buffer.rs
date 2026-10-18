@@ -6,7 +6,7 @@ use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
-use super::area::AreaLightShape;
+use super::shape::LightShape;
 use crate::shared::{BakeId, GpuLight, GpuLightGlobals, frame_shader_buffer, write_shader_buffer};
 
 /// The light buffer every `DynLitMaterial` binds. Its layout is the WESL `DynamicLights`: the
@@ -14,22 +14,35 @@ use crate::shared::{BakeId, GpuLight, GpuLightGlobals, frame_shader_buffer, writ
 pub const LIGHT_BUFFER: Handle<ShaderBuffer> = uuid_handle!("5c3a3f0e-4d8b-4f6e-9a51-7d2c0b6e1f42");
 
 /// Baked lights in bake order, provided by the baked-lighting slice when a bake loads. Slot `i`
-/// is light `i` in the buffer; the triangle data refers to lights by slot.
+/// is light `i` in the buffer; the triangle data refers to lights by slot. Distant lights
+/// (suns) come last, after the lights of the light BVH.
 #[derive(Resource, Default, Clone, Debug)]
 pub struct BakedLightSlots {
     pub slots: Vec<BakedSlot>,
+}
+
+impl BakedLightSlots {
+    /// The distant lights at the end of the slots.
+    pub fn distant_count(&self) -> usize {
+        self.slots
+            .iter()
+            .rev()
+            .take_while(|slot| slot.shape.is_distant())
+            .count()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BakedSlot {
     pub id: BakeId,
     /// Where the light was baked; a light that moved away is evaluated as realtime instead.
+    /// Distant lights have no position, so only their shape counts.
     pub origin: Vec3,
     /// The radius the light was baked with. The triangle light lists, the light BVH and the
     /// distance cube end there, so a light that grows past it is evaluated as realtime instead.
     pub radius: f32,
-    /// The shape an area light's soft shadows were traced for; `None` for point-like lights.
-    pub area: Option<AreaLightShape>,
+    /// The area light's shape or the sun's disk its soft shadows were traced for.
+    pub shape: LightShape,
     /// Bits per pixel of the light's bounce data, 1 to 8.
     pub bounce_bits_per_pixel: u32,
     /// Bits per texel of the light's baked shadows: 1, or more for soft area-light shadows.
@@ -134,7 +147,8 @@ mod tests {
         };
         let bytes = packed.to_bytes();
         assert_eq!(bytes.len(), GPU_LIGHT_GLOBALS_SIZE + 2 * GPU_LIGHT_SIZE);
-        let globals: GpuLightGlobals = bytemuck::pod_read_unaligned(&bytes[..32]);
+        let globals: GpuLightGlobals =
+            bytemuck::pod_read_unaligned(&bytes[..GPU_LIGHT_GLOBALS_SIZE]);
         assert_eq!(globals.realtime_count, 2);
     }
 }

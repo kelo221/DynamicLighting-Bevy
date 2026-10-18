@@ -156,11 +156,13 @@ impl<'a> Occluders<'a> {
     }
 }
 
-/// A ray whose `t < tmax` test (used by obvhs) means `t ≤ max_distance`.
+/// A ray whose `t < tmax` test (used by obvhs) means `t ≤ max_distance`. Adding zero turns
+/// −0 components into +0: obvhs takes a negative inverse for −0 but tests `direction < 0` to
+/// pick the slab planes, so such rays would miss everything.
 fn segment(origin: Vec3, direction: Vec3, max_distance: f32) -> Ray {
     Ray::new(
         origin.into(),
-        direction.into(),
+        (direction + Vec3::ZERO).into(),
         0.0,
         max_distance.max(0.0).next_up(),
     )

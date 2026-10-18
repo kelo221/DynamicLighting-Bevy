@@ -4,11 +4,12 @@
 //!
 //! | Key | Value |
 //! |---|---|
-//! | `dynlight_type` | `point`, `spot`, `discoball`, `wave`, `interference`, `rotor`, `shock`, `disco`, `rectangle`, `tube` |
+//! | `dynlight_type` | `point`, `spot`, `discoball`, `wave`, `interference`, `rotor`, `shock`, `disco`, `rectangle`, `tube`, `sun` |
 //! | `dynlight_color` | `[r, g, b]` sRGB 0–1 |
 //! | `dynlight_size` | `[width, height]` of a rectangle, `[length]` of a tube, in meters |
 //! | `dynlight_intensity`, `dynlight_radius`, `dynlight_falloff` | numbers |
 //! | `dynlight_inner_cutoff`, `dynlight_outer_cutoff` | degrees |
+//! | `dynlight_angular_diameter` | degrees, a sun's disk (0 for hard shadows) |
 //! | `dynlight_realtime` | bool |
 //! | `dynlight_shimmer` | `none`, `water`, `random` |
 //! | `dynlight_effect` | an effect name such as `candle` or `fluorescent_starter` |
@@ -58,12 +59,13 @@ pub fn parse(json: &str) -> NodeExtras {
         [width, height, ..] => light.size = Vec2::new(width, height),
         [] => {}
     }
-    let fields: [(&str, &mut f32); 5] = [
+    let fields: [(&str, &mut f32); 6] = [
         ("dynlight_intensity", &mut light.intensity),
         ("dynlight_radius", &mut light.radius),
         ("dynlight_falloff", &mut light.falloff),
         ("dynlight_inner_cutoff", &mut light.inner_cutoff),
         ("dynlight_outer_cutoff", &mut light.outer_cutoff),
+        ("dynlight_angular_diameter", &mut light.angular_diameter),
     ];
     for (key, field) in fields {
         if let Some(value) = number(&map, key) {
@@ -174,6 +176,18 @@ mod tests {
         assert_eq!(tube.light.unwrap().size, Vec2::new(2.0, 0.0));
         let shaft = parse(r#"{"dynlight_type": "rectangle", "dynlight_fog": "frustum"}"#);
         assert_eq!(shaft.fog.unwrap().shape, VolumetricShape::Frustum);
+    }
+
+    #[test]
+    fn suns_take_an_angular_diameter() {
+        let sun = parse(r#"{"dynlight_type": "sun", "dynlight_angular_diameter": 2.5}"#);
+        let sun = sun.light.unwrap();
+        assert_eq!(
+            (sun.light_type, sun.angular_diameter),
+            (LightType::Sun, 2.5)
+        );
+        let default = parse(r#"{"dynlight_type": "Sun"}"#).light.unwrap();
+        assert_eq!(default.angular_diameter, DynamicLight::SUN_ANGULAR_DIAMETER);
     }
 
     #[test]

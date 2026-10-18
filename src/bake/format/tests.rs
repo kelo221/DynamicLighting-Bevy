@@ -1,6 +1,20 @@
 use super::*;
 use crate::light::{AreaLightShape, LightType};
 
+fn sun(id: u64) -> BakedLight {
+    BakedLight {
+        id: BakeId(id),
+        origin: Vec3::ZERO,
+        radius: 10.0,
+        shape: LightShape::Sun(SunDisk {
+            rotation: Quat::from_rotation_x(-1.0),
+            angular_diameter: 0.53,
+        }),
+        bounce_compression: None,
+        shadow_bits_per_texel: 4,
+    }
+}
+
 fn sample() -> BakedScene {
     BakedScene {
         settings: BakedSettings {
@@ -15,7 +29,7 @@ fn sample() -> BakedScene {
                 id: BakeId(42),
                 origin: Vec3::new(1.0, -2.5, 3.25),
                 radius: 6.0,
-                area: Some(AreaLightShape {
+                shape: LightShape::Area(AreaLightShape {
                     kind: LightType::Rectangle,
                     rotation: Quat::from_rotation_x(-0.5),
                     size: Vec2::new(1.6, 0.4),
@@ -27,7 +41,7 @@ fn sample() -> BakedScene {
                 id: BakeId(7),
                 origin: Vec3::ZERO,
                 radius: 0.5,
-                area: None,
+                shape: LightShape::Point,
                 bounce_compression: None,
                 shadow_bits_per_texel: 1,
             },
@@ -35,7 +49,7 @@ fn sample() -> BakedScene {
                 id: BakeId(9),
                 origin: Vec3::Y,
                 radius: 3.0,
-                area: Some(AreaLightShape {
+                shape: LightShape::Area(AreaLightShape {
                     kind: LightType::Tube,
                     rotation: Quat::IDENTITY,
                     size: Vec2::new(2.0, 0.0),
@@ -43,6 +57,7 @@ fn sample() -> BakedScene {
                 bounce_compression: None,
                 shadow_bits_per_texel: 2,
             },
+            sun(3),
         ],
         light_bvh: vec![LightBvhNode {
             aabb_min: [-1.0, -2.0, -3.0],
@@ -65,6 +80,11 @@ fn sample() -> BakedScene {
             },
         ],
         distance_cubes: vec![0x3C00_3C00, 7],
+        sun_maps: vec![SunMap {
+            rows: [Vec4::X, Vec4::new(0.0, 0.5, 0.0, 0.25), Vec4::splat(-0.125)],
+            resolution: 3,
+            texels: vec![0xFFFF_0000, 1, 2, 3, 0x8000],
+        }],
         stats: BakeStats {
             meshes: 2,
             triangles: 1,
@@ -86,6 +106,34 @@ fn scenes_round_trip() {
     assert_eq!(encode(&scene), bytes, "encoding is deterministic");
     let empty = BakedScene::default();
     assert_eq!(decode(&encode(&empty)), Ok(empty));
+    assert_eq!((scene.local_light_count(), scene.sun_count()), (3, 1));
+}
+
+#[test]
+fn suns_come_last_with_one_sun_map_each_or_none() {
+    let mut early_sun = sample();
+    early_sun.lights.insert(0, sun(4));
+    assert_eq!(
+        decode_payload(&encode_payload(&early_sun)),
+        Err(FormatError::Invalid("light order"))
+    );
+    let mut two_suns = sample();
+    two_suns.lights.push(sun(5));
+    assert_eq!(
+        decode_payload(&encode_payload(&two_suns)),
+        Err(FormatError::Invalid("sun map count"))
+    );
+    two_suns.sun_maps.clear();
+    assert!(
+        decode_payload(&encode_payload(&two_suns)).is_ok(),
+        "no maps"
+    );
+    let mut short = sample();
+    short.sun_maps[0].texels.pop();
+    assert_eq!(
+        decode_payload(&encode_payload(&short)),
+        Err(FormatError::Invalid("sun map"))
+    );
 }
 
 #[test]

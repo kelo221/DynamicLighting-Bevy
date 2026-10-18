@@ -1,7 +1,7 @@
 //! Snapshots the ECS into plain [`BakeInput`]: world-space static meshes and baked lights.
 //!
 //! Meshes are entities with [`BakeStatic`], [`Mesh3d`] and [`GlobalTransform`]; lights are
-//! every [`DynamicLight`] that isn't `realtime`, area lights with their shape.
+//! every [`DynamicLight`] that isn't `realtime`, area lights and suns with their shape.
 //! Entities without a [`BakeId`] get one derived from their `Name` path (root first) plus, for
 //! meshes, the mesh asset path.
 
@@ -12,7 +12,7 @@ use bevy::mesh::{MeshAccessError, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
-use crate::light::{AreaLightShape, DynamicLight};
+use crate::light::{DynamicLight, LightShape};
 use crate::shared::{BakeId, NamePaths, mesh_content_hash};
 
 use super::identity::{Candidate, assign_ids};
@@ -138,7 +138,7 @@ impl SceneSnapshot<'_, '_> {
                     intensity: light.bounce.intensity,
                     compression: light.bounce.compression,
                 },
-                area: AreaLightShape::of(light, rotation),
+                shape: LightShape::of(light, rotation),
             })
             .collect();
         Ok(BakeInput { meshes, lights })

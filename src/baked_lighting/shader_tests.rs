@@ -1,7 +1,10 @@
 //! Compiles the baked-lighting WESL modules with naga and checks their constants against
 //! `layout.rs`.
 
-use super::layout::{AUX_HEADER_WORDS, RECEIVER_WORDS, flags, header};
+use super::layout::{
+    AUX_HEADER_WORDS, RECEIVER_WORDS, SUN_MAP_RECORD_WORDS, SUN_MAP_RESOLUTION, SUN_MAP_TEXELS,
+    flags, header,
+};
 use super::mirror;
 use crate::shared::wesl_check::{MATERIAL_CONSTANTS, SHARED_TYPES, compile};
 
@@ -68,11 +71,16 @@ fn constants_match_the_layout() {
         ("AUX_FLAG_CUBE_BIAS", flags::CUBE_BIAS),
         ("AUX_FLAG_CUBE_ANGULAR", flags::CUBE_ANGULAR),
         ("RECEIVER_WORDS", RECEIVER_WORDS as u32),
+        ("AUX_SUN_MAPS", header::SUN_MAPS as u32),
+        ("AUX_SUN_MAP_COUNT", header::SUN_MAP_COUNT as u32),
+        ("SUN_MAP_RECORD_WORDS", SUN_MAP_RECORD_WORDS as u32),
+        ("SUN_MAP_RESOLUTION", SUN_MAP_RESOLUTION as u32),
+        ("SUN_MAP_TEXELS", SUN_MAP_TEXELS as u32),
     ];
     for (name, value) in pairs {
         assert_eq!(wesl_const(source, name), value, "{name}");
     }
-    const { assert!(header::BAKED_LIGHTS < AUX_HEADER_WORDS) };
+    const { assert!(header::SUN_MAP_COUNT < AUX_HEADER_WORDS) };
 }
 
 #[test]

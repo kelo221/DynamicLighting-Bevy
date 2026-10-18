@@ -20,18 +20,20 @@ mod baking;
 mod capture;
 mod debug;
 mod fixtures;
+#[path = "../support/lightmap_uvs.rs"]
+mod lightmap_uvs;
 #[path = "../support/orbit.rs"]
 mod orbit;
 mod player;
 #[path = "../support/mod.rs"]
 mod support;
 
+use lightmap_uvs::box_with_lightmap_uvs;
 use orbit::{OrbitCamera, OrbitFollow};
 use player::Solid;
 use support::argument;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -165,8 +167,13 @@ fn spawn_scene(
         ));
     }
 
-    for (i, light_type) in LightType::ALL.into_iter().enumerate() {
-        let hue = i as f32 / LightType::ALL.len() as f32 * 360.0;
+    // The row has every light with a position; the outdoor example shows the sun.
+    let row: Vec<LightType> = LightType::ALL
+        .into_iter()
+        .filter(|kind| !kind.is_distant())
+        .collect();
+    for (i, &light_type) in row.iter().enumerate() {
+        let hue = i as f32 / row.len() as f32 * 360.0;
         let mut light = commands.spawn((
             Name::new(format!("{light_type:?}")),
             DynamicLight {
@@ -228,30 +235,6 @@ fn spawn_scene(
     }
 
     fixtures::spawn(&mut commands, &mut meshes, &mut materials, prop);
-}
-
-/// A box whose faces get their own cell of a 3×2 UV1 atlas. Bevy's box UVs put every face on
-/// the same square, and bounce lighting is baked into one lightmap per mesh, so faces must not
-/// overlap there.
-fn box_with_lightmap_uvs(cuboid: Cuboid) -> Mesh {
-    const PADDING: f32 = 0.05;
-    let mut mesh = cuboid.mesh().build();
-    let Some(VertexAttributeValues::Float32x2(uv0)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else {
-        return mesh;
-    };
-    // Four vertices per face.
-    let uv1: Vec<[f32; 2]> = uv0
-        .iter()
-        .enumerate()
-        .map(|(vertex, [u, v])| {
-            let face = (vertex / 4) as f32;
-            let cell = Vec2::new(face % 3.0, (face / 3.0).floor());
-            let inner = Vec2::new(*u, *v) * (1.0 - 2.0 * PADDING) + PADDING;
-            ((cell + inner) / Vec2::new(3.0, 2.0)).to_array()
-        })
-        .collect();
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
-    mesh
 }
 
 /// A 64² ring pattern for the spot light's cookie.

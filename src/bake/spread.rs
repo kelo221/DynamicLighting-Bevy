@@ -1,4 +1,6 @@
-//! Points spread evenly over an area light's shape, for its soft-shadow rays.
+//! Points spread evenly over an area light's shape or a sun's disk, for soft-shadow rays.
+
+use core::f32::consts::FRAC_PI_4;
 
 use bevy::math::Vec2;
 
@@ -19,6 +21,21 @@ pub fn spread(index: u32, offset: Vec2, rectangle: bool) -> Vec2 {
         0.0
     };
     (Vec2::new(across, down) + offset).fract()
+}
+
+/// A point of the unit square on the unit disk, by Shirley and Chiu's concentric map: square
+/// rings go to circles and areas keep their size, so evenly spread points stay even.
+pub fn concentric_disk(square: Vec2) -> Vec2 {
+    let p = square * 2.0 - 1.0;
+    if p == Vec2::ZERO {
+        return Vec2::ZERO;
+    }
+    let (radius, angle) = if p.x.abs() > p.y.abs() {
+        (p.x, FRAC_PI_4 * (p.y / p.x))
+    } else {
+        (p.y, 2.0 * FRAC_PI_4 - FRAC_PI_4 * (p.x / p.y))
+    };
+    Vec2::from_angle(angle) * radius
 }
 
 /// Sobol's second dimension (primitive polynomial `x + 1`): the XOR of the direction numbers
@@ -88,5 +105,24 @@ mod tests {
         }
         let tube = spread(5, offset, false);
         assert_eq!(tube.y, offset.y, "a tube keeps its unused coordinate");
+    }
+
+    #[test]
+    fn the_disk_map_keeps_areas_and_rings() {
+        assert_eq!(concentric_disk(Vec2::splat(0.5)), Vec2::ZERO);
+        for corner in [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE] {
+            let rim = concentric_disk(corner);
+            assert!((rim.length() - 1.0).abs() < 1e-6, "{corner}: {rim}");
+        }
+        let edge = concentric_disk(Vec2::new(1.0, 0.5));
+        assert!(edge.abs_diff_eq(Vec2::X, 1e-6), "{edge}");
+        // A square ring half way out lands on the circle of radius 1/2.
+        let ring = concentric_disk(Vec2::new(0.75, 0.6));
+        assert!((ring.length() - 0.5).abs() < 1e-6, "{ring}");
+        // Equal areas: a quarter of 256 spread points falls inside radius 1/2.
+        let inside = (0..256)
+            .filter(|&i| concentric_disk(spread(i, Vec2::ZERO, true)).length() < 0.5)
+            .count();
+        assert!((60..=68).contains(&inside), "{inside}");
     }
 }

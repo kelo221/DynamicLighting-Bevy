@@ -7,7 +7,7 @@ use crate::effects::LightEffectState;
 use crate::light::{DynamicLight, LightType};
 
 /// Draws each light's radius as a sphere in its color, dimmed by its current effect intensity,
-/// and its shape.
+/// and its shape. Suns, which have no radius, get a ring and arrows along their direction.
 #[derive(Resource, Reflect, Clone, Debug, Default, PartialEq)]
 #[reflect(Resource, Default, Debug, Clone, PartialEq)]
 pub struct LightGizmos {
@@ -26,6 +26,10 @@ pub(super) fn draw_light_gizmos(
         let dimmed = (full * intensity).with_alpha(1.0);
         let position = transform.translation();
         let at_light = Isometry3d::from_translation(position);
+        if light.light_type == LightType::Sun {
+            draw_sun(&mut gizmos, transform, dimmed);
+            continue;
+        }
         gizmos.sphere(at_light, light.radius, dimmed).resolution(24);
         gizmos.cross(at_light, 0.15, full);
         let half = light.half_extents();
@@ -46,5 +50,25 @@ pub(super) fn draw_light_gizmos(
             }
             _ => {}
         }
+    }
+}
+
+/// A ring facing the sun, with arrows along the way its light travels.
+fn draw_sun(gizmos: &mut Gizmos, transform: &GlobalTransform, color: LinearRgba) {
+    const RING: f32 = 0.5;
+    const LENGTH: f32 = 1.5;
+    let position = transform.translation();
+    let rotation = transform.to_scale_rotation_translation().1;
+    gizmos.circle(Isometry3d::new(position, rotation), RING, color);
+    let forward = transform.forward() * LENGTH;
+    gizmos.arrow(position, position + forward, color);
+    for side in [
+        transform.right(),
+        transform.up(),
+        -transform.right(),
+        -transform.up(),
+    ] {
+        let start = position + side * RING;
+        gizmos.arrow(start, start + forward * 0.6, color);
     }
 }

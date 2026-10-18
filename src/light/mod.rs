@@ -3,7 +3,8 @@
 //! moved baked lights, presets, the WESL light-type and area-light functions, the LTC table for
 //! rectangle-light specular ([`AREA_LIGHT_LUT`]), and a CPU reference of that shader math.
 //!
-//! Shaders import the light functions as `dynlight::light::shaders::{light_types, area, ltc}`.
+//! Shaders import the light functions as
+//! `dynlight::light::shaders::{light_types, area, ltc, sun}`.
 
 pub mod area;
 #[cfg(test)]
@@ -25,7 +26,9 @@ mod placement;
 mod presets;
 #[cfg(test)]
 pub(crate) mod shader_tests;
+mod shape;
 mod spatial;
+pub mod sun;
 mod systems;
 #[cfg(test)]
 mod tests;
@@ -48,7 +51,8 @@ pub use kinds::{
 pub use ltc_image::{AREA_LIGHT_LUT, lut_image};
 pub use pack::{LightPose, PackContext, bounce_color, pack};
 pub use placement::BakedInPlace;
-pub use presets::{SUN_DISTANCE, SUN_RADIUS, sun_light};
+pub use presets::sun_light;
+pub use shape::{LightShape, SunDisk};
 pub use spatial::{cookie_projection_scale, type_parameters};
 pub use systems::quality_level;
 
@@ -111,6 +115,7 @@ impl Plugin for LightPlugin {
             load_shader_library!(app, "shaders/light_types.wesl");
             load_shader_library!(app, "shaders/ltc.wesl");
             load_shader_library!(app, "shaders/area.wesl");
+            load_shader_library!(app, "shaders/sun.wesl");
             buffer::create_light_buffer(app);
         }
     }

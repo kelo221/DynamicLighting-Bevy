@@ -1,16 +1,17 @@
 //! Whether a light uses its baked data this frame: the bake knows it, it stands where it was
 //! baked, its radius hasn't grown past the baked one and, for area lights, it keeps the shape it
-//! was baked with. Point-like lights may turn freely. Packing and the shadow cubemap pass both
-//! read this.
+//! was baked with. Point-like lights may turn freely. A sun has no position or radius: it keeps
+//! its bake while it shines the same way with the same disk. Packing and the shadow cubemap pass
+//! both read this.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::area::AreaLightShape;
 use super::buffer::{BakedLightSlots, BakedSlot};
 use super::component::DynamicLight;
 use super::pack::LightPose;
+use super::shape::LightShape;
 use crate::shared::{BakeId, ResolvedBakeId};
 
 /// How far a baked light may drift from where it was baked before it counts as moved.
@@ -64,13 +65,14 @@ impl SlotIndex {
 /// Whether `light` at `pose` still matches what `slot` was baked for. A smaller radius still
 /// matches: the baked data covers more than the light now reaches.
 fn still_baked(slot: &BakedSlot, light: &DynamicLight, pose: LightPose) -> bool {
-    let same_shape = match (slot.area, AreaLightShape::of(light, pose.rotation)) {
-        (None, None) => true,
-        (Some(baked), Some(now)) => baked.matches(&now),
-        _ => false,
-    };
-    same_shape
-        && slot.origin.distance(pose.position) <= MOVED_DISTANCE
+    let shape = LightShape::of(light, pose.rotation);
+    if !slot.shape.matches(&shape) {
+        return false;
+    }
+    if shape.is_distant() {
+        return true;
+    }
+    slot.origin.distance(pose.position) <= MOVED_DISTANCE
         && light.radius <= slot.radius + MOVED_DISTANCE
 }
 
@@ -137,19 +139,19 @@ mod tests {
 
     /// `light` baked at `at` in slot 1, after an unrelated light.
     fn baked(light: &DynamicLight, at: LightPose) -> BakedLightSlots {
-        let area = AreaLightShape::of(light, at.rotation);
-        let slot = |id, origin, area: Option<AreaLightShape>| BakedSlot {
+        let shape = LightShape::of(light, at.rotation);
+        let slot = |id, origin, shape: LightShape| BakedSlot {
             id,
             origin,
             radius: light.radius,
-            area,
+            shape,
             bounce_bits_per_pixel: 8,
-            shadow_bits_per_texel: if area.is_some() { 4 } else { 1 },
+            shadow_bits_per_texel: if shape == LightShape::Point { 1 } else { 4 },
         };
         BakedLightSlots {
             slots: vec![
-                slot(BakeId(99), Vec3::ZERO, None),
-                slot(BakeId(1), at.position, area),
+                slot(BakeId(99), Vec3::ZERO, LightShape::Point),
+                slot(BakeId(1), at.position, shape),
             ],
         }
     }
@@ -223,6 +225,31 @@ mod tests {
             slot_used(&tube_slots, &thicker, Some(BakeId(1)), home),
             Some(1)
         );
+    }
+
+    #[test]
+    fn suns_stay_baked_wherever_they_are_until_they_turn() {
+        let sun = DynamicLight::sun();
+        let home = pose(Vec3::Y, Quat::from_rotation_x(-1.0));
+        let slots = baked(&sun, home);
+        assert_eq!(slots.distant_count(), 1);
+        let used = |light: &DynamicLight, at| slot_used(&slots, light, Some(BakeId(1)), at);
+        assert_eq!(used(&sun, home), Some(1));
+        let moved = pose(Vec3::splat(50.0), home.rotation);
+        assert_eq!(used(&sun, moved), Some(1), "a sun has no position");
+        let wider = DynamicLight {
+            radius: 1.0e6,
+            ..sun.clone()
+        };
+        assert_eq!(used(&wider, home), Some(1), "nor a radius");
+        let turned = pose(Vec3::Y, Quat::from_rotation_y(0.1) * home.rotation);
+        assert_eq!(used(&sun, turned), None, "turned");
+        let softer = DynamicLight {
+            angular_diameter: 3.0,
+            ..sun.clone()
+        };
+        assert_eq!(used(&softer, home), None, "a wider disk");
+        assert_eq!(used(&DynamicLight::point(), home), None, "now a point");
     }
 
     #[test]

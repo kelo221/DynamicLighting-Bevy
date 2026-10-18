@@ -22,6 +22,12 @@ pub(crate) const AREA: (&str, &str) = (
     include_str!("shaders/area.wesl"),
 );
 
+/// `(import path, source)` of the sun WESL module.
+pub(crate) const SUN: (&str, &str) = (
+    "dynlight::light::shaders::sun",
+    include_str!("shaders/sun.wesl"),
+);
+
 fn has_function(module: &naga::Module, name: &str) -> bool {
     module
         .functions
@@ -53,6 +59,14 @@ fn area_lights_compile_and_validate() {
         "area_specular_scale",
         "nearest_point",
     ] {
+        assert!(has_function(&module, name), "{name} missing");
+    }
+}
+
+#[test]
+fn suns_compile_and_validate() {
+    let module = compile(SUN.0, &[SHARED_TYPES, SUN], &[]);
+    for name in ["sun_specular_direction", "sun_specular_scale"] {
         assert!(has_function(&module, name), "{name} missing");
     }
 }

@@ -6,7 +6,7 @@ use super::settings::DebugView;
 
 /// Size in bytes of [`GpuLightGlobals`]. The WESL `LightGlobals` must match, and the light
 /// array starts right after it.
-pub const GPU_LIGHT_GLOBALS_SIZE: usize = 32;
+pub const GPU_LIGHT_GLOBALS_SIZE: usize = 48;
 
 /// Scene-wide values the lighting shaders read once per fragment. Keeping them in the light
 /// buffer saves a binding, and they change every frame, which a per-material uniform would make
@@ -27,6 +27,13 @@ pub struct GpuLightGlobals {
     pub quality: u32,
     /// `GpuLightGlobals::FLAG_*` bits.
     pub flags: u32,
+    /// Distant lights (suns) among the baked slots: the last `baked_distant` of them. The light
+    /// BVH holds only the slots before them.
+    pub baked_distant: u32,
+    /// Distant lights among the realtime lights: the first `realtime_distant` of them. The
+    /// realtime light grid holds only the lights after them.
+    pub realtime_distant: u32,
+    pub _padding: [u32; 2],
 }
 
 impl GpuLightGlobals {
@@ -67,6 +74,12 @@ mod tests {
             ),
             ("quality", offset_of!(GpuLightGlobals, quality)),
             ("flags", offset_of!(GpuLightGlobals, flags)),
+            ("baked_distant", offset_of!(GpuLightGlobals, baked_distant)),
+            (
+                "realtime_distant",
+                offset_of!(GpuLightGlobals, realtime_distant),
+            ),
+            ("_padding", offset_of!(GpuLightGlobals, _padding)),
         ];
         let module = compile_shared_types();
         let wesl = struct_layout(&module, "LightGlobals");

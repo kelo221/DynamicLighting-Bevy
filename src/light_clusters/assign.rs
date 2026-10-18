@@ -15,8 +15,9 @@ pub const MAX_ENTRIES: usize = 1 << 20;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClusterLists {
     pub header: GpuClusterHeader,
-    /// Each cell's first entry and entry count, two words per cell, then the entries: realtime
-    /// light indices (0 is the first realtime light), two 16-bit indices per word.
+    /// Each cell's first entry and entry count, two words per cell, then the entries: indices of
+    /// the realtime lights after the distant ones (0 is the first of those), two 16-bit indices
+    /// per word.
     pub words: Vec<u32>,
     /// Light indices over all cells.
     pub entries: usize,
@@ -64,13 +65,17 @@ impl ClusterLists {
     }
 }
 
-/// How far a packed light reaches from its position, or `None` for a disabled record. Mirrors
-/// `sqrt(radius_sqr) + light_extent(light)` in WESL.
+/// How far a packed light reaches from its position, or `None` for a disabled record and for
+/// distant lights, which reach everything. Mirrors `sqrt(radius_sqr) + light_extent(light)` in
+/// WESL.
 pub fn light_sphere(light: &GpuLight) -> Option<Sphere> {
     if light.radius_sqr < 0.0 || light.radius_sqr.is_nan() {
         return None;
     }
     let kind = ChannelFlags::unpack(light.channel).light_type;
+    if LightType::from_bits(kind).is_some_and(LightType::is_distant) {
+        return None;
+    }
     let area = kind == LightType::Rectangle as u32 || kind == LightType::Tube as u32;
     let extent = if area {
         Vec2::new(light.gp1, light.gp2).length()

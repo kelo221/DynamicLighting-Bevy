@@ -2,9 +2,14 @@
 //!
 //! ```text
 //! triangles   every baked mesh's `dynamic_triangles` words, back to back
-//! aux         header (8 words), receiver records (4 words each), light BVH nodes (8 words
-//!             each), distance cubes (DISTANCE_CUBE_WORDS per baked light)
+//! aux         header (12 words), receiver records (4 words each), light BVH nodes (8 words
+//!             each), distance cubes (DISTANCE_CUBE_WORDS per BVH light), sun map records
+//!             (16 words each), sun map texels
 //! ```
+//!
+//! A sun map record holds the map's three world-to-map rows (12 f32), its resolution and the aux
+//! word its texels start at. Sun map `k` belongs to the `k`-th baked sun, light slot
+//! `BAKED_LIGHTS − sun count + k`.
 //!
 //! A mesh finds its record through `MeshTag`: tag `n > 0` is receiver `n − 1`, tag 0 means "not
 //! baked". Henry's triangle offsets stay relative to the mesh's first word, so "0 = no data"
@@ -13,6 +18,7 @@
 
 use bevy::platform::collections::HashMap;
 
+use crate::bake::SunMap;
 use crate::shared::BakeId;
 
 /// Aux header word indices.
@@ -25,12 +31,16 @@ pub mod header {
     pub const BVH_NODE_COUNT: usize = 3;
     /// First word of the distance cubes.
     pub const CUBES: usize = 4;
-    /// Baked lights with a distance cube (all of them, or none).
+    /// Baked lights with a distance cube (all in the BVH, or none).
     pub const CUBE_COUNT: usize = 5;
     /// [`super::flags`].
     pub const FLAGS: usize = 6;
     /// Number of baked light slots.
     pub const BAKED_LIGHTS: usize = 7;
+    /// First word of the sun map records.
+    pub const SUN_MAPS: usize = 8;
+    /// Baked suns with a sun map (all of them, or none).
+    pub const SUN_MAP_COUNT: usize = 9;
 }
 
 /// Bits of the aux header's flags word.
@@ -43,9 +53,13 @@ pub mod flags {
     pub const CUBE_ANGULAR: u32 = 4;
 }
 
-pub const AUX_HEADER_WORDS: usize = 8;
+pub const AUX_HEADER_WORDS: usize = 12;
 pub const RECEIVER_WORDS: usize = 4;
 pub const BVH_NODE_WORDS: usize = 8;
+pub const SUN_MAP_RECORD_WORDS: usize = 16;
+/// Word offsets inside a sun map record, after its rows.
+pub const SUN_MAP_RESOLUTION: usize = 12;
+pub const SUN_MAP_TEXELS: usize = 13;
 
 /// One baked mesh as the buffers see it.
 #[derive(Clone, Copy, Debug)]
@@ -83,6 +97,8 @@ pub struct SceneInput<'a> {
     /// Distance cubes, `cube_words` per light in BVH order.
     pub cubes: &'a [u32],
     pub cube_count: u32,
+    /// One per baked sun, in slot order, or none.
+    pub sun_maps: &'a [SunMap],
     pub flags: u32,
 }
 
@@ -132,6 +148,19 @@ impl BakedBuffers {
         aux[header::FLAGS] = scene.flags;
         aux[header::BAKED_LIGHTS] = scene.baked_lights;
 
+        aux[header::SUN_MAPS] = aux.len() as u32;
+        aux[header::SUN_MAP_COUNT] = scene.sun_maps.len() as u32;
+        let mut texels = aux.len() + scene.sun_maps.len() * SUN_MAP_RECORD_WORDS;
+        for map in scene.sun_maps {
+            let rows = map.rows.iter().flat_map(|row| row.to_array());
+            aux.extend(rows.map(f32::to_bits));
+            aux.extend([map.resolution, texels as u32, 0, 0]);
+            texels += map.texels.len();
+        }
+        for map in scene.sun_maps {
+            aux.extend_from_slice(&map.texels);
+        }
+
         Self {
             triangles,
             aux,
@@ -169,6 +198,11 @@ mod tests {
         let a = [8, 0, 0, 5, 4, 0, 0, 7, 0, 0];
         let b = [4, 1, 1, 6, 1, 3, 0];
         let bvh = [0u32; 8];
+        let maps = [1, 2].map(|resolution| SunMap {
+            rows: [bevy::math::Vec4::splat(resolution as f32); 3],
+            resolution,
+            texels: vec![resolution * 10; SunMap::words(resolution)],
+        });
         let buffers = BakedBuffers::build(
             [
                 ReceiverInput {
@@ -189,6 +223,7 @@ mod tests {
                 bvh: &bvh,
                 cubes: &[7, 8],
                 cube_count: 1,
+                sun_maps: &maps,
                 flags: flags::BOUNCE_LAYOUT,
             },
         );
@@ -210,8 +245,26 @@ mod tests {
         );
         assert_eq!(aux[header::BVH_NODE_COUNT], 1);
         assert_eq!(aux[header::CUBES], aux[header::BVH] + 8);
-        assert_eq!(&aux[aux[header::CUBES] as usize..], [7, 8]);
+        let cubes = aux[header::CUBES] as usize;
+        assert_eq!(aux[cubes..cubes + 2], [7, 8]);
         assert_eq!(aux[header::FLAGS], flags::BOUNCE_LAYOUT);
         assert_eq!(aux[header::BAKED_LIGHTS], 4);
+
+        assert_eq!(aux[header::SUN_MAPS], aux[header::CUBES] + 2);
+        assert_eq!(aux[header::SUN_MAP_COUNT], 2);
+        for (k, map) in maps.iter().enumerate() {
+            let record = aux[header::SUN_MAPS] as usize + k * SUN_MAP_RECORD_WORDS;
+            let row = f32::from_bits(aux[record + 11]);
+            assert_eq!(row, map.resolution as f32);
+            assert_eq!(aux[record + SUN_MAP_RESOLUTION], map.resolution);
+            let texels = aux[record + SUN_MAP_TEXELS] as usize;
+            assert_eq!(aux[texels..texels + map.texels.len()], map.texels);
+        }
+        let last = aux[aux[header::SUN_MAPS] as usize + SUN_MAP_RECORD_WORDS + SUN_MAP_TEXELS];
+        assert_eq!(
+            last as usize + 2,
+            aux.len(),
+            "the 2² map's 2 words end the buffer"
+        );
     }
 }

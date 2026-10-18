@@ -11,6 +11,10 @@ pub(crate) const DISTANCE_CUBES: (&str, &str) = (
     "dynlight::dynamic_geometry::shaders::distance_cubes",
     include_str!("shaders/distance_cubes.wesl"),
 );
+pub(crate) const SUN_MAP: (&str, &str) = (
+    "dynlight::dynamic_geometry::shaders::sun_map",
+    include_str!("shaders/sun_map.wesl"),
+);
 
 fn modules() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -19,6 +23,7 @@ fn modules() -> Vec<(&'static str, &'static str)> {
         BAKED_DATA,
         LIGHT_BVH,
         DISTANCE_CUBES,
+        SUN_MAP,
     ]
 }
 
@@ -46,6 +51,20 @@ fn distance_cubes_compile_and_validate() {
         "cube_area_shadow",
     ] {
         assert!(has_function(&module, name), "{name} is missing");
+    }
+}
+
+#[test]
+fn sun_maps_compile_and_match_the_mirror() {
+    use super::sun_mirror::{SUN_MAP_BIAS, SUN_MAP_TEXEL_BIAS};
+    let module = compile(SUN_MAP.0, &modules(), &[]);
+    assert!(has_function(&module, "sun_map_shadow"));
+    assert!(has_function(&module, "sun_map_available"));
+    for line in [
+        format!("const SUN_MAP_BIAS: f32 = {SUN_MAP_BIAS};"),
+        format!("const SUN_MAP_TEXEL_BIAS: f32 = {SUN_MAP_TEXEL_BIAS:?};"),
+    ] {
+        assert!(SUN_MAP.1.contains(&line), "{line}");
     }
 }
 

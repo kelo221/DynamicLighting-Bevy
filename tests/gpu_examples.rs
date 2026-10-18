@@ -83,6 +83,18 @@ fn gpu_area_shadows_match_the_cpu_mirror_at_every_quality() {
     }
 }
 
+#[test]
+#[ignore = "needs a GPU"]
+fn gpu_sun_shadows_match_the_cpu_mirror() {
+    for quality in ["integrated", "high"] {
+        let log = run_example("gpu_check_sun", &["--quality", quality]);
+        assert!(
+            log.contains("GPU sun shadows match the CPU mirror"),
+            "{log}"
+        );
+    }
+}
+
 /// The faces rendered per frame from the `realtime_shadows` log line.
 fn faces_per_frame(log: &str) -> f32 {
     let line = log

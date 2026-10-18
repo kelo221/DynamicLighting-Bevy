@@ -10,17 +10,38 @@ use super::kinds::LightType;
 use crate::shared::{ChannelFlags, GpuLight};
 
 /// The point light comes from as seen from `world`: its position, or the nearest point of an
-/// area light's shape.
+/// area light's shape. A distant light's comes from infinitely far away; see
+/// [`direction_to_light`].
 pub fn source_point(light: &GpuLight, world: Vec3) -> Vec3 {
     AreaShape::of(light).map_or(light.position.into(), |shape| shape.nearest_point(world))
 }
 
+/// A distant light ([`LightType::is_distant`]) in this record.
+pub fn is_distant(light: &GpuLight) -> bool {
+    LightType::from_bits(ChannelFlags::unpack(light.channel).light_type)
+        .is_some_and(LightType::is_distant)
+}
+
+/// Unit vector from `world` towards where the light comes from.
+pub fn direction_to_light(light: &GpuLight, world: Vec3) -> Vec3 {
+    if is_distant(light) {
+        return Vec3::from(light.forward).normalize_or_zero();
+    }
+    (source_point(light, world) - world).normalize_or_zero()
+}
+
 /// Brightness at `world` before shadows and the surface's cosine: attenuation (from the
 /// nearest point of an area light) times the light-type pattern. Zero outside the radius or for
-/// a disabled slot.
+/// a disabled slot. Distant lights reach everywhere at their intensity.
 pub fn radiance(light: &GpuLight, world: Vec3) -> f32 {
+    if light.radius_sqr < 0.0 {
+        return 0.0;
+    }
+    if is_distant(light) {
+        return attenuation(light, 0.0);
+    }
     let distance_sqr = source_point(light, world).distance_squared(world);
-    if light.radius_sqr < 0.0 || distance_sqr > light.radius_sqr {
+    if distance_sqr > light.radius_sqr {
         return 0.0;
     }
     attenuation(light, distance_sqr) * type_factor(light, world)
@@ -32,7 +53,7 @@ pub fn diffuse(light: &GpuLight, world: Vec3, normal: Vec3, baked: bool) -> f32 
     if let Some(shape) = AreaShape::of(light) {
         return area::diffuse(&shape, world, normal, baked);
     }
-    let cosine = normal.dot((Vec3::from(light.position) - world).normalize_or_zero());
+    let cosine = normal.dot(direction_to_light(light, world));
     if baked {
         cosine.max(0.0)
     } else {
@@ -58,7 +79,7 @@ pub fn type_factor(light: &GpuLight, world: Vec3) -> f32 {
     let (gp1, gp2, gp3) = (light.gp1, light.gp2, light.gp3);
     let light_type = ChannelFlags::unpack(light.channel).light_type;
     match LightType::from_bits(light_type).unwrap_or_default() {
-        LightType::Point | LightType::Rectangle | LightType::Tube => 1.0,
+        LightType::Point | LightType::Rectangle | LightType::Tube | LightType::Sun => 1.0,
         LightType::Spot => cone(direction.dot(forward), gp1, gp2),
         LightType::Discoball => {
             let local = to_light_space(direction, forward, up);

@@ -14,12 +14,18 @@ const AUX_CUBES: u32 = 4u;
 const AUX_CUBE_COUNT: u32 = 5u;
 const AUX_FLAGS: u32 = 6u;
 const AUX_BAKED_LIGHTS: u32 = 7u;
+const AUX_SUN_MAPS: u32 = 8u;
+const AUX_SUN_MAP_COUNT: u32 = 9u;
 
 const AUX_FLAG_BOUNCE_LAYOUT: u32 = 1u;
 const AUX_FLAG_CUBE_BIAS: u32 = 2u;
 const AUX_FLAG_CUBE_ANGULAR: u32 = 4u;
 
 const RECEIVER_WORDS: u32 = 4u;
+// A sun map record: three world-to-map rows (12 f32), the resolution and the first texel word.
+const SUN_MAP_RECORD_WORDS: u32 = 16u;
+const SUN_MAP_RESOLUTION: u32 = 12u;
+const SUN_MAP_TEXELS: u32 = 13u;
 
 // A baked mesh: where its triangle words start and its shadow map size. `resolution == 0`
 // means the mesh has no bake data and takes the dynamic-geometry path.

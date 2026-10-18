@@ -105,7 +105,7 @@ mod tests {
             illumination: Default::default(),
             transparency: Default::default(),
             bounce: Default::default(),
-            area: None,
+            shape: crate::light::LightShape::Point,
         }
     }
 

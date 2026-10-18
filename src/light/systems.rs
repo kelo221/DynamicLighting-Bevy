@@ -22,8 +22,8 @@ type LightItem<'a> = (
 );
 
 /// Packs every visible light into [`PackedLights`]: baked lights at their bake slots, then the
-/// realtime lights that fit the budget (lights marked realtime, lights the bake doesn't know,
-/// and baked lights that moved).
+/// realtime lights (lights marked realtime, lights the bake doesn't know, and baked lights that
+/// moved): distant lights first, all of them, then the others that fit the budget.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pack_lights(
     time: Res<Time>,
@@ -55,6 +55,7 @@ pub(super) fn pack_lights(
     };
 
     let mut candidates = Vec::new();
+    let mut distant = Vec::new();
     for (entity, light, transform, visibility, effect) in &lights {
         if !visibility.get() {
             continue;
@@ -70,6 +71,8 @@ pub(super) fn pack_lights(
             };
             packed.lights[slot] = pack(light, pose, context);
             packed.baked[slot] = Some(entity);
+        } else if light.light_type.is_distant() {
+            distant.push((entity, light, pose, effect));
         } else {
             candidates.push(RealtimeCandidate {
                 key: (entity, pose),
@@ -87,6 +90,14 @@ pub(super) fn pack_lights(
         view_from_world: transform.to_matrix().inverse(),
         clip_from_view: camera.clip_from_view(),
     });
+    // Distant lights reach every fragment, so they need no budget, frustum test or grid.
+    let realtime_distant = distant.len() as u32;
+    for (entity, light, pose, effect) in distant {
+        packed
+            .lights
+            .push(pack(light, pose, context(entity, effect)));
+        packed.realtime.push(entity);
+    }
     let selected = select_realtime(
         candidates,
         camera.map(|(_, transform, _)| transform.translation()),
@@ -125,6 +136,9 @@ pub(super) fn pack_lights(
         } else {
             0
         } | GpuLightGlobals::debug_flag(settings.debug_view),
+        baked_distant: slots.distant_count() as u32,
+        realtime_distant,
+        _padding: [0; 2],
     };
 }
 
