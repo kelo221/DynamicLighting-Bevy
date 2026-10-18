@@ -1,5 +1,5 @@
-//! The CPU baker: light BVH, occluder BVH, per-texel shadow rays, seams, bounce, distance cubes
-//! and sun maps, written to a `.dynlight` asset.
+//! The CPU baker: light BVH, occluder BVH, per-texel shadow rays, seams, bounce, distance cubes,
+//! sun maps and sky probes, written to a `.dynlight` asset.
 //!
 //! [`bake`] is the pure entry point; [`BakeRequest`] runs it from the ECS on the async compute
 //! pool and returns an in-memory asset, optionally also writing a file. Baked meshes must keep
@@ -30,6 +30,8 @@ mod seams;
 mod settings;
 mod shadow_grid;
 mod shadows;
+mod sky;
+mod sky_probes;
 mod snapshot;
 mod spread;
 mod sun;
@@ -49,14 +51,16 @@ pub use baker::bake;
 pub use distance_cubes::DISTANCE_CUBE_RESOLUTION;
 pub use format::{
     BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, FORMAT_VERSION, FormatError,
-    MAX_SUN_MAP_RESOLUTION, SunMap, decode, encode,
+    MAX_SUN_MAP_RESOLUTION, SkyProbes, SunMap, decode, encode,
 };
 pub use input::{AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
 pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
 pub use progress::{BakeProgress, BakeStage};
 pub use settings::{
-    BakeSettings, BakeStatic, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SUN_MAP_RESOLUTION,
+    BakeSettings, BakeStatic, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES,
+    PREVIEW_SUN_MAP_RESOLUTION,
 };
+pub use sky_probes::MAX_SKY_PROBES;
 pub use snapshot::{BakeAlphaMask, SnapshotError};
 pub use sun_map::{SUN_MAP_RESOLUTION, pack_sun_depth};
 pub use systems::{

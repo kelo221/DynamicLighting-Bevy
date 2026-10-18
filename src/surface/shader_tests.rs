@@ -1,7 +1,7 @@
 //! Compiles the surface WESL modules with naga, so shader errors fail `cargo test`.
 
 use crate::baked_lighting::shader_tests::{BAKED_DATA, TRIANGLES};
-use crate::dynamic_geometry::shader_tests::{DISTANCE_CUBES, LIGHT_BVH, SUN_MAP};
+use crate::dynamic_geometry::shader_tests::{DISTANCE_CUBES, LIGHT_BVH, SKY_PROBES, SUN_MAP};
 use crate::environment::shader_tests::SKY;
 use crate::light::shader_tests::{AREA, LIGHT_TYPES, LTC, SUN};
 use crate::light_clusters::shader_tests::CLUSTERS;
@@ -50,6 +50,7 @@ pub(crate) fn surface_modules() -> Vec<(&'static str, &'static str)> {
         LIGHT_BVH,
         DISTANCE_CUBES,
         SUN_MAP,
+        SKY_PROBES,
         VSM,
         CLUSTERS,
         SKY,

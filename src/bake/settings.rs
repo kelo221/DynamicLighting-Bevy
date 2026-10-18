@@ -32,12 +32,21 @@ pub struct BakeSettings {
     /// the sun that gives moving meshes its static shadows. Its texels span the whole scene, so
     /// large scenes need more. Preview bakes use at most [`PREVIEW_SUN_MAP_RESOLUTION`].
     pub sun_map_resolution: u32,
+    /// Rays per texel, and per probe direction, to a baked sky: how finely sky shadows grade.
+    /// Preview bakes use at most [`PREVIEW_SKY_SAMPLES`].
+    pub sky_samples: u32,
+    /// Meters between the sky probes that give moving meshes the baked sky's shadows. Large
+    /// scenes space them further apart to stay within
+    /// [`MAX_SKY_PROBES`](super::MAX_SKY_PROBES).
+    pub sky_probe_spacing: f32,
 }
 
 /// Area light samples per texel in Preview bakes, which also skip the minimum samples.
 pub const PREVIEW_AREA_LIGHT_SAMPLES: u32 = 32;
 /// Sun map side in Preview bakes.
 pub const PREVIEW_SUN_MAP_RESOLUTION: u32 = 512;
+/// Sky samples in Preview bakes.
+pub const PREVIEW_SKY_SAMPLES: u32 = 16;
 
 impl Default for BakeSettings {
     fn default() -> Self {
@@ -48,6 +57,8 @@ impl Default for BakeSettings {
             area_light_samples: 64,
             area_light_min_samples: 16,
             sun_map_resolution: super::sun_map::SUN_MAP_RESOLUTION,
+            sky_samples: 64,
+            sky_probe_spacing: 1.0,
         }
     }
 }

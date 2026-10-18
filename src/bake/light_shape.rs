@@ -8,6 +8,7 @@ use crate::light::area::AreaShape;
 use super::area::AREA_SHADOW_BITS;
 use super::input::BakeLight;
 use super::mesh_bake::NDOTL_TOLERANCE;
+use super::sky::SKY_SHADOW_BITS;
 
 impl BakeLight {
     /// The world-space shape of an area light.
@@ -27,24 +28,29 @@ impl BakeLight {
     }
 
     /// Bits per texel of the light's baked shadows: 1 for hard shadows (point-like lights and
-    /// suns without a disk), [`AREA_SHADOW_BITS`] for soft ones.
+    /// suns without a disk), [`AREA_SHADOW_BITS`] for soft ones and [`SKY_SHADOW_BITS`] for the
+    /// sky.
     pub fn shadow_bits_per_texel(&self) -> u32 {
         match self.shape {
             LightShape::Point => 1,
             LightShape::Area(_) => AREA_SHADOW_BITS,
             LightShape::Sun(sun) if sun.angular_diameter > 0.0 => AREA_SHADOW_BITS,
             LightShape::Sun(_) => 1,
+            LightShape::Sky => SKY_SHADOW_BITS,
         }
     }
 
     /// Henry's facing test for a flat triangle with unit face `normal`: whether the light may be
     /// in front of it, seen from its center. An area light passes when any corner of its shape
     /// does; a rectangle also needs a vertex of the triangle on its lit side. A sun passes when
-    /// any part of its disk does.
+    /// any part of its disk does. The sky surrounds everything, so it faces every triangle.
     pub fn may_face(&self, vertices: [Vec3; 3], normal: Vec3) -> bool {
         let center = (vertices[0] + vertices[1] + vertices[2]) / 3.0;
         let faces =
             |point: Vec3| normal.dot((point - center).normalize_or_zero()) > NDOTL_TOLERANCE;
+        if self.shape == LightShape::Sky {
+            return true;
+        }
         if let Some(sun) = self.shape.sun() {
             return normal.dot(sun.toward()) + sun.angular_radius().sin() > NDOTL_TOLERANCE;
         }

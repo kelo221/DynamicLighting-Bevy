@@ -16,6 +16,7 @@ const AUX_FLAGS: u32 = 6u;
 const AUX_BAKED_LIGHTS: u32 = 7u;
 const AUX_SUN_MAPS: u32 = 8u;
 const AUX_SUN_MAP_COUNT: u32 = 9u;
+const AUX_SKY_PROBES: u32 = 10u;
 
 const AUX_FLAG_BOUNCE_LAYOUT: u32 = 1u;
 const AUX_FLAG_CUBE_BIAS: u32 = 2u;
@@ -26,6 +27,11 @@ const RECEIVER_WORDS: u32 = 4u;
 const SUN_MAP_RECORD_WORDS: u32 = 16u;
 const SUN_MAP_RESOLUTION: u32 = 12u;
 const SUN_MAP_TEXELS: u32 = 13u;
+// The sky probe record: the grid's origin (3 f32), spacing (f32), probe counts (3 u32) and first
+// probe word.
+const SKY_PROBE_SPACING: u32 = 3u;
+const SKY_PROBE_COUNTS: u32 = 4u;
+const SKY_PROBE_WORDS: u32 = 7u;
 
 // A baked mesh: where its triangle words start and its shadow map size. `resolution == 0`
 // means the mesh has no bake data and takes the dynamic-geometry path.

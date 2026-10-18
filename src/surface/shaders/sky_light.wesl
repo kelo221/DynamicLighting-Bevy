@@ -1,5 +1,6 @@
 // The sky light at a fragment: its spherical-harmonic diffuse light and, under Metallic
-// shading, its prefiltered reflection weighted like the ambient environment in `shade`.
+// shading, its prefiltered reflection weighted like the ambient environment in `shade`. A baked
+// sky is shadowed by how much of it the fragment sees, which dims both.
 
 import dynlight::shared::shaders::types::GpuLight;
 import dynlight::shared::shaders::variant::FEATURE_SKY;
@@ -10,12 +11,13 @@ import dynlight::surface::shaders::bindings::{
 import dynlight::surface::shaders::brdf::fresnel_schlick_roughness;
 import dynlight::surface::shaders::light_processor::{LightSum, Shading, SurfacePoint};
 
-// Adds a sky light. With skies off (`ShaderFeatures`) it adds nothing.
-fn add_sky(sum: ptr<function, LightSum>, shading: Shading, light: GpuLight, surface: SurfacePoint) {
-    if !FEATURE_SKY || light.radius_sqr < 0.0 {
+// Adds a sky light of which the fragment sees the share `open`, 1 for an unshadowed sky. With
+// skies off (`ShaderFeatures`) it adds nothing.
+fn add_sky(sum: ptr<function, LightSum>, shading: Shading, light: GpuLight, surface: SurfacePoint, open: f32) {
+    if !FEATURE_SKY || light.radius_sqr < 0.0 || open <= 0.0 {
         return;
     }
-    let strength = light.color * light.intensity;
+    let strength = light.color * (light.intensity * open);
     let irradiance = sky_irradiance(dynamic_lights.sky, sky_local(light, surface.normal)) * strength;
     (*sum).lights += 1u;
     if !shading.specular {

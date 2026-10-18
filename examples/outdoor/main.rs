@@ -1,10 +1,13 @@
-//! Outdoors under a baked sun and a sky: a courtyard with buildings, a pergola and trees whose
-//! soft sun shadows are baked per texel, a lamp post, metal balls reflecting the sky, and a
-//! rolling ball and a spinning crate that take the static scene's sun shadows from the sun map.
-//! The sky lights everything from all directions and is drawn behind the scene.
+//! Outdoors under a baked sun and a baked sky: a courtyard with buildings, a porch, a pergola and
+//! trees whose soft sun shadows and sky shadows (how much of the sky each texel sees) are baked
+//! per texel, a lamp post, metal balls reflecting the sky, and a rolling ball and a spinning crate
+//! that take the static scene's sun shadows from the sun map and its sky shadows from the sky
+//! probes. The sky lights everything from all directions and is drawn behind the scene; turning
+//! it or swapping its image keeps the bake.
 //!
-//! - `cargo run --example outdoor -- --bake` bakes (Full, about half a second) and writes
-//!   `assets/outdoor.dynlight`; later runs load it. Without a bake the sun shines unshadowed.
+//! - `cargo run --example outdoor -- --bake` bakes (Full, a few seconds) and writes
+//!   `assets/outdoor.dynlight`; later runs load it. Without a bake the sun and the sky shine
+//!   unshadowed.
 //! - `--hdri path.exr` lights the scene with an HDR image (EXR or Radiance HDR) instead of the
 //!   procedural sky, turned so its brightest point faces the sun's direction.
 //! - `--frames N` exits after N frames, and `--screenshot path.png` saves the last ones.
@@ -88,8 +91,8 @@ fn load_or_bake(
     }
     baking::load_existing(BAKE_ASSET, &server, &mut active);
     if active.0.is_none() {
-        warn!("no bake yet: run with --bake; until then the sun shines without shadows");
-        support::status("Not baked: the sun shines without shadows");
+        warn!("no bake yet: run with --bake; until then the sun and sky shine without shadows");
+        support::status("Not baked: the sun and sky shine without shadows");
     }
 }
 

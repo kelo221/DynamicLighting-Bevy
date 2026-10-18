@@ -40,15 +40,21 @@ impl SkyFrame {
     }
 }
 
-/// The first enabled sky light among a light buffer's realtime distant lights, which the
-/// background shows.
+/// The first enabled sky light among a light buffer's baked distant lights, then its realtime
+/// ones, which the background shows.
 pub fn first_sky(globals: &GpuLightGlobals, lights: &[GpuLight]) -> Option<SkyFrame> {
-    let start = globals.baked_count as usize;
-    let distant = start..start + globals.realtime_distant as usize;
-    lights.get(distant)?.iter().find_map(|light| {
-        let kind = ChannelFlags::unpack(light.channel).light_type;
-        (kind == LightType::Sky as u32 && light.radius_sqr >= 0.0).then(|| SkyFrame::of(light))
-    })
+    let baked = globals.baked_count as usize;
+    let baked_distant = baked.saturating_sub(globals.baked_distant as usize)..baked;
+    let realtime_distant = baked..baked + globals.realtime_distant as usize;
+    [baked_distant, realtime_distant]
+        .into_iter()
+        .filter_map(|range| lights.get(range))
+        .flatten()
+        .find_map(|light| {
+            let kind = ChannelFlags::unpack(light.channel).light_type;
+            let sky = kind == LightType::Sky as u32 && light.radius_sqr >= 0.0;
+            sky.then(|| SkyFrame::of(light))
+        })
 }
 
 #[cfg(test)]
@@ -86,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn the_background_finds_the_realtime_sky() {
+    fn the_background_finds_the_baked_or_realtime_sky() {
         let sky = packed_sky(Quat::IDENTITY);
         let other = GpuLight::default();
         let globals = GpuLightGlobals {
@@ -98,8 +104,13 @@ mod tests {
         assert!(first_sky(&globals, &[sky, other, sky]).is_some());
         assert!(
             first_sky(&globals, &[sky, other, other]).is_none(),
-            "baked slot"
+            "a baked slot that isn't distant"
         );
+        let baked = GpuLightGlobals {
+            baked_distant: 1,
+            ..globals
+        };
+        assert!(first_sky(&baked, &[sky, other, other]).is_some());
         let disabled = GpuLight {
             radius_sqr: -1.0,
             ..sky

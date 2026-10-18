@@ -1,12 +1,15 @@
 //! Lighting for meshes without baked data (moving or unbaked meshes): light BVH traversal in the
-//! shader, baked distance cubes in the angular or distance-cube mode, and baked suns' sun maps.
-//! The data comes from the bake through the baked-lighting aux buffer.
+//! shader, baked distance cubes in the angular or distance-cube mode, baked suns' sun maps and
+//! the baked skies' sky probes. The data comes from the bake through the baked-lighting aux
+//! buffer.
 //!
-//! Shader modules: `dynlight::dynamic_geometry::shaders::{light_bvh, distance_cubes, sun_map}`.
+//! Shader modules:
+//! `dynlight::dynamic_geometry::shaders::{light_bvh, distance_cubes, sun_map, sky_probes}`.
 
 pub mod mirror;
 #[cfg(test)]
 pub(crate) mod shader_tests;
+pub mod sky_mirror;
 pub mod sun_mirror;
 
 use bevy::prelude::*;
@@ -24,6 +27,7 @@ impl Plugin for DynamicGeometryPlugin {
             load_shader_library!(app, "shaders/light_bvh.wesl");
             load_shader_library!(app, "shaders/distance_cubes.wesl");
             load_shader_library!(app, "shaders/sun_map.wesl");
+            load_shader_library!(app, "shaders/sky_probes.wesl");
         }
     }
 }

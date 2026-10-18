@@ -2,6 +2,7 @@
 
 use rayon::prelude::*;
 
+use crate::light::LightShape;
 use crate::shared::DynamicGeometryMode;
 
 use super::distance_cubes::{DISTANCE_CUBE_RESOLUTION, bake_distance_cubes};
@@ -13,15 +14,16 @@ use super::mesh_builder::PreparedMesh;
 use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::Occluders;
 use super::progress::{BakeProgress, BakeStage};
+use super::sky_probes::bake_sky_probes;
 use super::sun_map::{bake_sun_map, occluder_vertices};
 
 /// Bakes `input`. Runs on the current rayon thread pool and gives byte-identical results for
 /// the same input and options on any number of threads.
 ///
-/// Steps, in Henry's order: light BVH (fixing the baked light order; suns follow the BVH's
-/// lights), occluder BVH, photon cubes for bounce lights, then per mesh: light association,
-/// shadow rays, bounce, optimization, seam padding, dilation and serialization; finally the
-/// distance cubes of the BVH's lights.
+/// Steps, in Henry's order: light BVH (fixing the baked light order; suns, then skies, follow
+/// the BVH's lights), occluder BVH, photon cubes for bounce lights, then per mesh: light
+/// association, shadow rays, bounce, optimization, seam padding, dilation and serialization;
+/// finally the distance cubes of the BVH's lights, the suns' sun maps and the sky probes.
 pub fn bake(
     input: &BakeInput,
     options: &BakeOptions,
@@ -31,9 +33,10 @@ pub fn bake(
     progress.begin(BakeStage::Preparing, 0);
 
     let meshes = sorted_meshes(&input.meshes)?;
-    let (local, suns): (Vec<&BakeLight>, Vec<&BakeLight>) = sorted_lights(&input.lights)?
+    let (local, mut distant): (Vec<&BakeLight>, Vec<&BakeLight>) = sorted_lights(&input.lights)?
         .into_iter()
         .partition(|light| !light.shape.is_distant());
+    distant.sort_by_key(|light| light.shape == LightShape::Sky);
 
     let positions: Vec<_> = local.iter().map(|l| l.position).collect();
     let radii: Vec<_> = local.iter().map(|l| l.radius).collect();
@@ -43,7 +46,7 @@ pub fn bake(
         .order
         .iter()
         .map(|&i| local[i])
-        .chain(suns)
+        .chain(distant)
         .collect();
     let bounce_in_scene = lights.iter().any(|light| light.bakes_bounce(options));
 
@@ -99,12 +102,21 @@ pub fn bake(
         );
     }
 
-    let suns = &scene.lights[local_lights..];
+    let distant = &scene.lights[local_lights..];
+    let suns: Vec<_> = distant
+        .iter()
+        .filter_map(|l| Some((l.shape.sun()?, l)))
+        .collect();
+    let skies: Vec<_> = distant
+        .iter()
+        .filter(|l| l.shape == LightShape::Sky)
+        .collect();
     let maps = options.dynamic_geometry != DynamicGeometryMode::LightingOnly;
     let map_count = if maps { suns.len() } else { 0 };
+    let probes = maps && !skies.is_empty();
     progress.begin(
         BakeStage::DistanceCubes,
-        local_lights as u64 * 6 + map_count as u64,
+        local_lights as u64 * 6 + map_count as u64 + u64::from(probes),
     );
     let distance_cubes = bake_distance_cubes(
         &scene.lights[..local_lights],
@@ -114,18 +126,30 @@ pub fn bake(
     )?;
     let sun_maps: Vec<SunMap> = suns[..map_count]
         .iter()
-        .filter_map(|light| {
-            Some(bake_sun_map(
-                &light.shape.sun()?,
+        .map(|(sun, light)| {
+            bake_sun_map(
+                sun,
                 &scene.occluders,
                 occluder_vertices(&scene.occluders),
                 options.sun_map_resolution,
                 light.alpha_tested(),
                 progress,
-            ))
+            )
         })
         .collect();
     progress.check()?;
+    let sky_probes = if probes {
+        bake_sky_probes(
+            &scene.occluders,
+            options.sky_probe_spacing,
+            options.sky_samples,
+            skies.iter().any(|light| light.alpha_tested()),
+            options.seed,
+            progress,
+        )?
+    } else {
+        None
+    };
 
     let mut stats = BakeStats {
         meshes: outputs.len() as u32,
@@ -169,6 +193,7 @@ pub fn bake(
         meshes: outputs.into_iter().map(|output| output.mesh).collect(),
         distance_cubes,
         sun_maps,
+        sky_probes,
         stats,
     };
     progress.begin(BakeStage::Done, 0);

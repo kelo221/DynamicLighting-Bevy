@@ -1,6 +1,6 @@
-//! The courtyard: ground, two buildings, a pergola, trees, a wall, a lamp post and two metal
-//! balls reflecting the sky, all baked; a rolling ball and a spinning crate that aren't, so they
-//! take the sun's shadows from its sun map.
+//! The courtyard: ground, two buildings, a porch, a pergola, trees, a wall, a lamp post and two
+//! metal balls reflecting the sky, all baked; a rolling ball and a spinning crate that aren't, so
+//! they take the sun's shadows from its sun map and the sky's from the sky probes.
 
 use core::f32::consts::{PI, TAU};
 
@@ -76,6 +76,26 @@ pub fn spawn(
     ];
     for (name, center, size) in buildings {
         block(commands, meshes, &plaster, name, center, size);
+    }
+    // A porch roof on two posts in front of the house, which hides most of the sky from the
+    // ground and the wall under it.
+    block(
+        commands,
+        meshes,
+        &wood,
+        "Porch roof",
+        Vec3::new(-7.5, 2.6, -1.75),
+        Vec3::new(4.0, 0.15, 2.5),
+    );
+    for (i, x) in [-9.3, -5.7].into_iter().enumerate() {
+        block(
+            commands,
+            meshes,
+            &wood,
+            &format!("Porch post {i}"),
+            Vec3::new(x, 1.26, -0.7),
+            Vec3::new(0.15, 2.52, 0.15),
+        );
     }
     block(
         commands,

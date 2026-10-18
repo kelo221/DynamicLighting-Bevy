@@ -18,7 +18,9 @@ use super::asset::{DynLightBake, HeadlessBakes};
 use super::format::{BakeStats, BakedScene, encode};
 use super::input::{BakeError, BakeInput, BakeOptions};
 use super::progress::BakeProgress;
-use super::settings::{BakeSettings, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SUN_MAP_RESOLUTION};
+use super::settings::{
+    BakeSettings, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES, PREVIEW_SUN_MAP_RESOLUTION,
+};
 use super::snapshot::{SceneSnapshot, SnapshotError};
 
 /// Henry's two bake menus. The resolution choice is [`BakeSettings::max_lightmap_size`].
@@ -146,6 +148,7 @@ pub fn bake_options(
         options.area_light_samples = options.area_light_samples.min(PREVIEW_AREA_LIGHT_SAMPLES);
         options.area_light_min_samples = 0;
         options.sun_map_resolution = options.sun_map_resolution.min(PREVIEW_SUN_MAP_RESOLUTION);
+        options.sky_samples = options.sky_samples.min(PREVIEW_SKY_SAMPLES);
     }
     options
 }

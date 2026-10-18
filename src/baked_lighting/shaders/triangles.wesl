@@ -3,8 +3,9 @@
 //
 // Shadow-map coordinates are texels: UV1 · receiver resolution. Texel `x + y · width` of a
 // light's shadow data is texel `(x, y) − bounds.xy` of the triangle's padded crop rectangle; the
-// subtraction wraps like Henry's `uint` math. Shadow texels are Henry's single bits, or for area
-// lights 2 or 4 bits of visibility, `32 / bits` per word from the low bits up.
+// subtraction wraps like Henry's `uint` math. Shadow texels are Henry's single bits, or 2 or 4
+// bits of visibility for area lights and suns with a disk, or 8 bits for the sky, `32 / bits` per
+// word from the low bits up.
 
 import dynlight::baked_lighting::shaders::baked_data::{
     baked_triangles, Receiver, aux_flags, AUX_FLAG_BOUNCE_LAYOUT,
@@ -76,30 +77,31 @@ fn triangle_light(triangle: Triangle, k: u32) -> TriangleLight {
     );
 }
 
-// 0, 1 or 2 for 1, 2 or 4 shadow bits per texel (the light's channel bits 20–22).
+// 0, 1, 2 or 3 for 1, 2, 4 or 8 shadow bits per texel (the light's channel bits 20–22).
 fn shadow_log_bits(bits_per_texel: u32) -> u32 {
-    return min(firstLeadingBit(max(bits_per_texel, 1u)), 2u);
+    return min(firstLeadingBit(max(bits_per_texel, 1u)), 3u);
 }
 
-// Eight shadow texels from grid texel `uv` rightward, `1 << log_bits` bits each: texel k of the
-// row is texel `uv + (k, 0)`. As in Henry's `x + y · width` indexing, a run that leaves the grid
-// sideways continues in the neighbouring row. Rows above the grid read its first row and texels
-// before the first read the first texel, where Henry's wrapping index read outside the data. At
-// most two loads.
+// Eight shadow texels from grid texel `uv` rightward, `1 << log_bits` bits each, or four at 8
+// bits: texel k of the row is texel `uv + (k, 0)`. As in Henry's `x + y · width` indexing, a run
+// that leaves the grid sideways continues in the neighbouring row. Rows above the grid read its
+// first row and texels before the first read the first texel, where Henry's wrapping index read
+// outside the data. At most two loads.
 fn shadow_row(triangle: Triangle, entry: TriangleLight, uv: vec2<i32>, log_bits: u32) -> u32 {
     let bits = 1u << log_bits;
+    let span = min(8u, 32u >> log_bits);
     let word_log = 5u - log_bits;
     let start = max(uv.y, 0) * i32(triangle.bounds.z) + uv.x;
     let index = u32(max(start, 0));
     let word = entry.shadow + (index >> word_log);
     let shift = (index & ((1u << word_log) - 1u)) << log_bits;
     var row = baked_triangles[word] >> shift;
-    if shift + 8u * bits > 32u {
+    if shift + span * bits > 32u {
         row |= baked_triangles[word + 1u] << (32u - shift);
     }
     if start < 0 {
         let top = (1u << bits) - 1u;
-        let before = min(u32(-start), 8u) << log_bits;
+        let before = min(u32(-start), span) << log_bits;
         let fill = (0xffffffffu / top) >> (32u - before);
         row = select(0u, row << before, before < 32u) | ((row & top) * fill);
     }
@@ -122,10 +124,16 @@ fn row_levels(row: u32, log_bits: u32) -> vec4<f32> {
     );
 }
 
-// The 1 4 6 4 1 binomial sums of texels `x` to `x + 4` of a row, for x = 0 to 3.
-fn row_binomials(row: u32, log_bits: u32) -> vec4<f32> {
+// The 1 4 6 4 1 binomial sums of texels `x` to `x + 4` of eight texels from `uv` rightward, for
+// x = 0 to 3. Texels 4 to 7 come from the same row read, or at 8 bits from a second one.
+fn row_binomials(triangle: Triangle, entry: TriangleLight, uv: vec2<i32>, log_bits: u32) -> vec4<f32> {
+    let row = shadow_row(triangle, entry, uv, log_bits);
+    var rest = row >> ((4u << log_bits) & 31u);
+    if log_bits == 3u {
+        rest = shadow_row(triangle, entry, uv + vec2(4, 0), log_bits);
+    }
     let low = row_levels(row, log_bits);
-    let high = row_levels(row >> (4u << log_bits), log_bits);
+    let high = row_levels(rest, log_bits);
     let side = low + high;
     let near = vec4(low.yzw, high.x) + vec4(low.w, high.xyz);
     return side + 4.0 * near + 6.0 * vec4(low.zw, high.xy);
@@ -215,14 +223,14 @@ fn shadow_bilinear(triangle: Triangle, entry: TriangleLight, at: Footprint, gaus
     if gaussian {
         // Rows −3 to +4 around the corner, from column −3.
         let r = corner + vec2(-3, -3);
-        let a0 = row_binomials(shadow_row(triangle, entry, r, log_bits), log_bits);
-        let a1 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 1), log_bits), log_bits);
-        let a2 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 2), log_bits), log_bits);
-        let a3 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 3), log_bits), log_bits);
-        let a4 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 4), log_bits), log_bits);
-        let a5 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 5), log_bits), log_bits);
-        let a6 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 6), log_bits), log_bits);
-        let a7 = row_binomials(shadow_row(triangle, entry, r + vec2(0, 7), log_bits), log_bits);
+        let a0 = row_binomials(triangle, entry, r, log_bits);
+        let a1 = row_binomials(triangle, entry, r + vec2(0, 1), log_bits);
+        let a2 = row_binomials(triangle, entry, r + vec2(0, 2), log_bits);
+        let a3 = row_binomials(triangle, entry, r + vec2(0, 3), log_bits);
+        let a4 = row_binomials(triangle, entry, r + vec2(0, 4), log_bits);
+        let a5 = row_binomials(triangle, entry, r + vec2(0, 5), log_bits);
+        let a6 = row_binomials(triangle, entry, r + vec2(0, 6), log_bits);
+        let a7 = row_binomials(triangle, entry, r + vec2(0, 7), log_bits);
         return blend_rows(
             column_binomials(a0, a1, a2, a3, a4),
             column_binomials(a1, a2, a3, a4, a5),

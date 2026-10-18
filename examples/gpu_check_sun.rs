@@ -1,7 +1,8 @@
-//! GPU readback check of a baked sun: a slanted sun with a 3° disk over slabs and columns, baked
-//! in memory at startup. The left floor is baked and reads the soft shadow levels; the right
-//! floor isn't, so it reads the sun's sun map. Sampled pixels are compared with the CPU mirrors
-//! (`baked_lighting::mirror`, `dynamic_geometry::sun_mirror`) evaluated on the same bake.
+//! GPU readback check of a baked sun and sky: a slanted sun with a 3° disk and a uniform sky over
+//! slabs and columns, baked in memory at startup. The left floor is baked and reads the soft
+//! shadow levels and the sky's 8-bit ones; the right floor isn't, so it reads the sun's sun map
+//! and the sky probes. Sampled pixels are compared with the CPU mirrors (`baked_lighting::mirror`,
+//! `dynamic_geometry::{sun_mirror, sky_mirror}`) evaluated on the same bake.
 //!
 //! `cargo run --example gpu_check_sun -- [--quality integrated|low|medium|high]` prints the
 //! largest difference and exits with an error code when a sample is off. A sample passes when it
@@ -16,8 +17,10 @@ use dynlight::bake::mirror::TriangleView;
 use dynlight::bake::{BakeFinished, BakePreset, BakeRequest, BakedScene, DynLightBake};
 use dynlight::baked_lighting::ActiveBake;
 use dynlight::baked_lighting::mirror::{ShadowTexels, log_bits};
+use dynlight::dynamic_geometry::sky_mirror::sky_probe_openness;
 use dynlight::dynamic_geometry::sun_mirror::sun_map_shadow;
-use dynlight::light::{PackedLights, mirror};
+use dynlight::environment::mirror::{sky_irradiance, sky_local};
+use dynlight::light::{LightShape, PackedLights, mirror};
 use dynlight::prelude::*;
 use dynlight::shared::RuntimeQuality;
 
@@ -130,6 +133,15 @@ fn setup(
         },
         transform,
     ));
+    // Without an image, a uniform sky of its color.
+    commands.spawn((
+        Name::new("Sky"),
+        DynamicLight {
+            color: Color::srgb(0.6, 0.75, 1.0),
+            intensity: 0.4,
+            ..DynamicLight::sky()
+        },
+    ));
 
     let view = (
         Projection::Orthographic(OrthographicProjection {
@@ -230,7 +242,7 @@ fn baked_shadow(scene: &BakedScene, slot: usize, world: Vec3, quality: u32) -> O
 }
 
 /// The floor color the shaders should produce at `world` with the bake applied, and the
-/// darkest shadow of the suns.
+/// darkest shadow of the suns. The sky is shadowed by its levels or the sky probes.
 fn expected(scene: &BakedScene, lights: &PackedLights, world: Vec3) -> (Vec3, f32) {
     let quality = lights.globals.quality;
     let baked = world.x < 0.0;
@@ -243,14 +255,23 @@ fn expected(scene: &BakedScene, lights: &PackedLights, world: Vec3) -> (Vec3, f3
         .enumerate()
         .skip(local)
         .fold((Vec3::ZERO, 1.0f32), |(sum, darkest), (slot, light)| {
+            let sky = scene.lights[slot].shape == LightShape::Sky;
             let shadow = if baked {
                 baked_shadow(scene, slot, world, quality).unwrap_or(0.0)
+            } else if sky {
+                let probes = scene.sky_probes.as_ref();
+                probes.map_or(1.0, |probes| sky_probe_openness(probes, world, Vec3::Y))
             } else {
                 scene
                     .sun_maps
                     .get(slot - local)
                     .map_or(1.0, |map| sun_map_shadow(map, world))
             };
+            if sky {
+                let irradiance = sky_irradiance(&lights.sky, sky_local(light, Vec3::Y));
+                let strength = Vec3::from(light.color) * light.intensity;
+                return (sum + irradiance * strength * shadow, darkest);
+            }
             let lit =
                 mirror::radiance(light, world) * mirror::diffuse(light, world, Vec3::Y, baked);
             (
@@ -328,18 +349,22 @@ fn check(
         }
     }
     let suns = bake.scene.sun_count();
-    let passed = failures == 0 && suns == 1 && shadowed.iter().all(|&n| n >= MIN_SHADOWED);
+    let skies = bake.scene.distant_count() - suns;
+    let probes = bake.scene.sky_probes.is_some();
+    let passed = failures == 0
+        && (suns, skies, probes) == (1, 1, true)
+        && shadowed.iter().all(|&n| n >= MIN_SHADOWED);
     if !passed && since < DEADLINE_SECONDS {
         return;
     }
     *done = true;
     info!(
         "{samples} samples ({} and {} in shadow on the baked and dynamic floors), {suns} sun, \
-         quality {}; largest difference {:.4} at pixel {}",
+         {skies} sky, quality {}; largest difference {:.4} at pixel {}",
         shadowed[0], shadowed[1], lights.globals.quality, worst.0, worst.1
     );
     if passed {
-        info!("GPU sun shadows match the CPU mirror");
+        info!("GPU sun and sky shadows match the CPU mirror");
         exit.write(AppExit::Success);
     } else {
         error!("{failures} of {samples} samples differ from the CPU mirror");

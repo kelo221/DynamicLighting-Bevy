@@ -1,5 +1,18 @@
+use bevy::math::{Quat, UVec3, Vec2, Vec3, Vec4};
+
 use super::*;
-use crate::light::{AreaLightShape, LightType};
+use crate::light::{AreaLightShape, BounceCompression, LightType, SunDisk};
+
+fn sky(id: u64) -> BakedLight {
+    BakedLight {
+        id: BakeId(id),
+        origin: Vec3::ZERO,
+        radius: 10.0,
+        shape: LightShape::Sky,
+        bounce_compression: None,
+        shadow_bits_per_texel: 8,
+    }
+}
 
 fn sun(id: u64) -> BakedLight {
     BakedLight {
@@ -58,6 +71,7 @@ fn sample() -> BakedScene {
                 shadow_bits_per_texel: 2,
             },
             sun(3),
+            sky(11),
         ],
         light_bvh: vec![LightBvhNode {
             aabb_min: [-1.0, -2.0, -3.0],
@@ -85,6 +99,12 @@ fn sample() -> BakedScene {
             resolution: 3,
             texels: vec![0xFFFF_0000, 1, 2, 3, 0x8000],
         }],
+        sky_probes: Some(SkyProbes {
+            origin: Vec3::new(-0.5, 0.25, 2.0),
+            spacing: 1.5,
+            counts: UVec3::new(2, 1, 3),
+            words: (0..12).map(|i| 0x0101_0101 * i).collect(),
+        }),
         stats: BakeStats {
             meshes: 2,
             triangles: 1,
@@ -106,7 +126,14 @@ fn scenes_round_trip() {
     assert_eq!(encode(&scene), bytes, "encoding is deterministic");
     let empty = BakedScene::default();
     assert_eq!(decode(&encode(&empty)), Ok(empty));
-    assert_eq!((scene.local_light_count(), scene.sun_count()), (3, 1));
+    assert_eq!(
+        (
+            scene.local_light_count(),
+            scene.distant_count(),
+            scene.sun_count()
+        ),
+        (3, 2, 1)
+    );
 }
 
 #[test]
@@ -117,8 +144,14 @@ fn suns_come_last_with_one_sun_map_each_or_none() {
         decode_payload(&encode_payload(&early_sun)),
         Err(FormatError::Invalid("light order"))
     );
+    let mut sun_after_sky = sample();
+    sun_after_sky.lights.push(sun(5));
+    assert_eq!(
+        decode_payload(&encode_payload(&sun_after_sky)),
+        Err(FormatError::Invalid("light order"))
+    );
     let mut two_suns = sample();
-    two_suns.lights.push(sun(5));
+    two_suns.lights.insert(4, sun(5));
     assert_eq!(
         decode_payload(&encode_payload(&two_suns)),
         Err(FormatError::Invalid("sun map count"))
@@ -134,6 +167,30 @@ fn suns_come_last_with_one_sun_map_each_or_none() {
         decode_payload(&encode_payload(&short)),
         Err(FormatError::Invalid("sun map"))
     );
+}
+
+#[test]
+fn sky_probes_need_a_sky_and_whole_probes() {
+    let mut no_sky = sample();
+    no_sky.lights.pop();
+    assert_eq!(
+        decode_payload(&encode_payload(&no_sky)),
+        Err(FormatError::Invalid("sky probes"))
+    );
+    no_sky.sky_probes = None;
+    assert!(decode_payload(&encode_payload(&no_sky)).is_ok());
+    let mut short = sample();
+    short.sky_probes.as_mut().unwrap().words.pop();
+    let mut empty = sample();
+    empty.sky_probes.as_mut().unwrap().counts.y = 0;
+    let mut huge = sample();
+    huge.sky_probes.as_mut().unwrap().counts = UVec3::splat(1 << 16);
+    for broken in [short, empty, huge] {
+        assert_eq!(
+            decode_payload(&encode_payload(&broken)),
+            Err(FormatError::Invalid("sky probes"))
+        );
+    }
 }
 
 #[test]
@@ -202,7 +259,7 @@ fn invalid_payload_values_are_rejected() {
         decode_payload(&payload),
         Err(FormatError::Invalid("light shape"))
     );
-    for bits in [0, 3, 8] {
+    for bits in [0, 3, 16] {
         let mut payload = encode_payload(&sample());
         payload[shape + 28] = bits;
         assert_eq!(

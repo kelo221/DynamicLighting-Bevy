@@ -1,6 +1,7 @@
 //! What a light's baked shadows were traced for beyond its position and radius: nothing for
-//! point-like lights, the shape of an area light, or the direction and disk size of a sun. A
-//! baked light whose shape no longer matches is lit as realtime, like a light that moved.
+//! point-like lights, the shape of an area light, the direction and disk size of a sun, or the
+//! open sky. A baked light whose shape no longer matches is lit as realtime, like a light that
+//! moved.
 
 use bevy::math::{Quat, Vec3};
 
@@ -23,6 +24,9 @@ pub enum LightShape {
     Area(AreaLightShape),
     /// A sun, shadowed towards its disk at infinity.
     Sun(SunDisk),
+    /// The sky, shadowed by how much of the sky a surface sees. That doesn't depend on the sky's
+    /// image or turn, so the sky may turn and change its image freely.
+    Sky,
 }
 
 impl LightShape {
@@ -30,6 +34,9 @@ impl LightShape {
     pub fn of(light: &DynamicLight, rotation: Quat) -> Self {
         if let Some(area) = AreaLightShape::of(light, rotation) {
             return Self::Area(area);
+        }
+        if light.light_type == LightType::Sky {
+            return Self::Sky;
         }
         SunDisk::of(light, rotation).map_or(Self::Point, Self::Sun)
     }
@@ -51,7 +58,7 @@ impl LightShape {
     /// Light from infinitely far away, which has no position or radius (see
     /// [`LightType::is_distant`]).
     pub fn is_distant(&self) -> bool {
-        matches!(self, Self::Sun(_))
+        matches!(self, Self::Sun(_) | Self::Sky)
     }
 
     /// Whether a light shaped like `other` can still use shadows baked for this shape.
@@ -60,6 +67,7 @@ impl LightShape {
             (Self::Point, Self::Point) => true,
             (Self::Area(baked), Self::Area(now)) => baked.matches(now),
             (Self::Sun(baked), Self::Sun(now)) => baked.matches(now),
+            (Self::Sky, Self::Sky) => true,
             _ => false,
         }
     }
@@ -130,11 +138,16 @@ mod tests {
         let sun = LightShape::of(&DynamicLight::sun(), rotation);
         let panel = LightShape::of(&DynamicLight::rectangle(1.0, 1.0), rotation);
         let point = LightShape::of(&DynamicLight::point(), rotation);
+        let sky = LightShape::of(&DynamicLight::sky(), rotation);
         assert!(sun.is_distant() && sun.sun().is_some());
         assert!(panel.area().is_some() && !panel.is_distant());
         assert_eq!(point, LightShape::Point);
+        assert!(sky.is_distant() && sky.sun().is_none());
         assert!(sun.matches(&sun) && panel.matches(&panel) && point.matches(&point));
         assert!(!sun.matches(&point) && !point.matches(&panel) && !panel.matches(&sun));
+        assert!(!sky.matches(&sun) && !sun.matches(&sky));
+        let turned = LightShape::of(&DynamicLight::sky(), Quat::from_rotation_y(2.0));
+        assert!(sky.matches(&turned), "the sky may turn");
     }
 
     #[test]

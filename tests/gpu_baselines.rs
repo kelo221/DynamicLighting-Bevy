@@ -159,8 +159,9 @@ fn stress_lights_baked() {
     );
 }
 
-/// A baked soft sun over a courtyard, with a lamp; the ball and the crate aren't baked and take
-/// the pergola's and a tree's shadows from the sun map.
+/// A baked soft sun and a baked sky over a courtyard with a porch, with a lamp; the ball and the
+/// crate aren't baked and take the pergola's and a tree's shadows from the sun map and the sky's
+/// from the sky probes.
 #[test]
 #[ignore = "needs a GPU"]
 fn outdoor() {
@@ -181,7 +182,7 @@ fn outdoor_on_fxc_matches() {
     );
 }
 
-/// Without a bake the sun shines unshadowed through the dynamic-geometry path.
+/// Without a bake the sun and the sky shine unshadowed through the dynamic-geometry path.
 #[test]
 #[ignore = "needs a GPU"]
 fn outdoor_unbaked() {

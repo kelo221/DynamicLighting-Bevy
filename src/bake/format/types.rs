@@ -1,6 +1,6 @@
 //! The baked scene as the runtime consumes it.
 
-use bevy::math::{Vec3, Vec4};
+use bevy::math::{UVec3, Vec3, Vec4};
 
 use crate::light::{BounceCompression, LightShape};
 use crate::shared::{BakeId, DynamicGeometryMode};
@@ -26,21 +26,78 @@ pub struct BakedScene {
     /// One per sun, in light order; empty when [`BakedSettings::dynamic_geometry`] is
     /// `LightingOnly`.
     pub sun_maps: Vec<SunMap>,
+    /// The baked skies' shadows for meshes without bake data; `None` without a baked sky, static
+    /// geometry, or in `LightingOnly`.
+    pub sky_probes: Option<SkyProbes>,
     pub stats: BakeStats,
 }
 
 impl BakedScene {
-    /// Lights in the light BVH; the suns follow them.
+    /// Lights in the light BVH; the suns and skies follow them.
     pub fn local_light_count(&self) -> usize {
-        self.lights.len() - self.sun_count()
+        self.lights.len() - self.distant_count()
     }
 
-    pub fn sun_count(&self) -> usize {
+    /// Suns and skies, the lights after the BVH's.
+    pub fn distant_count(&self) -> usize {
         self.lights
             .iter()
             .rev()
             .take_while(|light| light.shape.is_distant())
             .count()
+    }
+
+    /// The suns, which come first of the distant lights.
+    pub fn sun_count(&self) -> usize {
+        self.lights[self.local_light_count()..]
+            .iter()
+            .filter(|light| light.shape.sun().is_some())
+            .count()
+    }
+}
+
+/// How much of the sky points of the static scene see, on a grid: the baked skies' shadows for
+/// meshes without bake data. Each probe holds an ambient cube, the openness of the hemispheres
+/// around the six axes, which a surface weights by its normal.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkyProbes {
+    /// World position of probe (0, 0, 0).
+    pub origin: Vec3,
+    /// Meters between neighbouring probes along every axis.
+    pub spacing: f32,
+    /// Probes along x, y and z, each at least 1.
+    pub counts: UVec3,
+    /// [`Self::PROBE_WORDS`] per probe, x fastest, then y, then z: the openness of the
+    /// hemispheres around +X, −X, +Y, −Y, +Z and −Z as unorm8, 255 for open sky, in bytes 0 to 3
+    /// of the first word and 0 and 1 of the second.
+    pub words: Vec<u32>,
+}
+
+impl SkyProbes {
+    pub const PROBE_WORDS: usize = 2;
+
+    pub fn probe_count(counts: UVec3) -> usize {
+        counts.x as usize * counts.y as usize * counts.z as usize
+    }
+
+    /// The six openness values of probe `(x, y, z)`, 0 to 1.
+    pub fn openness(&self, probe: UVec3) -> [f32; 6] {
+        let index = (probe.z * self.counts.y + probe.y) * self.counts.x + probe.x;
+        let words = &self.words[index as usize * Self::PROBE_WORDS..][..Self::PROBE_WORDS];
+        core::array::from_fn(|axis| {
+            let byte = (words[axis / 4] >> (8 * (axis % 4))) & 0xFF;
+            byte as f32 / 255.0
+        })
+    }
+
+    /// Packs six openness values, 0 to 1, into a probe's words.
+    pub fn pack(openness: [f32; 6]) -> [u32; 2] {
+        let mut words = [0; 2];
+        for (axis, value) in openness.into_iter().enumerate() {
+            let byte = (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+            words[axis / 4] |= byte << (8 * (axis % 4));
+        }
+        words
     }
 }
 

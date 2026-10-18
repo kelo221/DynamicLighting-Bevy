@@ -2,7 +2,7 @@
 
 use bevy::math::{Quat, Vec2, Vec3};
 
-use super::{area_light, cuboid, floor, point_light, sun_light};
+use super::{area_light, cuboid, floor, point_light, sky_light, sun_light};
 use crate::bake::input::{BakeError, BakeInput, BakeOptions};
 use crate::bake::progress::BakeProgress;
 use crate::bake::{bake, encode};
@@ -38,6 +38,7 @@ fn room() -> BakeInput {
             ),
             sun_light(25, Vec3::new(0.3, 1.0, 0.2), 0.53),
             sun_light(15, Vec3::new(-0.5, 1.0, 0.4), 0.0),
+            sky_light(12),
         ],
     }
 }
@@ -47,6 +48,8 @@ fn options() -> BakeOptions {
         pixel_density: 12.0,
         dynamic_geometry: DynamicGeometryMode::Angular,
         sun_map_resolution: 64,
+        sky_samples: 16,
+        sky_probe_spacing: 0.75,
         ..Default::default()
     }
 }
@@ -82,11 +85,18 @@ fn outputs_are_sorted_and_lights_follow_the_bvh() {
     let baked = bake(&room(), &options(), &BakeProgress::new()).unwrap();
     let ids: Vec<u64> = baked.meshes.iter().map(|m| m.id.0).collect();
     assert_eq!(ids, [3, 4, 5, 9]);
-    assert_eq!(baked.lights.len(), 9);
-    // The suns follow the BVH's lights, by id.
-    let suns: Vec<u64> = baked.lights[7..].iter().map(|light| light.id.0).collect();
-    assert_eq!(suns, [15, 25]);
-    assert_eq!((baked.local_light_count(), baked.sun_count()), (7, 2));
+    assert_eq!(baked.lights.len(), 10);
+    // The suns follow the BVH's lights by id, then the sky, whatever its id.
+    let distant: Vec<u64> = baked.lights[7..].iter().map(|light| light.id.0).collect();
+    assert_eq!(distant, [15, 25, 12]);
+    let counts = (
+        baked.local_light_count(),
+        baked.distant_count(),
+        baked.sun_count(),
+    );
+    assert_eq!(counts, (7, 3, 2));
+    assert_eq!(baked.lights[9].shadow_bits_per_texel, 8);
+    assert!(baked.sky_probes.is_some());
     // Every leaf's lights lie inside it: the light list is in BVH order.
     for node in baked.light_bvh.iter().filter(|n| n.is_leaf()) {
         for light in &baked.lights[node.left_first as usize..][..node.count as usize] {

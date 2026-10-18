@@ -6,6 +6,7 @@ mod determinism;
 mod footprint;
 mod layout;
 mod occluder;
+mod sky;
 mod sun;
 
 use bevy::math::{Quat, Vec2, Vec3};
@@ -119,5 +120,13 @@ pub fn sun_light(id: u64, toward: Vec3, degrees: f32) -> BakeLight {
             angular_diameter: degrees,
         }),
         ..point_light(id, Vec3::new(500.0, -300.0, 70.0), 0.5)
+    }
+}
+
+/// A baked sky. Its position and radius don't count either.
+pub fn sky_light(id: u64) -> BakeLight {
+    BakeLight {
+        shape: LightShape::Sky,
+        ..point_light(id, Vec3::new(-40.0, 900.0, 3.0), 0.5)
     }
 }

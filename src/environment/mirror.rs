@@ -61,13 +61,15 @@ pub fn sample_specular(cube: &SpecularCube, direction: Vec3, lod: f32) -> Vec3 {
 
 /// What a sky light adds at a surface: `(diffuse, reflection)` of the lit shader's light sum,
 /// with Diffuse shading when `metallic` is `None`, otherwise Metallic shading of that metallic
-/// value with reflectance `f0`. `normal` and `view` are unit vectors.
+/// value with reflectance `f0`. `normal` and `view` are unit vectors; `open` is the share of the
+/// sky the surface sees, 1 for an unshadowed sky.
 pub struct SkySurface {
     pub normal: Vec3,
     pub view: Vec3,
     pub roughness: f32,
     pub metallic: Option<f32>,
     pub f0: Vec3,
+    pub open: f32,
 }
 
 pub fn sky_light(
@@ -76,7 +78,10 @@ pub fn sky_light(
     cube: &SpecularCube,
     surface: &SkySurface,
 ) -> (Vec3, Vec3) {
-    let strength = Vec3::from(light.color) * light.intensity;
+    if light.radius_sqr < 0.0 || surface.open <= 0.0 {
+        return (Vec3::ZERO, Vec3::ZERO);
+    }
+    let strength = Vec3::from(light.color) * (light.intensity * surface.open);
     let irradiance = sky_irradiance(sky, sky_local(light, surface.normal)) * strength;
     let Some(metallic) = surface.metallic else {
         return (irradiance, Vec3::ZERO);
@@ -120,6 +125,7 @@ mod tests {
             roughness: 0.5,
             metallic: None,
             f0: Vec3::splat(0.04),
+            open: 1.0,
         };
         let (diffuse, specular) = sky_light(&light, &sky, &cube, &surface);
         assert!(diffuse.abs_diff_eq(Vec3::ONE, 2e-3) && specular == Vec3::ZERO);
@@ -132,6 +138,14 @@ mod tests {
         let total = diffuse + specular;
         assert!(total.abs_diff_eq(Vec3::ONE, 3e-3), "{total}");
         assert!(specular.x > 0.04 && specular.x < 0.2, "{specular}");
+        // A shadowed sky dims both alike.
+        let shaded = SkySurface {
+            open: 0.25,
+            ..metal
+        };
+        let (dim_diffuse, dim_specular) = sky_light(&light, &sky, &cube, &shaded);
+        assert!(dim_diffuse.abs_diff_eq(diffuse * 0.25, 1e-6));
+        assert!(dim_specular.abs_diff_eq(specular * 0.25, 1e-6));
     }
 
     #[test]

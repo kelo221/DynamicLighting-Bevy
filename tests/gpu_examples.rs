@@ -85,11 +85,11 @@ fn gpu_area_shadows_match_the_cpu_mirror_at_every_quality() {
 
 #[test]
 #[ignore = "needs a GPU"]
-fn gpu_sun_shadows_match_the_cpu_mirror() {
-    for quality in ["integrated", "high"] {
+fn gpu_sun_and_sky_shadows_match_the_cpu_mirror_at_every_quality() {
+    for quality in ["integrated", "low", "medium", "high"] {
         let log = run_example("gpu_check_sun", &["--quality", quality]);
         assert!(
-            log.contains("GPU sun shadows match the CPU mirror"),
+            log.contains("GPU sun and sky shadows match the CPU mirror"),
             "{log}"
         );
     }

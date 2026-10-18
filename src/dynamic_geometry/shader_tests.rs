@@ -15,6 +15,10 @@ pub(crate) const SUN_MAP: (&str, &str) = (
     "dynlight::dynamic_geometry::shaders::sun_map",
     include_str!("shaders/sun_map.wesl"),
 );
+pub(crate) const SKY_PROBES: (&str, &str) = (
+    "dynlight::dynamic_geometry::shaders::sky_probes",
+    include_str!("shaders/sky_probes.wesl"),
+);
 
 fn modules() -> Vec<(&'static str, &'static str)> {
     vec![
@@ -24,6 +28,7 @@ fn modules() -> Vec<(&'static str, &'static str)> {
         LIGHT_BVH,
         DISTANCE_CUBES,
         SUN_MAP,
+        SKY_PROBES,
     ]
 }
 
@@ -66,6 +71,17 @@ fn sun_maps_compile_and_match_the_mirror() {
     ] {
         assert!(SUN_MAP.1.contains(&line), "{line}");
     }
+}
+
+#[test]
+fn sky_probes_compile_and_match_the_format() {
+    let module = compile(SKY_PROBES.0, &modules(), &[]);
+    assert!(has_function(&module, "sky_probe_openness"));
+    let stride = format!(
+        "const SKY_PROBE_STRIDE: u32 = {}u;",
+        crate::bake::SkyProbes::PROBE_WORDS
+    );
+    assert!(SKY_PROBES.1.contains(&stride), "{stride}");
 }
 
 #[test]

@@ -99,8 +99,8 @@ pub struct BakeLight {
     pub transparency: Transparency,
     pub bounce: BakeBounce,
     /// What shadow rays are traced to: the position for point-like lights, the shape of a
-    /// rectangle or tube light centered at [`Self::position`], or a sun's disk. Suns ignore the
-    /// position and radius.
+    /// rectangle or tube light centered at [`Self::position`], a sun's disk, or the sky. Suns and
+    /// skies ignore the position and radius.
     pub shape: LightShape,
 }
 
@@ -145,6 +145,11 @@ pub struct BakeOptions {
     pub area_light_min_samples: u32,
     /// Side of each baked sun's sun map in texels.
     pub sun_map_resolution: u32,
+    /// Rays per texel and per probe direction to a baked sky.
+    pub sky_samples: u32,
+    /// Meters between sky probes, before the grid is capped at
+    /// [`MAX_SKY_PROBES`](super::MAX_SKY_PROBES).
+    pub sky_probe_spacing: f32,
     /// Seed for every random choice (bounce directions, dithering, area light samples).
     pub seed: u64,
 }
@@ -171,6 +176,8 @@ impl BakeOptions {
             area_light_samples: settings.area_light_samples,
             area_light_min_samples: settings.area_light_min_samples,
             sun_map_resolution: settings.sun_map_resolution,
+            sky_samples: settings.sky_samples,
+            sky_probe_spacing: settings.sky_probe_spacing,
             seed,
         }
     }
@@ -296,12 +303,13 @@ impl BakeLight {
                     return Err(invalid("sun angular diameter must be 0 to 10 degrees"));
                 }
             }
+            LightShape::Sky => {}
         }
         Ok(())
     }
 
-    /// Whether the tracer bakes bounce lighting for this light. Suns never do: their light has
-    /// no position for photon cubes.
+    /// Whether the tracer bakes bounce lighting for this light. Suns and skies never do: their
+    /// light has no position for photon cubes.
     pub fn bakes_bounce(&self, options: &BakeOptions) -> bool {
         self.illumination == Illumination::SingleBounce
             && !options.skip_bounce
@@ -340,6 +348,16 @@ impl BakeOptions {
             return Err(BakeError::InvalidOptions(format!(
                 "the sun map resolution must be 1 to {MAX_SUN_MAP_RESOLUTION}"
             )));
+        }
+        if self.sky_samples == 0 {
+            return Err(BakeError::InvalidOptions(
+                "skies need at least one sample".into(),
+            ));
+        }
+        if !(self.sky_probe_spacing.is_finite() && self.sky_probe_spacing > 0.0) {
+            return Err(BakeError::InvalidOptions(
+                "the sky probe spacing must be positive".into(),
+            ));
         }
         Ok(())
     }

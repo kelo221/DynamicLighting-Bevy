@@ -13,6 +13,7 @@ import dynlight::shared::shaders::variant::{
 };
 import dynlight::dynamic_geometry::shaders::distance_cubes::{cube_shadow, cube_area_shadow};
 import dynlight::dynamic_geometry::shaders::sun_map::{sun_map_available, sun_map_shadow};
+import dynlight::dynamic_geometry::shaders::sky_probes::sky_probe_openness;
 import dynlight::light::shaders::area::area_shape;
 import dynlight::baked_lighting::shaders::baked_data::{Receiver, receiver};
 import dynlight::baked_lighting::shaders::triangles::{
@@ -55,8 +56,8 @@ fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
 
 // Light on a surface without bake data, with half-Lambert diffuse (Henry's dynamic-geometry
 // path): the baked lights whose BVH leaves contain the point, shadowed by their distance cubes,
-// the baked suns, shadowed by their sun maps, then the realtime lights that can reach it.
-// Without a light BVH every other baked light is visited unshadowed.
+// the baked suns and skies, shadowed by their sun maps and the sky probes, then the realtime
+// lights that can reach it. Without a light BVH every other baked light is visited unshadowed.
 fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
@@ -75,9 +76,18 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
         }
         unshadowed_baked = 0u;
     }
+    // The suns come first, so the `sun`-th distant light has the `sun`-th sun map.
     for (var sun = 0u; sun < globals.baked_distant; sun++) {
         let light = dynamic_lights.lights[bvh_lights + sun];
-        add_sun_map_shadowed(&sum, shading, light, sun, surface, globals.time, shadows);
+        if light_type(light) == LIGHT_TYPE_SKY {
+            var open = 1.0;
+            if shadows && !light_is_realtime(light) {
+                open = sky_probe_openness(world, normal);
+            }
+            add_sky(&sum, shading, light, surface, open);
+        } else {
+            add_sun_map_shadowed(&sum, shading, light, sun, surface, globals.time, shadows);
+        }
     }
     var span = RealtimeSpan(0u, 0u, false);
     if FEATURE_REALTIME_LIGHTS {
@@ -106,7 +116,7 @@ fn add_realtime_distant(sum: ptr<function, LightSum>, shading: Shading, surface:
     for (var i = 0u; i < globals.realtime_distant; i++) {
         let light = dynamic_lights.lights[globals.baked_count + i];
         if light_type(light) == LIGHT_TYPE_SKY {
-            add_sky(sum, shading, light, surface);
+            add_sky(sum, shading, light, surface, 1.0);
         } else {
             add_unshadowed(sum, shading, light, surface, globals.time);
         }
@@ -157,9 +167,9 @@ fn add_sun_map_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: G
     add_light(sum, shading, surface, geometry, light, map, 0.0);
 }
 
-// Light on a baked mesh: the triangle's own baked lights (baked suns among them) with their
-// shadow bits and bounce light, then the realtime suns and the realtime lights that can reach
-// it, unshadowed. Lambert diffuse.
+// Light on a baked mesh: the triangle's own baked lights (baked suns and skies among them) with
+// their shadow bits and bounce light, then the realtime suns and skies and the realtime lights
+// that can reach it, unshadowed. Lambert diffuse.
 fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
@@ -202,6 +212,14 @@ fn add_baked(
     at: Footprint,
     globals: LightGlobals,
 ) {
+    if light_type(light) == LIGHT_TYPE_SKY {
+        var open = 1.0;
+        if !light_is_realtime(light) {
+            open = baked_shadow(triangle, entry, at, QUALITY, light_shadow_bits_per_texel(light));
+        }
+        add_sky(sum, shading, light, surface, open);
+        return;
+    }
     let geometry = light_geometry(light, surface);
     if !geometry.in_range {
         return;

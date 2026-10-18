@@ -48,13 +48,14 @@ pub fn scene_buffers(scene: &BakedScene) -> BakedBuffers {
             cubes: &scene.distance_cubes,
             cube_count,
             sun_maps: &scene.sun_maps,
+            sky_probes: scene.sky_probes.as_ref(),
             flags: flag_bits,
         },
     )
 }
 
-/// The light buffer slots for `scene`: one per baked light, in BVH order, then the suns (the
-/// decoder makes sure they come last).
+/// The light buffer slots for `scene`: one per baked light, in BVH order, then the suns and the
+/// skies (the decoder makes sure they come last).
 pub fn scene_slots(scene: &BakedScene) -> Vec<BakedSlot> {
     scene
         .lights
@@ -127,7 +128,7 @@ pub(super) fn apply_bake(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bake::{BakedLight, BakedMesh, LightBvhNode, SunMap};
+    use crate::bake::{BakedLight, BakedMesh, LightBvhNode, SkyProbes, SunMap};
     use crate::baked_lighting::layout::header;
     use crate::light::{AreaLightShape, BounceCompression, LightShape, LightType, SunDisk};
     use crate::shared::BakeId;
@@ -168,7 +169,21 @@ mod tests {
                 bounce_compression: None,
                 shadow_bits_per_texel: 1,
             },
+            BakedLight {
+                id: BakeId(4),
+                origin: Vec3::ZERO,
+                radius: 1.0,
+                shape: LightShape::Sky,
+                bounce_compression: None,
+                shadow_bits_per_texel: 8,
+            },
         ];
+        scene.sky_probes = Some(SkyProbes {
+            origin: Vec3::ZERO,
+            spacing: 1.0,
+            counts: UVec3::ONE,
+            words: vec![u32::MAX, 0xFFFF],
+        });
         scene.sun_maps = vec![SunMap {
             rows: [Vec4::ZERO; 3],
             resolution: 1,
@@ -194,10 +209,17 @@ mod tests {
     fn buffers_carry_the_scene_settings() {
         let buffers = scene_buffers(&scene());
         let aux = &buffers.aux;
-        assert_eq!(aux[header::BAKED_LIGHTS], 3);
+        assert_eq!(aux[header::BAKED_LIGHTS], 4);
         assert_eq!(aux[header::BVH_NODE_COUNT], 1);
-        assert_eq!(aux[header::CUBE_COUNT], 2, "suns have no distance cube");
+        assert_eq!(
+            aux[header::CUBE_COUNT],
+            2,
+            "suns and skies have no distance cube"
+        );
         assert_eq!(aux[header::SUN_MAP_COUNT], 1);
+        let probes = aux[header::SKY_PROBES] as usize;
+        assert_eq!(aux[aux.len() - 2..], [u32::MAX, 0xFFFF]);
+        assert_eq!(aux[probes + 4..probes + 7], [1, 1, 1]);
         assert_eq!(aux[header::FLAGS], flags::BOUNCE_LAYOUT | flags::CUBE_BIAS);
         let receiver = buffers.receivers[&BakeId(9)];
         assert_eq!((receiver.tag, receiver.content_hash), (1, 77));
@@ -208,13 +230,14 @@ mod tests {
     fn slots_follow_bvh_order_with_precision_and_shape() {
         let scene = scene();
         let slots = scene_slots(&scene);
-        assert_eq!(slots.len(), 3);
+        assert_eq!(slots.len(), 4);
         let precision = |slot: &BakedSlot| (slot.bounce_bits_per_pixel, slot.shadow_bits_per_texel);
         assert_eq!((slots[0].id, precision(&slots[0])), (BakeId(1), (5, 1)));
         assert_eq!((slots[1].id, precision(&slots[1])), (BakeId(2), (8, 4)));
         assert_eq!(slots[1].origin, Vec3::Y);
         let shapes = slots.iter().map(|slot| slot.shape);
         assert!(shapes.eq(scene.lights.iter().map(|light| light.shape)));
-        assert!(slots[2].shape.is_distant());
+        assert!(slots[2].shape.is_distant() && slots[3].shape.is_distant());
+        assert_eq!(slots[3].shadow_bits_per_texel, 8);
     }
 }

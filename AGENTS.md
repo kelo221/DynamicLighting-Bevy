@@ -46,10 +46,12 @@ src/
   effects/               intensity effects, noise, RNG, fixed timestep
   surface/               DynLitMaterial (diffuse / metallic / unlit), prepass, BRDF, lighting composition WESL
   bake/                  CPU baker (light BVH, occluder BVH, triangle builder, rays, seams, bounce,
-                         distance cubes, sun maps), .dynlight format writer + reader, BakeRequest + progress
+                         distance cubes, sun maps, sky texels and probes), .dynlight format writer +
+                         reader, BakeRequest + progress
   baked_lighting/        .dynlight asset loading, triangle / aux buffers, receiver records via MeshTag,
                          primitive-index path + triangle-ID fallback, stale-bake detection, triangles.wesl
-  dynamic_geometry/      light BVH, distance cubes and sun maps at runtime, distance_cubes.wesl, sun_map.wesl
+  dynamic_geometry/      light BVH, distance cubes, sun maps and sky probes at runtime, distance_cubes.wesl,
+                         sun_map.wesl, sky_probes.wesl
   realtime_shadows/      VSM shadow cubemap pass (Core3d systems), vsm.wesl, blur
   cookies/               cookie texture array
   environment/           sky light from an equirect image: CPU prefilter (SH9 + GGX cube), sky background pass

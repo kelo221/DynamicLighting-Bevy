@@ -1,5 +1,5 @@
 //! One texel's baked shadow from one light: a hard ray to a point-like light, soft rays over an
-//! area light's shape or towards a sun's disk.
+//! area light's shape or towards a sun's disk, or rays over the hemisphere towards the sky.
 
 use bevy::math::Vec3;
 
@@ -11,6 +11,7 @@ use super::mesh_bake::{NDOTL_TOLERANCE, Scene};
 use super::mesh_builder::PreparedMesh;
 use super::random;
 use super::shadow_grid::level;
+use super::sky::sky_visibility;
 use super::sun::sun_visibility;
 use super::texels::SurfaceTexel;
 
@@ -50,6 +51,15 @@ pub fn texel_shadow(
         LightShape::Sun(sun) => {
             let towards_sun = |direction| occluded(direction, f32::INFINITY);
             sun_visibility(&sun, texel.normal, sampling, &mut rng(), towards_sun)?
+        }
+        LightShape::Sky => {
+            let towards_sky = |direction| occluded(direction, f32::INFINITY);
+            sky_visibility(
+                texel.normal,
+                scene.options.sky_samples,
+                &mut rng(),
+                towards_sky,
+            )
         }
     };
     let lit = level(visibility.fraction, light.shadow_bits_per_texel());

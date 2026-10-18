@@ -61,7 +61,9 @@ impl DynamicLight {
     /// The sky around the scene at intensity 1, which shows its image as it is. Add
     /// `environment::SkyEnvironment` with the image next to it; turning the entity turns the sky.
     /// Without an image it is a uniform sky of its color: Henry's flat ambient as a light, with
-    /// effects.
+    /// effects. Unless it is `realtime` it is baked: its shadows are how much of the sky a surface
+    /// sees, which doesn't depend on the image, so turning the sky or swapping its image keeps the
+    /// bake.
     pub fn sky() -> Self {
         Self {
             light_type: LightType::Sky,

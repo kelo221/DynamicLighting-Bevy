@@ -4,12 +4,14 @@
 //! triangles   every baked mesh's `dynamic_triangles` words, back to back
 //! aux         header (12 words), receiver records (4 words each), light BVH nodes (8 words
 //!             each), distance cubes (DISTANCE_CUBE_WORDS per BVH light), sun map records
-//!             (16 words each), sun map texels
+//!             (16 words each), sun map texels, the sky probe record (8 words) and probes
 //! ```
 //!
 //! A sun map record holds the map's three world-to-map rows (12 f32), its resolution and the aux
 //! word its texels start at. Sun map `k` belongs to the `k`-th baked sun, light slot
-//! `BAKED_LIGHTS − sun count + k`.
+//! `BAKED_LIGHTS − distant count + k`: the suns come first of the distant lights. The sky probe
+//! record holds the grid's origin (3 f32), spacing (f32), counts (3 u32) and the aux word its
+//! probes start at; header word `SKY_PROBES` is 0 without one.
 //!
 //! A mesh finds its record through `MeshTag`: tag `n > 0` is receiver `n − 1`, tag 0 means "not
 //! baked". Henry's triangle offsets stay relative to the mesh's first word, so "0 = no data"
@@ -18,7 +20,7 @@
 
 use bevy::platform::collections::HashMap;
 
-use crate::bake::SunMap;
+use crate::bake::{SkyProbes, SunMap};
 use crate::shared::BakeId;
 
 /// Aux header word indices.
@@ -41,6 +43,8 @@ pub mod header {
     pub const SUN_MAPS: usize = 8;
     /// Baked suns with a sun map (all of them, or none).
     pub const SUN_MAP_COUNT: usize = 9;
+    /// The sky probe record, or 0.
+    pub const SKY_PROBES: usize = 10;
 }
 
 /// Bits of the aux header's flags word.
@@ -60,6 +64,11 @@ pub const SUN_MAP_RECORD_WORDS: usize = 16;
 /// Word offsets inside a sun map record, after its rows.
 pub const SUN_MAP_RESOLUTION: usize = 12;
 pub const SUN_MAP_TEXELS: usize = 13;
+pub const SKY_PROBE_RECORD_WORDS: usize = 8;
+/// Word offsets inside the sky probe record, after its origin.
+pub const SKY_PROBE_SPACING: usize = 3;
+pub const SKY_PROBE_COUNTS: usize = 4;
+pub const SKY_PROBE_WORDS: usize = 7;
 
 /// One baked mesh as the buffers see it.
 #[derive(Clone, Copy, Debug)]
@@ -99,6 +108,7 @@ pub struct SceneInput<'a> {
     pub cube_count: u32,
     /// One per baked sun, in slot order, or none.
     pub sun_maps: &'a [SunMap],
+    pub sky_probes: Option<&'a SkyProbes>,
     pub flags: u32,
 }
 
@@ -161,6 +171,15 @@ impl BakedBuffers {
             aux.extend_from_slice(&map.texels);
         }
 
+        if let Some(probes) = scene.sky_probes {
+            aux[header::SKY_PROBES] = aux.len() as u32;
+            aux.extend(probes.origin.to_array().map(f32::to_bits));
+            aux.push(probes.spacing.to_bits());
+            aux.extend(probes.counts.to_array());
+            aux.push((aux.len() + 1) as u32);
+            aux.extend_from_slice(&probes.words);
+        }
+
         Self {
             triangles,
             aux,
@@ -189,6 +208,7 @@ mod tests {
         assert_eq!(buffers.triangles, [0]);
         assert_eq!(buffers.aux.len(), AUX_HEADER_WORDS);
         assert_eq!(buffers.aux[header::RECEIVER_COUNT], 0);
+        assert_eq!(buffers.aux[header::SKY_PROBES], 0);
         assert_eq!(buffers.record(1), None);
         assert_eq!(buffers.record(0), None);
     }
@@ -203,6 +223,12 @@ mod tests {
             resolution,
             texels: vec![resolution * 10; SunMap::words(resolution)],
         });
+        let probes = SkyProbes {
+            origin: bevy::math::Vec3::new(1.0, 2.0, 3.0),
+            spacing: 0.5,
+            counts: bevy::math::UVec3::new(1, 2, 1),
+            words: vec![11, 12, 13, 14],
+        };
         let buffers = BakedBuffers::build(
             [
                 ReceiverInput {
@@ -224,6 +250,7 @@ mod tests {
                 cubes: &[7, 8],
                 cube_count: 1,
                 sun_maps: &maps,
+                sky_probes: Some(&probes),
                 flags: flags::BOUNCE_LAYOUT,
             },
         );
@@ -261,10 +288,17 @@ mod tests {
             assert_eq!(aux[texels..texels + map.texels.len()], map.texels);
         }
         let last = aux[aux[header::SUN_MAPS] as usize + SUN_MAP_RECORD_WORDS + SUN_MAP_TEXELS];
+        let record = aux[header::SKY_PROBES] as usize;
         assert_eq!(
             last as usize + 2,
-            aux.len(),
-            "the 2² map's 2 words end the buffer"
+            record,
+            "the 2² map's 2 words end the maps"
         );
+        assert_eq!(f32::from_bits(aux[record + 2]), 3.0);
+        assert_eq!(f32::from_bits(aux[record + SKY_PROBE_SPACING]), 0.5);
+        assert_eq!(aux[record + SKY_PROBE_COUNTS..][..3], [1, 2, 1]);
+        let first = aux[record + SKY_PROBE_WORDS] as usize;
+        assert_eq!(first, record + SKY_PROBE_RECORD_WORDS);
+        assert_eq!(aux[first..], [11, 12, 13, 14]);
     }
 }

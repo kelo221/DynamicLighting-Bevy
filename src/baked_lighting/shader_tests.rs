@@ -2,8 +2,8 @@
 //! `layout.rs`.
 
 use super::layout::{
-    AUX_HEADER_WORDS, RECEIVER_WORDS, SUN_MAP_RECORD_WORDS, SUN_MAP_RESOLUTION, SUN_MAP_TEXELS,
-    flags, header,
+    AUX_HEADER_WORDS, RECEIVER_WORDS, SKY_PROBE_COUNTS, SKY_PROBE_SPACING, SKY_PROBE_WORDS,
+    SUN_MAP_RECORD_WORDS, SUN_MAP_RESOLUTION, SUN_MAP_TEXELS, flags, header,
 };
 use super::mirror;
 use crate::shared::wesl_check::{MATERIAL_CONSTANTS, SHARED_TYPES, compile};
@@ -76,11 +76,15 @@ fn constants_match_the_layout() {
         ("SUN_MAP_RECORD_WORDS", SUN_MAP_RECORD_WORDS as u32),
         ("SUN_MAP_RESOLUTION", SUN_MAP_RESOLUTION as u32),
         ("SUN_MAP_TEXELS", SUN_MAP_TEXELS as u32),
+        ("AUX_SKY_PROBES", header::SKY_PROBES as u32),
+        ("SKY_PROBE_SPACING", SKY_PROBE_SPACING as u32),
+        ("SKY_PROBE_COUNTS", SKY_PROBE_COUNTS as u32),
+        ("SKY_PROBE_WORDS", SKY_PROBE_WORDS as u32),
     ];
     for (name, value) in pairs {
         assert_eq!(wesl_const(source, name), value, "{name}");
     }
-    const { assert!(header::SUN_MAP_COUNT < AUX_HEADER_WORDS) };
+    const { assert!(header::SKY_PROBES < AUX_HEADER_WORDS) };
 }
 
 #[test]
