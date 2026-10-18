@@ -106,7 +106,7 @@ src/<slice>/
 - **Files already over the limit:** ported sources that exceed 400 lines are split while porting.
   - Henry: `DynamicLighting.cginc` (1174), `DynamicLightManager.cs` (1621), `DynamicLightingTracer.cs` (1273).
   - bevyout: `render/gpu.rs` (801), `baker.rs` (926), `core/volumetric.rs` (519), `bevy_bridge/mod.rs` (504), `core/runtime.rs` (443).
-- **Enforcement:** `tests/repo_hygiene.rs` fails on any file over 400 lines and on forbidden identifiers (Bevy light, sky and environment types, banned `bevy_pbr` modules, naga_oil syntax, `unity_random`, `PerlinNoise`, `1812433253`, `[patch.` in `Cargo.toml`). Extend it when you add a rule. The same line check by hand:
+- **Enforcement:** `tests/repo_hygiene.rs` fails on any file over 400 lines and on forbidden identifiers (Bevy light, sky and environment types, banned `bevy_pbr` modules, naga_oil syntax, `unity_random`, `PerlinNoise`, `1812433253`, `[patch.` in `Cargo.toml`), and on `intersects_sphere` outside `shared/frustum.rs`. Extend it when you add a rule. The same line check by hand:
 
 ```bash
 find src tests examples benches features -type f \( -name '*.rs' -o -name '*.wesl' -o -name '*.wgsl' -o -name '*.feature' \) \
@@ -125,6 +125,7 @@ find src tests examples benches features -type f \( -name '*.rs' -o -name '*.wes
 - **Render passes** are systems in the `Core3d` schedule (`Core3dSystems::{Prepass, MainPass, PostProcess}`), not render-graph nodes.
 - **Errors:** fallible systems and loaders return `Result` and use `BevyError` `.context(...)`. Don't `unwrap` in runtime paths unless it guards a real invariant.
 - **Change ticks:** use `#[component(summary_tick)]` on components that are queried with `Changed` often but change rarely.
+- **Camera visibility tests:** Bevy's perspective projections are infinite reverse-Z, so a camera's `far` clips nothing. Test spheres with `shared::sees_sphere`, which ignores the far plane like Bevy's own culling, not with `Frustum::intersects_sphere`.
 
 ## Porting conventions
 

@@ -1,6 +1,6 @@
 //! Per-frame light packing: baked slots, moved lights and the realtime budget.
 
-use bevy::camera::primitives::{Frustum, Sphere};
+use bevy::camera::primitives::Frustum;
 use bevy::prelude::*;
 
 use super::budget::{RealtimeCandidate, select_realtime};
@@ -11,7 +11,7 @@ use super::placement::{LightPlacement, pose_of};
 use crate::effects::LightEffectState;
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, RuntimeQuality,
-    SkyIrradiance, SunShadowBlock,
+    SkyIrradiance, SunShadowBlock, sees_sphere,
 };
 
 type LightItem<'a> = (
@@ -109,17 +109,7 @@ pub(super) fn pack_lights(
         candidates,
         camera.map(|(_, transform, _)| transform.translation()),
         settings.realtime_light_budget as usize,
-        |center, radius| {
-            camera.is_none_or(|(_, _, frustum)| {
-                frustum.intersects_sphere(
-                    &Sphere {
-                        center: center.into(),
-                        radius,
-                    },
-                    true,
-                )
-            })
-        },
+        |center, radius| camera.is_none_or(|(_, _, frustum)| sees_sphere(frustum, center, radius)),
     );
     for candidate in selected {
         let (entity, pose) = candidate.key;

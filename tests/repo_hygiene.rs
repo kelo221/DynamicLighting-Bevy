@@ -174,6 +174,30 @@ fn shaders_do_not_import_bevy_lighting() {
     );
 }
 
+/// Camera sphere tests go through `shared::sees_sphere`, which ignores the far plane that
+/// Bevy's infinite projections never clip at.
+#[test]
+fn camera_sphere_tests_ignore_the_far_plane() {
+    let this_file = relative(Path::new(file!()));
+    let mut offenders = Vec::new();
+    for path in source_files() {
+        let name = relative(&path);
+        if name == "src/shared/frustum.rs" || name.ends_with(&this_file) || !name.ends_with(".rs") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        for (number, line) in text.lines().enumerate() {
+            if identifiers(line).any(|token| token == "intersects_sphere") {
+                offenders.push(format!("{name}:{}", number + 1));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "use shared::sees_sphere: {offenders:#?}"
+    );
+}
+
 #[test]
 fn bevy_is_not_patched() {
     let manifest = fs::read_to_string(repo_root().join("Cargo.toml")).unwrap();

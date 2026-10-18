@@ -6,7 +6,7 @@
 use core::f32::consts::FRAC_PI_2;
 
 use bevy::camera::CameraProjection;
-use bevy::camera::primitives::{Aabb, Frustum, Sphere};
+use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::{RenderLayers, SetViewVisibility};
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
@@ -24,7 +24,7 @@ use super::tracking::{CasterChanges, bounds};
 use crate::baked_lighting::BakedReceiver;
 use crate::light::{BakedInPlace, DynamicLight, LightAttachments, ShadowMode};
 use crate::shared::cube::CUBE_FACE_COUNT;
-use crate::shared::{DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality};
+use crate::shared::{DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality, sees_sphere};
 
 /// One face of a shadow cubemap: array layer `layer`, seen from its light at `pose`.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -122,13 +122,9 @@ pub(super) fn place_shadow_faces(
         _ => settings.shadow_cubemap_budget,
     };
     let seen = |position: Vec3, radius: f32| {
-        let sphere = Sphere {
-            center: position.into(),
-            radius,
-        };
         viewers
             .iter()
-            .any(|(_, _, frustum)| frustum.intersects_sphere(&sphere, true))
+            .any(|(_, _, frustum)| sees_sphere(frustum, position, radius))
     };
     let candidates = lights
         .iter()

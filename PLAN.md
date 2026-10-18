@@ -661,6 +661,13 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
   - Tests: the split depths; each cascade holding its slice inside its rim; the GPU rows against the cascade's view and projection; small camera moves keeping sizes and moving centers by at most one step; the depth reaching casters over the cascade; the redraw plan (first rendering, still, a change, a baked change in moving-only cascades, a miss, a reset, a snap); what a cascade draws; the mirror shadowing the ground under a box, past the far end and outside the cascades; the terminator rule for static receivers; cascade extraction as orthographic views; baked casters' bounds; the light-buffer layout; and the shader compiling through naga with the mirror's constants.
   - Example `outdoor`: the sun has `ShadowMode::Realtime`, so the ball and the crate cast realtime shadows onto the baked courtyard, and without a bake everything casts them; `--camera` holds the camera still (shared with `lighting_test` in `examples/support`).
   - Baselines: new `outdoor_moving_shadow`, the ball's shadow next to the pergola's baked stripes. `outdoor` re-blessed for the ball's and the crate's new shadows (374 pixels), `outdoor_unbaked` for the sun's shadows of every caster. Every other baseline is unchanged; `outdoor_fxc` matches the new `outdoor`.
+- **M23–M26 Ideas from Wicked Engine, started 2026-10-18:** from Turánszki's BGF2026 talk and Wicked Engine's source (MIT). No code is ported, so `PORT_MAP.md` and `LICENSES/` are unchanged. Two outside reviews checked the plan against Bevy 0.20. Each step stays only if a measured A/B shows it faster.
+  - The plan:
+    - M23: cube faces that no camera can see wait until one can.
+    - M24: one render-world driver preprocesses and draws every shadow view. Today each face runs Bevy's whole `Core3d` schedule, with four command encoders and two empty compute passes.
+    - M25: a subgroup fast path for the light loops.
+    - M26: a depth prepass by default, only on a clear win.
+  - Fixed first: shadow cubemaps, realtime lights and fog volumes were picked with the cameras' far plane, which Bevy's infinite reverse-Z projections never clip at. A light past a camera's `far` (1000 m by default) was dropped even though it reaches what the camera shows. `shared::sees_sphere` ignores the far plane, like Bevy's own culling, and `repo_hygiene` keeps `intersects_sphere` out of every other file. Images are unchanged, since no example sets `far`.
 
 ## 15. Testing
 

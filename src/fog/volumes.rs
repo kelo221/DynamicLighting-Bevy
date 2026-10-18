@@ -1,7 +1,7 @@
 //! Collects the visible fog volumes every frame and uploads them for the fog pass.
 
 use bevy::asset::uuid_handle;
-use bevy::camera::primitives::{Frustum, Sphere};
+use bevy::camera::primitives::Frustum;
 use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
@@ -12,7 +12,7 @@ use super::params::{Placement, bounding_radius, is_active, pack};
 use super::volumetric::VolumetricLight;
 use crate::effects::LightEffectState;
 use crate::light::DynamicLight;
-use crate::shared::GpuLight;
+use crate::shared::{GpuLight, sees_sphere};
 
 /// The fog volume records the fog pass reads.
 pub const FOG_BUFFER: Handle<ShaderBuffer> = uuid_handle!("3e7b5d19-8c2a-4f06-b4e1-6d9a0c7f2b53");
@@ -68,13 +68,10 @@ pub(super) fn pack_fog_volumes(
             continue;
         }
         let (scale, rotation, position) = transform.to_scale_rotation_translation();
-        let bounds = Sphere {
-            center: position.into(),
-            radius: bounding_radius(fog, light, scale),
-        };
+        let radius = bounding_radius(fog, light, scale);
         let seen = cameras
             .iter()
-            .any(|(camera, frustum)| camera.is_active && frustum.intersects_sphere(&bounds, true));
+            .any(|(camera, frustum)| camera.is_active && sees_sphere(frustum, position, radius));
         if seen {
             let placement = Placement {
                 position,
