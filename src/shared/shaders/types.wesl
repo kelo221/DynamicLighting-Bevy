@@ -57,10 +57,39 @@ struct SkyIrradiance {
     sh: array<vec4<f32>, 9>,
 }
 
-// The whole light buffer: the header, the sky, then the baked slots and the realtime lights.
+// One cascade of the sun's realtime shadows: a world point's texture coordinates and depth are
+// `dot(row, vec4(world, 1.0))` for the rows `u`, `v` and `depth` (0 at the sunward end, 1 at the
+// far end). Mirrors `dynlight::shared::GpuSunCascade` (64 bytes).
+struct SunCascade {
+    u: vec4<f32>,
+    v: vec4<f32>,
+    depth: vec4<f32>,
+    // World size of one texel.
+    texel_size: f32,
+    // In depth units.
+    depth_bias: f32,
+    _padding: vec2<f32>,
+}
+
+// The cascades of the one sun with realtime shadows, nearest the camera first; `count` is 0
+// without one. Mirrors `dynlight::shared::GpuSunShadow` (208 bytes).
+struct SunShadow {
+    cascades: array<SunCascade, 3>,
+    count: u32,
+    // `SUN_SHADOW_*` bits.
+    flags: u32,
+    _padding: vec2<u32>,
+}
+
+// The cascades hold only meshes without bake data, so baked receivers aren't in them.
+const SUN_SHADOW_MOVING_ONLY: u32 = 1u;
+
+// The whole light buffer: the header, the sky, the sun's cascades, then the baked slots and the
+// realtime lights.
 struct DynamicLights {
     globals: LightGlobals,
     sky: SkyIrradiance,
+    sun_shadow: SunShadow,
     lights: array<GpuLight>,
 }
 

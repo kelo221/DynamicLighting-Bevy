@@ -1,12 +1,16 @@
 //! Compiles the realtime-shadow WESL library modules with naga, and checks their constants and
 //! the face uniform against the CPU side.
 
-use super::mirror;
+use super::{mirror, sun_mirror};
 use crate::shared::wesl_check::{MATERIAL_CONSTANTS, SHARED_TYPES, compile};
 
 pub(crate) const VSM: (&str, &str) = (
     "dynlight::realtime_shadows::shaders::vsm",
     include_str!("shaders/vsm.wesl"),
+);
+pub(crate) const SUN_VSM: (&str, &str) = (
+    "dynlight::realtime_shadows::shaders::sun_vsm",
+    include_str!("shaders/sun_vsm.wesl"),
 );
 const KERNEL: (&str, &str) = (
     "dynlight::realtime_shadows::shaders::shadow_kernel",
@@ -52,6 +56,25 @@ fn vsm_constants_match_the_mirror() {
 }
 
 #[test]
+fn sun_vsm_compiles_and_matches_the_mirror() {
+    let modules = [MATERIAL_CONSTANTS, SHARED_TYPES, VSM, SUN_VSM];
+    let module = compile(SUN_VSM.0, &modules, &[]);
+    assert!(
+        module
+            .functions
+            .iter()
+            .any(|(_, function)| function.name.as_deref() == Some("sun_shadow"))
+    );
+    for (name, value) in [
+        ("SUN_NORMAL_OFFSET", sun_mirror::SUN_NORMAL_OFFSET),
+        ("SUN_CASCADE_MARGIN", sun_mirror::SUN_CASCADE_MARGIN),
+        ("SUN_CASCADE_BLEND", sun_mirror::SUN_CASCADE_BLEND),
+    ] {
+        assert_eq!(constant::<f32>(SUN_VSM.1, name), value, "{name}");
+    }
+}
+
+#[test]
 fn blur_kernel_compiles_and_matches_the_mirror() {
     let module = compile(KERNEL.0, &[KERNEL], &[]);
     for name in ["blur_taps", "blur_weight"] {
@@ -67,7 +90,7 @@ fn blur_kernel_compiles_and_matches_the_mirror() {
         constant::<i32>(KERNEL.1, "MAX_BLUR_TAPS"),
         mirror::MAX_BLUR_TAPS
     );
-    // The uniform the passes read: radius, layer and blur.
+    // The uniform the passes read: radius, layer, blur and the cascade flag.
     use bevy::render::render_resource::ShaderType;
-    assert_eq!(super::ShadowFaceUniform::min_size().get(), 12);
+    assert_eq!(super::ShadowFaceUniform::min_size().get(), 16);
 }

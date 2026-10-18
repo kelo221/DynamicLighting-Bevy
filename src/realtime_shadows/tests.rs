@@ -12,6 +12,7 @@ use bevy::render::render_resource::AsBindGroup;
 
 use super::materials::{CasterMaterial, touch_casters};
 use super::tracking::{CasterBounds, CasterChanges, ShadowFeedback, TouchedCasters, track_casters};
+use crate::baked_lighting::BakedReceiver;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 struct Masked {
@@ -200,6 +201,29 @@ fn casters_without_bounds_render_every_face_only_when_they_move() {
         .entity_mut(caster)
         .insert(GlobalTransform::from_xyz(1.0, 0.0, 0.0));
     assert_eq!(frame(&mut app), (false, true), "moved");
+}
+
+#[test]
+fn casters_that_become_baked_are_known_as_baked() {
+    let mut app = app();
+    let (caster, ..) = spawn_caster(&mut app);
+    settle(&mut app);
+    let spheres = |app: &App, moving_only| {
+        app.world()
+            .resource::<CasterBounds>()
+            .spheres(moving_only)
+            .len()
+    };
+    assert_eq!((spheres(&app, false), spheres(&app, true)), (1, 1));
+    app.world_mut().entity_mut(caster).insert(BakedReceiver);
+    assert_eq!(frame(&mut app), (true, true), "every face renders");
+    assert_eq!((spheres(&app, false), spheres(&app, true)), (1, 0));
+    // The cube planning would count the frames of every face down.
+    app.world_mut().resource_mut::<CasterChanges>().settle = 0;
+    settle(&mut app);
+    app.world_mut().entity_mut(caster).remove::<BakedReceiver>();
+    assert_eq!(frame(&mut app), (true, true), "the bake went away");
+    assert_eq!(spheres(&app, true), 1);
 }
 
 #[test]

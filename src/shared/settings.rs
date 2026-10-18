@@ -18,6 +18,8 @@ pub struct DynamicLightingSettings {
     pub realtime_cluster_min_lights: u32,
     /// Most lights with realtime shadow cubemaps at once.
     pub shadow_cubemap_budget: u32,
+    /// How far from the camera, in meters, the sun's realtime shadow cascades reach.
+    pub sun_shadow_distance: f32,
     /// Compiled into the lit shader: changing it recompiles the lit pipelines, which stalls lit
     /// meshes for a second or more.
     pub quality: RuntimeQuality,
@@ -41,6 +43,7 @@ impl Default for DynamicLightingSettings {
             realtime_light_budget: 32,
             realtime_cluster_min_lights: 8,
             shadow_cubemap_budget: 16,
+            sun_shadow_distance: 50.0,
             quality: RuntimeQuality::default(),
             shader_features: ShaderFeatures::ALL,
             feature_selection: FeatureSelection::Fixed,

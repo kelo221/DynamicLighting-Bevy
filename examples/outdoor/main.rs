@@ -2,15 +2,17 @@
 //! trees whose soft sun shadows and sky shadows (how much of the sky each texel sees) are baked
 //! per texel, a lamp post, metal balls reflecting the sky, and a rolling ball and a spinning crate
 //! that take the static scene's sun shadows from the sun map and its sky shadows from the sky
-//! probes. The sky lights everything from all directions and is drawn behind the scene; turning
-//! it or swapping its image keeps the bake.
+//! probes. The sun has realtime shadows on top of its baked ones: cascades of only the ball and
+//! the crate, so they cast shadows onto the courtyard. The sky lights everything from all
+//! directions and is drawn behind the scene; turning it or swapping its image keeps the bake.
 //!
 //! - `cargo run --example outdoor -- --bake` bakes (Full, a few seconds) and writes
-//!   `assets/outdoor.dynlight`; later runs load it. Without a bake the sun and the sky shine
-//!   unshadowed.
+//!   `assets/outdoor.dynlight`; later runs load it. Without a bake the sky shines unshadowed
+//!   and the sun has only its realtime shadows.
 //! - `--hdri path.exr` lights the scene with an HDR image (EXR or Radiance HDR) instead of the
 //!   procedural sky, turned so its brightest point faces the sun's direction.
 //! - `--frames N` exits after N frames, and `--screenshot path.png` saves the last ones.
+//! - `--camera x,y,z,target_x,target_y,target_z` holds the camera still there.
 //! - `--capture path.png` saves a still frame for the visual baselines.
 //!
 //! Drag to orbit, scroll to zoom.
@@ -73,6 +75,10 @@ fn spawn(
     mut images: ResMut<Assets<Image>>,
 ) {
     scene::spawn(&mut commands, &mut meshes, &mut materials, &mut images);
+    if let Some(transform) = support::fixed_camera() {
+        commands.spawn((Camera3d::default(), transform));
+        return;
+    }
     let mut camera = OrbitCamera::new(Vec3::new(0.0, 1.0, -1.0), 0.55, 0.42, 24.0);
     camera.distance_range = (6.0, 60.0);
     camera.pitch_range = (0.05, 1.4);
@@ -91,8 +97,8 @@ fn load_or_bake(
     }
     baking::load_existing(BAKE_ASSET, &server, &mut active);
     if active.0.is_none() {
-        warn!("no bake yet: run with --bake; until then the sun and sky shine without shadows");
-        support::status("Not baked: the sun and sky shine without shadows");
+        warn!("no bake yet: run with --bake; until then only the sun's realtime shadows show");
+        support::status("Not baked: only the sun's realtime shadows show");
     }
 }
 

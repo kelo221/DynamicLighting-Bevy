@@ -52,7 +52,8 @@ src/
                          primitive-index path + triangle-ID fallback, stale-bake detection, triangles.wesl
   dynamic_geometry/      light BVH, distance cubes, sun maps and sky probes at runtime, distance_cubes.wesl,
                          sun_map.wesl, sky_probes.wesl
-  realtime_shadows/      VSM shadow cubemap pass (Core3d systems), vsm.wesl, blur
+  realtime_shadows/      VSM shadow cubemap pass (Core3d systems), the sun's cascades, vsm.wesl,
+                         sun_vsm.wesl, blur
   cookies/               cookie texture array
   environment/           sky light from an equirect image: CPU prefilter (SH9 + GGX cube), sky background pass
   fog/                   volumetric fog pass

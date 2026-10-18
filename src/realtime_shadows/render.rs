@@ -1,33 +1,32 @@
-//! The face pass, run for each face view: its casters are drawn into a depth texture shared by
-//! all faces, depth becomes variance moments with a horizontal blur into a scratch texture, then
-//! a vertical blur writes the face's layer of the cube array (Henry's two Gaussian blur blits).
-//! Both blurs read their width from the face uniform. A face with no casters only clears its
-//! layer.
+//! The face pass, run for each face and cascade view: its casters are drawn into a depth texture
+//! shared by all views of its kind, depth becomes variance moments with a horizontal blur into a
+//! scratch texture, then a vertical blur writes the view's layer of the cube or cascade array
+//! (Henry's two Gaussian blur blits). Both blurs read their width from the face uniform. A view
+//! with no casters only clears its layer.
 
 use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
-use bevy::render::extract_component::{ComponentUniforms, DynamicUniformIndex};
-use bevy::render::render_asset::RenderAssets;
+use bevy::render::extract_component::DynamicUniformIndex;
 use bevy::render::render_phase::ViewBinnedRenderPhases;
 use bevy::render::render_resource::binding_types::{texture_2d, texture_depth_2d, uniform_buffer};
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, CommandEncoder, Extent3d, FragmentState,
-    LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    BindGroup, BindGroupLayoutDescriptor, BindGroupLayoutEntries, CachedRenderPipelineId,
+    ColorTargetState, ColorWrites, CommandEncoder, FragmentState, LoadOp, Operations,
+    PipelineCache, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
     RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StoreOp,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureId, TextureSampleType,
-    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureView,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
-use bevy::render::texture::GpuImage;
-use bevy::render::view::{ExtractedView, ViewUniform, ViewUniformOffset, ViewUniforms};
+use bevy::render::view::{ExtractedView, ViewUniform, ViewUniformOffset};
 
-use super::cubemaps::{SHADOW_CUBEMAP_FORMATS, SHADOW_CUBEMAPS};
+use super::cubemaps::SHADOW_CUBEMAP_FORMATS;
+use super::extract::ShadowFaceView;
 use super::faces::SHADOW_CUBEMAP_RESOLUTION;
 use super::phase::ShadowFace3d;
-use super::tracking::ShadowFeedback;
+use super::targets::{ShadowFaceBindGroups, ShadowLayerViews, target_texture};
+use super::tracking::{ShadowFeedback, ShadowTarget};
 use super::views::ShadowFaceUniform;
 
 const MOMENTS_SHADER: &str = "embedded://dynlight/realtime_shadows/shaders/shadow_moments.wesl";
@@ -35,28 +34,28 @@ const BLUR_SHADER: &str = "embedded://dynlight/realtime_shadows/shaders/shadow_b
 
 #[derive(Resource)]
 pub(super) struct ShadowPipelines {
-    moments_layout: BindGroupLayoutDescriptor,
-    blur_layout: BindGroupLayoutDescriptor,
+    pub moments_layout: BindGroupLayoutDescriptor,
+    pub blur_layout: BindGroupLayoutDescriptor,
     /// One per format the cube array can have.
     variants: Vec<FormatVariant>,
     /// The depth of the face being rendered; faces render one after another.
-    depth: TextureView,
+    pub depth: TextureView,
 }
 
 impl ShadowPipelines {
-    fn variant(&self, format: Option<TextureFormat>) -> Option<&FormatVariant> {
+    pub(super) fn variant(&self, format: Option<TextureFormat>) -> Option<&FormatVariant> {
         self.variants
             .iter()
             .find(|variant| Some(variant.format) == format)
     }
 }
 
-struct FormatVariant {
+pub(super) struct FormatVariant {
     format: TextureFormat,
     moments: CachedRenderPipelineId,
     blur: CachedRenderPipelineId,
     /// Horizontally blurred moments of the face being rendered.
-    scratch: TextureView,
+    pub scratch: TextureView,
 }
 
 pub(super) fn init_shadow_pipelines(
@@ -106,22 +105,7 @@ pub(super) fn init_shadow_pipelines(
         ..default()
     };
     let scratch = |label: &'static str, format: TextureFormat| {
-        device
-            .create_texture(&TextureDescriptor {
-                label: Some(label),
-                size: Extent3d {
-                    width: SHADOW_CUBEMAP_RESOLUTION,
-                    height: SHADOW_CUBEMAP_RESOLUTION,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format,
-                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&TextureViewDescriptor::default())
+        target_texture(&device, label, SHADOW_CUBEMAP_RESOLUTION, format)
     };
     let variants = SHADOW_CUBEMAP_FORMATS
         .into_iter()
@@ -156,87 +140,10 @@ pub(super) fn init_shadow_pipelines(
     });
 }
 
-/// One render target per array layer of the current shadow cubemap texture.
-#[derive(Resource, Default)]
-pub(super) struct ShadowLayerViews {
-    texture: Option<TextureId>,
-    format: Option<TextureFormat>,
-    layers: Vec<TextureView>,
-}
-
-pub(super) fn prepare_layer_views(
-    images: Res<RenderAssets<GpuImage>>,
-    mut views: ResMut<ShadowLayerViews>,
-) {
-    let Some(image) = images.get(&SHADOW_CUBEMAPS) else {
-        *views = ShadowLayerViews::default();
-        return;
-    };
-    if views.texture == Some(image.texture.id()) {
-        return;
-    }
-    views.layers = (0..image.texture.depth_or_array_layers())
-        .map(|layer| {
-            image.texture.create_view(&TextureViewDescriptor {
-                label: Some("dynlight_shadow_face"),
-                dimension: Some(TextureViewDimension::D2),
-                base_array_layer: layer,
-                array_layer_count: Some(1),
-                ..default()
-            })
-        })
-        .collect();
-    views.texture = Some(image.texture.id());
-    views.format = Some(image.texture_descriptor.format);
-}
-
-/// The bind groups of the face pass. Every face of a frame binds the same depth texture, scratch
-/// texture and uniform buffers, at its own dynamic offsets, so they are made once per frame.
-#[derive(Resource, Default)]
-pub(super) struct ShadowFaceBindGroups {
-    moments: Option<BindGroup>,
-    blur: Option<BindGroup>,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn prepare_face_bind_groups(
-    face_views: Query<(), With<ShadowFaceUniform>>,
-    pipelines: Res<ShadowPipelines>,
-    layers: Res<ShadowLayerViews>,
-    cache: Res<PipelineCache>,
-    view_uniforms: Res<ViewUniforms>,
-    faces: Res<ComponentUniforms<ShadowFaceUniform>>,
-    device: Res<RenderDevice>,
-    mut groups: ResMut<ShadowFaceBindGroups>,
-) {
-    *groups = ShadowFaceBindGroups::default();
-    if face_views.is_empty() {
-        return;
-    }
-    let Some(variant) = pipelines.variant(layers.format) else {
-        return;
-    };
-    let (Some(view_binding), Some(face_binding)) =
-        (view_uniforms.uniforms.binding(), faces.uniforms().binding())
-    else {
-        return;
-    };
-    groups.moments = Some(device.create_bind_group(
-        "dynlight_shadow_moments",
-        &cache.get_bind_group_layout(&pipelines.moments_layout),
-        &BindGroupEntries::sequential((&pipelines.depth, view_binding, face_binding.clone())),
-    ));
-    groups.blur = Some(device.create_bind_group(
-        "dynlight_shadow_blur",
-        &cache.get_bind_group_layout(&pipelines.blur_layout),
-        &BindGroupEntries::sequential((&variant.scratch, face_binding)),
-    ));
-}
-
 type FaceView = (
     Entity,
     &'static ExtractedView,
-    &'static ShadowFaceUniform,
+    &'static ShadowFaceView,
     &'static DynamicUniformIndex<ShadowFaceUniform>,
     &'static ViewUniformOffset,
 );
@@ -244,7 +151,8 @@ type FaceView = (
 /// What a face without casters ends up as: moments (1, 1), the light's radius everywhere.
 const UNSHADOWED: LinearRgba = LinearRgba::new(1.0, 1.0, 0.0, 1.0);
 
-/// Renders one face. When it can't, it tells the main world to render the cubes again.
+/// Renders one face or cascade. When it can't, it tells the main world to render them all
+/// again.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn shadow_face_pass(
     world: &World,
@@ -258,37 +166,44 @@ pub(super) fn shadow_face_pass(
     mut ctx: RenderContext,
 ) {
     let (view_entity, extracted, face, face_index, view_offset) = view.into_inner();
-    let Some(target) = layers.layers.get(face.layer as usize) else {
+    let Some(target) = layers.layer(face.target) else {
         feedback.report_incomplete();
         return;
+    };
+    let span = match face.target {
+        ShadowTarget::Face(_) => "dynlight_shadow_face",
+        ShadowTarget::Cascade(_) => "dynlight_sun_cascade",
     };
     let phase = phases.get(&extracted.retained_view_entity);
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
-    // The depth, moments and blur passes of an empty face only turn cleared depth into
+    // The depth, moments and blur passes of an empty view only turn cleared depth into
     // `UNSHADOWED`, so the layer is cleared to it instead.
     let Some(phase) = phase.filter(|phase| !phase.is_empty()) else {
-        let time_span = diagnostics.time_span(ctx.command_encoder(), "dynlight_shadow_face");
+        let time_span = diagnostics.time_span(ctx.command_encoder(), span);
         color_pass(ctx.command_encoder(), target, UNSHADOWED, None);
         time_span.end(ctx.command_encoder());
         return;
     };
-    let Some(variant) = pipelines.variant(layers.format) else {
+    let through = layers.targets(face.target, &pipelines);
+    let variant = through
+        .as_ref()
+        .and_then(|through| pipelines.variant(Some(through.format)));
+    let (Some(through), Some(variant), Some(groups)) = (through, variant, groups.get(face.target))
+    else {
         feedback.report_incomplete();
         return;
     };
-    let (Some(moments), Some(blur), Some(moments_group), Some(blur_group)) = (
+    let (Some(moments), Some(blur)) = (
         cache.get_render_pipeline(variant.moments),
         cache.get_render_pipeline(variant.blur),
-        groups.moments.as_ref(),
-        groups.blur.as_ref(),
     ) else {
         feedback.report_incomplete();
         return;
     };
-    let depth = &pipelines.depth;
+    let depth = through.depth;
 
-    let time_span = diagnostics.time_span(ctx.command_encoder(), "dynlight_shadow_face");
+    let time_span = diagnostics.time_span(ctx.command_encoder(), span);
     {
         let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("dynlight_shadow_face_depth"),
@@ -307,10 +222,10 @@ pub(super) fn shadow_face_pass(
         });
         if let Err(error) = phase.render(&mut pass, world, view_entity) {
             error!(
-                "dynlight shadows: face {} failed to draw: {error:?}",
-                face.layer
+                "dynlight shadows: {:?} failed to draw: {error:?}",
+                face.target
             );
-            feedback.report_layer(face.layer);
+            feedback.report(face.target);
         }
     }
 
@@ -320,11 +235,11 @@ pub(super) fn shadow_face_pass(
     let passes = [
         (
             moments,
-            moments_group,
-            &variant.scratch,
+            &groups.moments,
+            through.scratch,
             &moments_offsets[..],
         ),
-        (blur, blur_group, target, &[face_offset][..]),
+        (blur, &groups.blur, target, &[face_offset][..]),
     ];
     for (pipeline, group, target, offsets) in passes {
         color_pass(

@@ -1,4 +1,4 @@
-//! The sky's diffuse light in the light buffer, between the globals and the lights. The
+//! The sky's diffuse light in the light buffer, between the globals and the sun's cascades. The
 //! environment slice computes it from the sky's image; the light slice packs it.
 
 use bevy::prelude::*;
@@ -26,8 +26,8 @@ mod tests {
     use core::mem::size_of;
 
     use super::*;
-    use crate::shared::GPU_LIGHT_GLOBALS_SIZE;
     use crate::shared::wesl_check::{compile_shared_types, struct_layout};
+    use crate::shared::{GPU_LIGHT_GLOBALS_SIZE, GPU_SUN_SHADOW_SIZE};
 
     #[test]
     fn sky_layout_matches_wesl() {
@@ -39,7 +39,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sky_and_the_lights_follow_the_globals() {
+    fn the_sky_the_sun_shadow_and_the_lights_follow_the_globals() {
         let module = compile_shared_types();
         let buffer = struct_layout(&module, "DynamicLights");
         let sky = GPU_LIGHT_GLOBALS_SIZE as u32;
@@ -48,7 +48,11 @@ mod tests {
             vec![
                 ("globals".to_string(), 0),
                 ("sky".to_string(), sky),
-                ("lights".to_string(), sky + GPU_SKY_SIZE as u32),
+                ("sun_shadow".to_string(), sky + GPU_SKY_SIZE as u32),
+                (
+                    "lights".to_string(),
+                    sky + (GPU_SKY_SIZE + GPU_SUN_SHADOW_SIZE) as u32
+                ),
             ]
         );
     }

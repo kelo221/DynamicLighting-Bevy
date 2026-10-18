@@ -85,7 +85,9 @@ pub enum ShadowMode {
     #[default]
     Raytraced,
     /// Baked shadows plus a realtime shadow cubemap, so moving meshes cast shadows too.
-    /// Expensive; limited by `DynamicLightingSettings::shadow_cubemap_budget`.
+    /// Expensive; limited by `DynamicLightingSettings::shadow_cubemap_budget`. A sun gets three
+    /// shadow cascades over the camera's view instead, up to
+    /// `DynamicLightingSettings::sun_shadow_distance`; one sun has them at a time.
     Realtime,
 }
 

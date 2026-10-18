@@ -5,7 +5,7 @@ use crate::dynamic_geometry::shader_tests::{DISTANCE_CUBES, LIGHT_BVH, SKY_PROBE
 use crate::environment::shader_tests::SKY;
 use crate::light::shader_tests::{AREA, LIGHT_TYPES, LTC, SUN};
 use crate::light_clusters::shader_tests::CLUSTERS;
-use crate::realtime_shadows::shader_tests::VSM;
+use crate::realtime_shadows::shader_tests::{SUN_VSM, VSM};
 use crate::shared::wesl_check::{
     MATERIAL_CONSTANTS as CONSTANTS, SHARED_TYPES, compile, shared_variant,
 };
@@ -52,6 +52,7 @@ pub(crate) fn surface_modules() -> Vec<(&'static str, &'static str)> {
         SUN_MAP,
         SKY_PROBES,
         VSM,
+        SUN_VSM,
         CLUSTERS,
         SKY,
         BINDINGS,

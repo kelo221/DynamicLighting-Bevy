@@ -16,7 +16,9 @@ use bevy::render::sync_world::SyncToRenderWorld;
 
 use super::casters::{ActiveCube, Caster, face_lists};
 use super::cubemaps::{ShadowCubemapCapacity, ensure_capacity, shadow_cubemap_format};
-use super::faces::{SHADOW_NEAR_PLANE, face_blur, face_orientation, select_shadow_lights};
+use super::faces::{
+    POINT_BLUR, SHADOW_NEAR_PLANE, face_blur, face_orientation, select_shadow_lights,
+};
 use super::slots::{CubePose, CubeSlots};
 use super::tracking::{CasterChanges, bounds};
 use crate::baked_lighting::BakedReceiver;
@@ -36,12 +38,14 @@ pub struct ShadowFace {
     pub casters: Vec<Entity>,
 }
 
-/// What the face pass reads for one face view: the WESL `ShadowFace`.
+/// What the face pass reads for one face or cascade view: the WESL `ShadowFace`.
 #[derive(Component, ShaderType, Clone, Copy, Debug)]
 pub struct ShadowFaceUniform {
     pub radius: f32,
     pub layer: u32,
     pub blur: f32,
+    /// 1 for the sun's cascades, whose depth is linear along the sun's rays; 0 for cube faces.
+    pub orthographic: u32,
 }
 
 /// What the shadow cubemaps cost this frame.
@@ -51,6 +55,8 @@ pub struct ShadowCubemapStats {
     pub lights: u32,
     /// Cube faces rendered this frame; the others kept their last rendering.
     pub faces_rendered: u32,
+    /// Cascades of the sun's realtime shadows rendered this frame.
+    pub cascades_rendered: u32,
 }
 
 /// The face entities, six per cube slot, the light in each slot and the cubes rendering.
@@ -223,17 +229,16 @@ pub(super) fn place_shadow_faces(
             face.pose = pose;
         }
     }
-    *stats = ShadowCubemapStats {
-        lights: poses.len() as u32,
-        faces_rendered: placed
-            .active
-            .iter()
-            .map(|cube| cube.faces.count_ones())
-            .sum(),
-    };
+    stats.lights = poses.len() as u32;
+    stats.faces_rendered = placed
+        .active
+        .iter()
+        .map(|cube| cube.faces.count_ones())
+        .sum();
 }
 
-type CasterItem<'a> = (
+/// The meshes the shadow views may draw, as [`CasterItem`]s.
+pub(super) type CasterQuery<'a> = (
     Entity,
     &'a GlobalTransform,
     Option<&'a Aabb>,
@@ -241,13 +246,41 @@ type CasterItem<'a> = (
     Option<&'a RenderLayers>,
     Has<BakedReceiver>,
 );
+pub(super) type CasterItem<'a> = (
+    Entity,
+    &'a GlobalTransform,
+    Option<&'a Aabb>,
+    &'a InheritedVisibility,
+    Option<&'a RenderLayers>,
+    bool,
+);
+
+/// A mesh as a shadow caster: its bounds, whether it is baked, and whether the shadow views see
+/// it.
+pub(super) fn caster_of(item: CasterItem) -> (Entity, Caster) {
+    let (entity, transform, aabb, inherited, layers, baked) = item;
+    let bounds = aabb.map(|aabb| {
+        let sphere = bounds(transform, aabb, baked);
+        (sphere.center, sphere.radius)
+    });
+    let shown =
+        inherited.get() && layers.is_none_or(|layers| layers.intersects(&RenderLayers::default()));
+    (
+        entity,
+        Caster {
+            bounds,
+            baked,
+            shown,
+        },
+    )
+}
 
 /// Lists the casters of every face rendering this frame and marks them visible, so Bevy
 /// extracts them even when no camera sees them.
 pub(super) fn cull_casters(
     placed: Res<ShadowFaces>,
     mut faces: Query<&mut ShadowFace>,
-    casters: Query<CasterItem, With<Mesh3d>>,
+    casters: Query<CasterQuery, With<Mesh3d>>,
     mut visibility: Query<&mut ViewVisibility>,
     mut found: Local<Vec<(Entity, Caster)>>,
 ) {
@@ -255,23 +288,7 @@ pub(super) fn cull_casters(
         return;
     }
     found.clear();
-    let default_layer = RenderLayers::default();
-    for (entity, transform, aabb, inherited, layers, baked) in &casters {
-        let bounds = aabb.map(|aabb| {
-            let sphere = bounds(transform, aabb, baked);
-            (sphere.center, sphere.radius)
-        });
-        let shown =
-            inherited.get() && layers.is_none_or(|layers| layers.intersects(&default_layer));
-        found.push((
-            entity,
-            Caster {
-                bounds,
-                baked,
-                shown,
-            },
-        ));
-    }
+    found.extend(casters.iter().map(caster_of));
     let casters: Vec<Caster> = found.iter().map(|(_, caster)| *caster).collect();
     let lists = face_lists(&placed.active, &casters, placed.faces.len());
     for (list, &face) in lists.iter().zip(&placed.faces) {
@@ -294,5 +311,5 @@ const IDLE_POSE: CubePose = CubePose {
     position: Vec3::ZERO,
     radius: 1.0,
     moving_only: false,
-    blur: super::faces::POINT_BLUR,
+    blur: POINT_BLUR,
 };

@@ -2,6 +2,7 @@
 //! them, and only faces rendering this frame reach the render world as views.
 
 use bevy::asset::{AssetPlugin, RenderAssetUsages};
+use bevy::camera::CameraProjection;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{VisibilityPlugin, VisibilitySystems};
 use bevy::core_pipeline::schedule::RootNonCameraView;
@@ -13,10 +14,13 @@ use bevy::render::MainWorld;
 use bevy::render::sync_world::{MainEntity, RenderEntity};
 use bevy::render::view::{ExtractedView, NoIndirectDrawing};
 
+use super::cascades::{CascadeViewer, fit_cascades};
 use super::casters::ActiveCube;
 use super::extract::{ShadowFaceView, extract_shadow_faces};
 use super::slots::{ALL_FACES, CubePose};
-use super::views::{ShadowFace, ShadowFaces, cull_casters};
+use super::sun::SunCascadeView;
+use super::tracking::ShadowTarget;
+use super::views::{ShadowFace, ShadowFaceUniform, ShadowFaces, cull_casters};
 
 const POSE: CubePose = CubePose {
     position: Vec3::ZERO,
@@ -120,7 +124,7 @@ fn only_rendering_faces_carry_a_view() {
     render.run_system_once(extract_shadow_faces).unwrap();
     assert!(has_view(&render, first) && has_view(&render, second));
     let view = render.get::<ShadowFaceView>(first).unwrap();
-    assert_eq!(view.layer, 0);
+    assert_eq!(view.target, ShadowTarget::Face(0));
     // Meshes are keyed by main entity in the render world.
     assert_eq!(
         view.casters,
@@ -134,4 +138,34 @@ fn only_rendering_faces_carry_a_view() {
     let stopped = render.entity(second);
     assert!(!stopped.contains::<ExtractedView>() && !stopped.contains::<RootNonCameraView>());
     assert!(!stopped.contains::<ShadowFaceView>());
+}
+
+#[test]
+fn rendering_cascades_carry_an_orthographic_view() {
+    let mut render = World::new();
+    let (first, second) = (render.spawn_empty().id(), render.spawn_empty().id());
+    let mut main = MainWorld::default();
+    let viewer = CascadeViewer {
+        world_from_view: Mat4::IDENTITY,
+        clip_from_view: PerspectiveProjection::default().get_clip_from_view(),
+    };
+    let poses = fit_cascades(&viewer, Vec3::Y, 50.0, false, &[]);
+    let cascade = |index: usize, renders| SunCascadeView {
+        index: index as u32,
+        pose: Some(poses[index]),
+        renders,
+        casters: Vec::new(),
+    };
+    main.spawn((cascade(2, true), RenderEntity::from(first)));
+    main.spawn((cascade(1, false), RenderEntity::from(second)));
+    render.insert_resource(main);
+
+    render.run_system_once(extract_shadow_faces).unwrap();
+    assert!(has_view(&render, first) && !has_view(&render, second));
+    let view = render.get::<ShadowFaceView>(first).unwrap();
+    assert_eq!(view.target, ShadowTarget::Cascade(2));
+    let uniform = render.get::<ShadowFaceUniform>(first).unwrap();
+    assert_eq!((uniform.layer, uniform.orthographic), (2, 1));
+    let extracted = render.get::<ExtractedView>(first).unwrap();
+    assert_eq!(extracted.clip_from_view, poses[2].view().1);
 }

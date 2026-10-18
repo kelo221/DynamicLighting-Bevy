@@ -161,11 +161,22 @@ fn stress_lights_baked() {
 
 /// A baked soft sun and a baked sky over a courtyard with a porch, with a lamp; the ball and the
 /// crate aren't baked and take the pergola's and a tree's shadows from the sun map and the sky's
-/// from the sky probes.
+/// from the sky probes, and cast theirs through the sun's realtime cascades.
 #[test]
 #[ignore = "needs a GPU"]
 fn outdoor() {
     check("outdoor", "outdoor", &["--bake"]);
+}
+
+/// The ball's realtime sun shadow on the baked ground, next to the pergola's baked shadows.
+#[test]
+#[ignore = "needs a GPU"]
+fn outdoor_moving_shadow() {
+    check(
+        "outdoor_moving_shadow",
+        "outdoor",
+        &["--bake", "--camera", "-4.6,2.4,0.6,-1.7,0.25,-2.4"],
+    );
 }
 
 /// The sun's shader paths through FXC, which lighting_test's scene doesn't compile.
@@ -182,7 +193,8 @@ fn outdoor_on_fxc_matches() {
     );
 }
 
-/// Without a bake the sun and the sky shine unshadowed through the dynamic-geometry path.
+/// Without a bake the sky shines unshadowed through the dynamic-geometry path and the sun's
+/// cascades shadow everything.
 #[test]
 #[ignore = "needs a GPU"]
 fn outdoor_unbaked() {

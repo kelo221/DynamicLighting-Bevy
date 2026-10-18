@@ -1,7 +1,7 @@
-//! Fills the phase of every face rendering this frame with its casters, through each material's
-//! own prepass pipeline, as Bevy's depth prepass would draw them. A face whose casters aren't all
-//! ready (mesh, material or textures not on the GPU yet, pipeline still compiling) is reported,
-//! so it renders again next frame.
+//! Fills the phase of every face and cascade rendering this frame with its casters, through each
+//! material's own prepass pipeline, as Bevy's depth prepass would draw them. A view whose casters
+//! aren't all ready (mesh, material or textures not on the GPU yet, pipeline still compiling) is
+//! reported, so it renders again next frame.
 
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity};
 
 use super::extract::ShadowFaceView;
 use super::phase::{FaceBatchSetKey, FaceBinKey, Reported, ShadowFace3d};
-use super::tracking::ShadowFeedback;
+use super::tracking::{ShadowFeedback, ShadowTarget};
 
 #[derive(SystemParam)]
 pub(super) struct FaceQueue<'w, 's> {
@@ -60,7 +60,7 @@ struct Queued {
 
 struct Face {
     view: RetainedViewEntity,
-    layer: u32,
+    target: ShadowTarget,
     casters: Vec<Queued>,
     missed: bool,
 }
@@ -106,7 +106,7 @@ pub(super) fn queue_shadow_faces(world: &mut World, state: &mut SystemState<Face
         for (view, face_view) in &queue.views {
             let mut face = Face {
                 view: view.retained_view_entity,
-                layer: face_view.layer,
+                target: face_view.target,
                 casters: Vec::new(),
                 missed: false,
             };
@@ -219,7 +219,7 @@ pub(super) fn queue_shadow_faces(world: &mut World, state: &mut SystemState<Face
             );
         }
         if face.missed {
-            queue.feedback.report_layer(face.layer);
+            queue.feedback.report(face.target);
         }
     }
 }

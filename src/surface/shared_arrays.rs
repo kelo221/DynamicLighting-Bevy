@@ -1,4 +1,5 @@
-//! Keeps lit materials bound to the current shadow cubemap and cookie arrays and sky cube.
+//! Keeps lit materials bound to the current shadow cubemap, sun cascade and cookie arrays and sky
+//! cube.
 //!
 //! Bevy prepares a material's bind group once and doesn't track the images in it. The images
 //! are replaced under their fixed handles when they grow or change, so every [`DynLitMaterial`]
@@ -11,14 +12,18 @@ use bevy::prelude::*;
 use super::material::DynLitMaterial;
 use crate::cookies::COOKIE_ARRAY;
 use crate::environment::SKY_SPECULAR;
-use crate::realtime_shadows::SHADOW_CUBEMAPS;
+use crate::realtime_shadows::{SHADOW_CUBEMAPS, SUN_CASCADES};
 
 /// Whether `event` replaced one of the arrays every lit material binds.
 fn replaces_shared_array(event: &AssetEvent<Image>) -> bool {
     match event {
-        AssetEvent::Added { id } | AssetEvent::Modified { id } => {
-            *id == SHADOW_CUBEMAPS.id() || *id == COOKIE_ARRAY.id() || *id == SKY_SPECULAR.id()
-        }
+        AssetEvent::Added { id } | AssetEvent::Modified { id } => [
+            SHADOW_CUBEMAPS.id(),
+            SUN_CASCADES.id(),
+            COOKIE_ARRAY.id(),
+            SKY_SPECULAR.id(),
+        ]
+        .contains(id),
         _ => false,
     }
 }
@@ -57,6 +62,9 @@ mod tests {
         }));
         assert!(replaces_shared_array(&AssetEvent::Modified {
             id: SKY_SPECULAR.id()
+        }));
+        assert!(replaces_shared_array(&AssetEvent::Added {
+            id: SUN_CASCADES.id()
         }));
         assert!(!replaces_shared_array(&AssetEvent::Removed {
             id: SHADOW_CUBEMAPS.id()

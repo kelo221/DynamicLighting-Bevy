@@ -17,6 +17,7 @@ mod name_path;
 mod settings;
 mod shader_buffer;
 mod sky;
+mod sun_shadow;
 mod variant;
 #[cfg(test)]
 pub(crate) mod wesl_check;
@@ -36,6 +37,9 @@ pub use settings::{
 };
 pub use shader_buffer::{buffer_capacity, frame_shader_buffer, write_shader_buffer};
 pub use sky::{GPU_SKY_SIZE, GpuSkyIrradiance, SkyIrradiance};
+pub use sun_shadow::{
+    GPU_SUN_SHADOW_SIZE, GpuSunCascade, GpuSunShadow, SUN_CASCADE_COUNT, SunShadowBlock,
+};
 pub use variant::{ShaderVariant, VARIANT_SHADER};
 
 pub struct SharedPlugin;
@@ -43,7 +47,8 @@ pub struct SharedPlugin;
 impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DynamicLightingSettings>()
-            .init_resource::<SkyIrradiance>();
+            .init_resource::<SkyIrradiance>()
+            .init_resource::<SunShadowBlock>();
         feature_use::plugin(app);
     }
 

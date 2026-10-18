@@ -1,7 +1,7 @@
-//! What changed for the shadow cubemaps since the last frame: shadow casters that moved,
-//! appeared, disappeared, animate, changed render layers, mesh or material, and the faces whose
-//! last rendering missed something (a caster's pipeline still compiling, its mesh, material or
-//! textures still on their way to the GPU).
+//! What changed for the shadow cubemaps and the sun's cascades since the last frame: shadow
+//! casters that moved, appeared, disappeared, animate, changed render layers, mesh, material or
+//! bake data, and the faces and cascades whose last rendering missed something (a caster's
+//! pipeline still compiling, its mesh, material or textures still on their way to the GPU).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -21,34 +21,51 @@ use crate::baked_lighting::BakedReceiver;
 /// frame behind, so a report arrives a frame or two late.
 const SETTLE_FRAMES: u32 = 4;
 
-/// Filled by the render world: faces that rendered without some of their casters, or every face
-/// when the face pass couldn't run at all.
+/// What a shadow view renders into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ShadowTarget {
+    /// A layer of the shadow cubemap array.
+    Face(u32),
+    /// A layer of the sun's cascade array.
+    Cascade(u32),
+}
+
+/// Filled by the render world: faces and cascades that rendered without some of their casters,
+/// or all of them when the pass couldn't run at all.
 #[derive(Resource, Clone, Default)]
 pub(super) struct ShadowFeedback(Arc<Missed>);
 
 #[derive(Default)]
 struct Missed {
     every_face: AtomicBool,
-    layers: Mutex<Vec<u32>>,
+    targets: Mutex<Vec<ShadowTarget>>,
 }
 
 impl ShadowFeedback {
-    /// The face pass couldn't run, so every face must render again.
+    /// The pass couldn't run, so every face and cascade must render again.
     pub(super) fn report_incomplete(&self) {
         self.0.every_face.store(true, Ordering::Relaxed);
     }
 
-    /// The face at array layer `layer` rendered without some of its casters.
-    pub(super) fn report_layer(&self, layer: u32) {
-        let mut layers = self.0.layers.lock().unwrap_or_else(PoisonError::into_inner);
-        layers.push(layer);
+    /// `target` rendered without some of its casters.
+    pub(super) fn report(&self, target: ShadowTarget) {
+        let mut targets = self
+            .0
+            .targets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        targets.push(target);
     }
 
-    /// Whether every face must render again, and the layers that must.
-    fn take(&self) -> (bool, Vec<u32>) {
+    /// Whether everything must render again, and the targets that must.
+    fn take(&self) -> (bool, Vec<ShadowTarget>) {
         let every_face = self.0.every_face.swap(false, Ordering::Relaxed);
-        let mut layers = self.0.layers.lock().unwrap_or_else(PoisonError::into_inner);
-        (every_face, core::mem::take(&mut *layers))
+        let mut targets = self
+            .0
+            .targets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        (every_face, core::mem::take(&mut *targets))
     }
 }
 
@@ -56,6 +73,19 @@ impl ShadowFeedback {
 /// caster that moves or disappears is also reported where it was.
 #[derive(Resource, Default)]
 pub(super) struct CasterBounds(EntityHashMap<Seen>);
+
+impl CasterBounds {
+    /// The bounding spheres of the visible casters with bounds, leaving out baked ones when
+    /// `moving_only`.
+    pub(super) fn spheres(&self, moving_only: bool) -> Vec<(Vec3, f32)> {
+        self.0
+            .values()
+            .filter_map(|seen| seen.bounds)
+            .filter(|bounds| !(moving_only && bounds.baked))
+            .map(|bounds| (bounds.center, bounds.radius))
+            .collect()
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Seen {
@@ -74,7 +104,9 @@ pub(super) struct CasterChanges {
     pub changes: Vec<CasterChange>,
     /// Array layers whose last rendering missed some casters.
     pub redraw: Vec<u32>,
-    /// Frames left in which every face renders.
+    /// The sun's cascades whose last rendering missed some casters, one bit each.
+    pub redraw_cascades: u8,
+    /// Frames left in which every face and cascade renders.
     pub settle: u32,
     /// Casters with a new mesh, material or textures, and the frames left in which they are
     /// reported where they are: the new data may take a frame or two to reach the GPU.
@@ -88,6 +120,7 @@ type CasterItem<'a> = (
     &'a InheritedVisibility,
     Has<BakedReceiver>,
 );
+/// A caster that became baked is reported too, so its bounds say it is baked.
 type Edited = (
     With<Mesh3d>,
     Or<(
@@ -95,6 +128,7 @@ type Edited = (
         Changed<Aabb>,
         Changed<InheritedVisibility>,
         Changed<RenderLayers>,
+        Added<BakedReceiver>,
     )>,
 );
 /// Systems that set a transform every frame mark it changed even while it stays put, so these
@@ -178,21 +212,33 @@ pub(super) fn track_casters(
     let CasterChanges {
         changes: list,
         redraw,
+        redraw_cascades,
         settle,
         lingering,
     } = &mut *changes;
     list.clear();
-    let every_face;
-    (every_face, *redraw) = feedback.take();
+    let (every_face, missed) = feedback.take();
+    redraw.clear();
+    *redraw_cascades = 0;
+    for target in missed {
+        match target {
+            ShadowTarget::Face(layer) => redraw.push(layer),
+            ShadowTarget::Cascade(index) => *redraw_cascades |= 1 << index.min(7),
+        }
+    }
     // Which meshes are baked decides what cubes of baked lights draw.
-    if every_face | !rebaked.is_empty() | (unbaked.read().count() > 0) {
+    let unbaked: Vec<Entity> = unbaked.read().collect();
+    if every_face | !rebaked.is_empty() | !unbaked.is_empty() {
         *settle = SETTLE_FRAMES;
     }
 
     for entity in removed.read() {
         list.extend(known.0.remove(&entity).and_then(|seen| seen.bounds));
     }
-    for caster in &edited {
+    let unbaked = unbaked
+        .iter()
+        .filter_map(|&entity| casters.get(entity).ok());
+    for caster in edited.iter().chain(unbaked) {
         report(caster, &mut known, list, settle);
     }
     for caster in &moved {
@@ -246,9 +292,10 @@ mod tests {
         assert_eq!(feedback.take(), (true, vec![]));
         assert_eq!(feedback.take(), (false, vec![]));
         let render_world = feedback.clone();
-        render_world.report_layer(7);
-        render_world.report_layer(2);
-        assert_eq!(feedback.take(), (false, vec![7, 2]));
+        render_world.report(ShadowTarget::Face(7));
+        render_world.report(ShadowTarget::Cascade(2));
+        let missed = vec![ShadowTarget::Face(7), ShadowTarget::Cascade(2)];
+        assert_eq!(feedback.take(), (false, missed));
         assert_eq!(feedback.take(), (false, vec![]));
     }
 }

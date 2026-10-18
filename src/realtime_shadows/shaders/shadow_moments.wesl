@@ -1,5 +1,6 @@
-// First half of a shadow cubemap face: the face view's depth becomes variance moments
-// (d / r, (d / r)²) of the distance d from the light, blurred horizontally.
+// First half of a shadow cubemap face or sun cascade: the view's depth becomes variance moments
+// (d, d²), blurred horizontally. A cube face's d is the distance from the light over its radius;
+// a cascade's is its linear depth along the sun's rays, 0 at its sunward end.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_render::view::View;
@@ -19,6 +20,11 @@ fn moments_at(pixel: vec2<i32>) -> vec2<f32> {
     if depth <= 0.0 {
         return vec2(1.0);
     }
+    if face.orthographic != 0u {
+        // Reverse Z: 1 at the sunward end, 0 at the far end.
+        let d = 1.0 - depth;
+        return vec2(d, d * d);
+    }
     let uv = (vec2<f32>(texel) + 0.5) / vec2<f32>(size);
     let clip = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let world = view.world_from_clip * clip;
@@ -30,7 +36,10 @@ fn moments_at(pixel: vec2<i32>) -> vec2<f32> {
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(depth_texture));
     // Cube faces are left-handed: face texel x shows view column (size - 1 - x).
-    let pixel = vec2(size.x - 1 - i32(in.position.x), i32(in.position.y));
+    var pixel = vec2(size.x - 1 - i32(in.position.x), i32(in.position.y));
+    if face.orthographic != 0u {
+        pixel = vec2<i32>(in.position.xy);
+    }
     var moments = moments_at(pixel);
     var total = 1.0;
     let taps = blur_taps(face.blur);

@@ -15,10 +15,11 @@ import dynlight::light::shaders::area::{
 import dynlight::light::shaders::ltc::ltc_uv;
 import dynlight::light::shaders::sun::{sun_specular_direction, sun_specular_scale};
 import dynlight::surface::shaders::bindings::{
-    light_cookies, light_cookie_sampler, area_light_lut, area_light_lut_sampler,
+    dynamic_lights, light_cookies, light_cookie_sampler, area_light_lut, area_light_lut_sampler,
 };
 import dynlight::surface::shaders::brdf::{PI, reflectance};
 import dynlight::realtime_shadows::shaders::vsm::realtime_shadow;
+import dynlight::realtime_shadows::shaders::sun_vsm::sun_shadow;
 import dynlight::shared::shaders::variant::{
     FEATURE_LIGHT_PATTERNS, FEATURE_AREA_LIGHTS, FEATURE_REALTIME_SHADOWS, FEATURE_SUN,
 };
@@ -117,7 +118,8 @@ fn cookie(light: GpuLight, direction: vec3<f32>, theta: f32) -> f32 {
     return textureSampleLevel(light_cookies, light_cookie_sampler, uv, i32(light.cookie_index), 0.0).r;
 }
 
-// The light-type cone or pattern, cookie, realtime shadow and shimmer at the surface, 0 to 1.
+// The light-type cone or pattern, cookie, realtime shadow and shimmer at the surface, 0 to 1. A
+// sun's realtime shadow comes from its cascades.
 fn light_mask(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry, time: f32) -> f32 {
     var map = 1.0;
     let kind = light_type(light);
@@ -142,7 +144,12 @@ fn light_mask(light: GpuLight, surface: SurfacePoint, geometry: LightGeometry, t
         }
     }
     if FEATURE_REALTIME_SHADOWS && light_has_shadow_cubemap(light) {
-        map *= realtime_shadow(light, geometry.to_center, facing_cosine(light, surface, geometry));
+        if is_sun(light) {
+            let cosine = dot(surface.normal, light.forward);
+            map *= sun_shadow(dynamic_lights.sun_shadow, surface.world, surface.normal, cosine, surface.baked);
+        } else {
+            map *= realtime_shadow(light, geometry.to_center, facing_cosine(light, surface, geometry));
+        }
     }
     return map * shimmer(light, surface.world, time);
 }

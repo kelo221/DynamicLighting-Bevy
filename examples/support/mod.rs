@@ -57,6 +57,18 @@ pub fn flag(name: &str) -> bool {
     args().any(|arg| arg == name)
 }
 
+/// The camera from `--camera x,y,z,target_x,target_y,target_z`.
+pub fn fixed_camera() -> Option<Transform> {
+    let numbers: Vec<f32> = argument("--camera")?
+        .split(',')
+        .filter_map(|n| n.trim().parse().ok())
+        .collect();
+    let [x, y, z, tx, ty, tz] = numbers[..] else {
+        return None;
+    };
+    Some(Transform::from_xyz(x, y, z).looking_at(Vec3::new(tx, ty, tz), Vec3::Y))
+}
+
 pub fn status(message: &str) {
     page_text("demo-status", message);
 }

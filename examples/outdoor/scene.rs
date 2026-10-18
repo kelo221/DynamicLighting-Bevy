@@ -1,6 +1,7 @@
 //! The courtyard: ground, two buildings, a porch, a pergola, trees, a wall, a lamp post and two
 //! metal balls reflecting the sky, all baked; a rolling ball and a spinning crate that aren't, so
-//! they take the sun's shadows from its sun map and the sky's from the sky probes.
+//! they take the sun's shadows from its sun map and the sky's from the sky probes, and cast theirs
+//! through the sun's realtime cascades.
 
 use core::f32::consts::{PI, TAU};
 
@@ -190,6 +191,7 @@ pub fn spawn(
         color: Color::srgb(1.0, 0.93, 0.8),
         intensity: 2.5,
         angular_diameter: 1.0,
+        shadows: ShadowMode::Realtime,
         ..sun
     };
     sky::spawn(commands, images, &sun, *transform.back());

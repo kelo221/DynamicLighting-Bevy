@@ -41,7 +41,7 @@ impl<P: PhaseItem, C: RenderCommand<P>> RenderCommand<P> for Reported<C> {
     ) -> RenderCommandResult {
         let result = C::render(item, view, entity, param, pass);
         if !matches!(result, RenderCommandResult::Success) {
-            feedback.report_layer(face.layer);
+            feedback.report(face.target);
         }
         result
     }

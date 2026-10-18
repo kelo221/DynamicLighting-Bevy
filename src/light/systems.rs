@@ -11,7 +11,7 @@ use super::placement::{LightPlacement, pose_of};
 use crate::effects::LightEffectState;
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, RuntimeQuality,
-    SkyIrradiance,
+    SkyIrradiance, SunShadowBlock,
 };
 
 type LightItem<'a> = (
@@ -32,7 +32,7 @@ pub(super) fn pack_lights(
     slots: Res<BakedLightSlots>,
     placement: Res<LightPlacement>,
     attachments: Res<LightAttachments>,
-    sky: Res<SkyIrradiance>,
+    (sky, sun_shadow): (Res<SkyIrradiance>, Res<SunShadowBlock>),
     lights: Query<LightItem>,
     cameras: Query<(&Camera, &GlobalTransform, &Frustum)>,
     mut packed: ResMut<PackedLights>,
@@ -53,7 +53,12 @@ pub(super) fn pack_lights(
         bounce_bits_per_pixel: 8,
         shadow_bits_per_texel: 1,
         cookie_index: attachments.cookies.get(&entity).copied(),
-        shadow_cubemap_index: attachments.shadow_cubemaps.get(&entity).copied(),
+        // A sun's flag means it has the cascades; it has no slot.
+        shadow_cubemap_index: attachments
+            .shadow_cubemaps
+            .get(&entity)
+            .copied()
+            .or((attachments.sun_cascades == Some(entity)).then_some(0)),
     };
 
     let mut candidates = Vec::new();
@@ -143,6 +148,7 @@ pub(super) fn pack_lights(
         _padding: [0; 2],
     };
     packed.sky = sky.0;
+    packed.sun_shadow = sun_shadow.0;
 }
 
 pub fn quality_level(quality: RuntimeQuality) -> u32 {

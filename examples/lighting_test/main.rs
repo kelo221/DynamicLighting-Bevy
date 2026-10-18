@@ -115,7 +115,7 @@ fn spawn_scene(
         Vec2::new(0.0, 4.6),
     );
     let mut camera = commands.spawn((Camera3d::default(), FogPostProcess));
-    match fixed_camera() {
+    match support::fixed_camera() {
         Some(transform) => camera.insert(transform),
         None => camera.insert((orbit_camera(), OrbitFollow(player))),
     };
@@ -259,18 +259,6 @@ fn cookie_image() -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::all(),
     )
-}
-
-/// The camera from `--camera x,y,z,target_x,target_y,target_z`.
-fn fixed_camera() -> Option<Transform> {
-    let numbers: Vec<f32> = argument("--camera")?
-        .split(',')
-        .filter_map(|n| n.trim().parse().ok())
-        .collect();
-    let [x, y, z, tx, ty, tz] = numbers[..] else {
-        return None;
-    };
-    Some(Transform::from_xyz(x, y, z).looking_at(Vec3::new(tx, ty, tz), Vec3::Y))
 }
 
 /// Orbits the cube from the front: the wall hides everything from behind.

@@ -10,6 +10,8 @@ struct ShadowFace {
     layer: u32,
     // Gaussian sigma in texels.
     blur: f32,
+    // 1 for the sun's cascades, whose depth is linear along the sun's rays; 0 for cube faces.
+    orthographic: u32,
 }
 
 const MAX_BLUR_TAPS: i32 = 6;

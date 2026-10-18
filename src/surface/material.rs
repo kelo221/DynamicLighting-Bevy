@@ -18,7 +18,7 @@ use crate::cookies::COOKIE_ARRAY;
 use crate::environment::SKY_SPECULAR;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
-use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS};
+use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS, SUN_CASCADES};
 
 const SHADER: &str = "embedded://dynlight/surface/shaders/dynlit.wesl";
 const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
@@ -42,8 +42,8 @@ pub enum ShadingModel {
 /// Texture conventions follow glTF: `metallic_roughness_texture` has roughness in green and
 /// metallic in blue, `occlusion_texture` uses red, and `normal_map_texture` is a linear
 /// tangent-space map that needs mesh tangents. `lights`, `cookies`, `baked_triangles`,
-/// `baked_aux`, `shadow_cubemaps`, `area_light_lut`, `realtime_clusters` and `sky_specular`
-/// point at the scene-wide lighting resources and should stay at their defaults.
+/// `baked_aux`, `shadow_cubemaps`, `area_light_lut`, `realtime_clusters`, `sky_specular` and
+/// `sun_cascades` point at the scene-wide lighting resources and should stay at their defaults.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 #[uniform(0, DynLitUniform)]
 #[bind_group_data(DynLitKey)]
@@ -107,6 +107,9 @@ pub struct DynLitMaterial {
     #[texture(30, dimension = "cube")]
     #[sampler(31)]
     pub sky_specular: Handle<Image>,
+    /// Sampled with the shadow cubemaps' sampler.
+    #[texture(32, dimension = "2d_array")]
+    pub sun_cascades: Handle<Image>,
 }
 
 impl Default for DynLitMaterial {
@@ -136,6 +139,7 @@ impl Default for DynLitMaterial {
             area_light_lut: AREA_LIGHT_LUT,
             realtime_clusters: REALTIME_CLUSTERS,
             sky_specular: SKY_SPECULAR,
+            sun_cascades: SUN_CASCADES,
         }
     }
 }

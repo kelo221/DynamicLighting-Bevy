@@ -7,9 +7,16 @@
 //! shadows draw only meshes without baked data. Material changes are followed for material
 //! types with a [`CasterMaterialPlugin`]; `DynLitMaterial` has one.
 //!
-//! Shader modules: `dynlight::realtime_shadows::shaders::{vsm, shadow_kernel}`; the face pass
-//! entries are `shadow_moments.wesl` and `shadow_blur.wesl`.
+//! One sun with `ShadowMode::Realtime` gets cascades instead: orthographic views along its rays
+//! over the camera's view, drawn by the same phase and pass into their own array and cached the
+//! same way (see [`cascades`]).
+//!
+//! Shader modules: `dynlight::realtime_shadows::shaders::{vsm, sun_vsm, shadow_kernel}`; the
+//! face pass entries are `shadow_moments.wesl` and `shadow_blur.wesl`.
 
+#[cfg(test)]
+mod cascade_tests;
+pub mod cascades;
 pub mod casters;
 mod cubemaps;
 mod extract;
@@ -24,6 +31,9 @@ mod render;
 #[cfg(test)]
 pub(crate) mod shader_tests;
 pub mod slots;
+mod sun;
+pub mod sun_mirror;
+mod targets;
 #[cfg(test)]
 mod tests;
 mod tracking;
@@ -43,10 +53,11 @@ use bevy::shader::load_shader_library;
 use bevy::transform::TransformSystems;
 
 pub use cubemaps::{
-    SHADOW_CUBEMAP_FORMATS, SHADOW_CUBEMAPS, ShadowCubemapCapacity, cubemap_array,
-    shadow_cubemap_format,
+    SHADOW_CUBEMAP_FORMATS, SHADOW_CUBEMAPS, SUN_CASCADES, ShadowCubemapCapacity, cascade_array,
+    cubemap_array, shadow_cubemap_format,
 };
 pub use materials::{CasterMaterial, CasterMaterialPlugin};
+pub use sun::SunCascadeView;
 pub use views::{ShadowCubemapStats, ShadowFace, ShadowFaceUniform};
 
 use crate::light::LightSystems;
@@ -65,6 +76,7 @@ impl Plugin for RealtimeShadowsPlugin {
         embedded_asset!(app, "shaders/shadow_blur.wesl");
         let feedback = tracking::ShadowFeedback::default();
         app.init_resource::<views::ShadowFaces>()
+            .init_resource::<sun::SunCascades>()
             .init_resource::<ShadowCubemapCapacity>()
             .init_resource::<tracking::CasterBounds>()
             .init_resource::<tracking::CasterChanges>()
@@ -79,8 +91,8 @@ impl Plugin for RealtimeShadowsPlugin {
             return;
         };
         render_app
-            .init_resource::<render::ShadowLayerViews>()
-            .init_resource::<render::ShadowFaceBindGroups>()
+            .init_resource::<targets::ShadowLayerViews>()
+            .init_resource::<targets::ShadowFaceBindGroups>()
             .init_resource::<DrawFunctions<phase::ShadowFace3d>>()
             .add_render_command::<phase::ShadowFace3d, phase::Reported<DrawPrepass>>()
             .add_render_command::<phase::ShadowFace3d, phase::Reported<DrawDepthOnlyPrepass>>()
@@ -90,8 +102,8 @@ impl Plugin for RealtimeShadowsPlugin {
             .add_systems(
                 Render,
                 (
-                    render::prepare_layer_views.in_set(RenderSystems::PrepareResources),
-                    render::prepare_face_bind_groups.in_set(RenderSystems::PrepareBindGroups),
+                    targets::prepare_layer_views.in_set(RenderSystems::PrepareResources),
+                    targets::prepare_face_bind_groups.in_set(RenderSystems::PrepareBindGroups),
                     queue::queue_shadow_faces.in_set(RenderSystems::QueueMeshes),
                 ),
             )
@@ -109,21 +121,28 @@ impl Plugin for RealtimeShadowsPlugin {
         }
         load_shader_library!(app, "shaders/shadow_kernel.wesl");
         load_shader_library!(app, "shaders/vsm.wesl");
+        load_shader_library!(app, "shaders/sun_vsm.wesl");
         cubemaps::create_placeholder(app);
         app.init_resource::<tracking::TouchedCasters>();
         // Caster bounds and visibility must be final before the changes are collected; the
-        // casters faces draw are marked visible along with what cameras see.
+        // casters faces and cascades draw are marked visible along with what cameras see. The
+        // cascades read the settle frames before the faces count them down.
         app.add_systems(
             PostUpdate,
             (
-                (tracking::track_casters, views::place_shadow_faces)
+                (
+                    tracking::track_casters,
+                    sun::place_sun_cascades,
+                    views::place_shadow_faces,
+                )
                     .chain()
+                    .in_set(LightSystems::Attach)
                     .after(TransformSystems::Propagate)
                     .after(VisibilitySystems::CalculateBounds)
                     .after(VisibilitySystems::VisibilityPropagate)
                     .after(LightSystems::Locate)
                     .before(VisibilitySystems::CheckVisibility),
-                views::cull_casters
+                (views::cull_casters, sun::cull_sun_casters)
                     .in_set(VisibilitySystems::CheckVisibility)
                     .after(views::place_shadow_faces),
             ),
