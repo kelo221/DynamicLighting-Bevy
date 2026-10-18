@@ -1,11 +1,12 @@
-//! The face pass, run for each face and cascade view: its casters are drawn into a depth texture
-//! shared by all views of its kind, depth becomes variance moments with a horizontal blur into a
-//! scratch texture, then a vertical blur writes the view's layer of the cube or cascade array
-//! (Henry's two Gaussian blur blits). Both blurs read their width from the face uniform. A view
-//! with no casters only clears its layer.
+//! The face pass, run by the shadow driver (`driver`) for every face and cascade view in turn:
+//! a view's casters are drawn into a depth texture shared by all views of its kind, depth
+//! becomes variance moments with a horizontal blur into a scratch texture, then a vertical blur
+//! writes the view's layer of the cube or cascade array (Henry's two Gaussian blur blits). Both
+//! blurs read their width from the face uniform. A view with no casters only clears its layer.
 
 use bevy::core_pipeline::FullscreenShader;
 use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
+use bevy::ecs::query::QueryItem;
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_component::DynamicUniformIndex;
@@ -18,15 +19,16 @@ use bevy::render::render_resource::{
     RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StoreOp,
     TextureFormat, TextureSampleType, TextureUsages, TextureView,
 };
-use bevy::render::renderer::{RenderContext, RenderDevice, ViewQuery};
+use bevy::render::renderer::{RenderContext, RenderDevice};
 use bevy::render::view::{ExtractedView, ViewUniform, ViewUniformOffset};
 
 use super::cubemaps::SHADOW_CUBEMAP_FORMATS;
+use super::driver::PreprocessedShadowViews;
 use super::extract::ShadowFaceView;
 use super::faces::SHADOW_CUBEMAP_RESOLUTION;
 use super::phase::ShadowFace3d;
 use super::targets::{ShadowFaceBindGroups, ShadowLayerViews, target_texture};
-use super::tracking::{ShadowFeedback, ShadowTarget};
+use super::tracking::ShadowFeedback;
 use super::views::ShadowFaceUniform;
 
 const MOMENTS_SHADER: &str = "embedded://dynlight/realtime_shadows/shaders/shadow_moments.wesl";
@@ -151,12 +153,24 @@ type FaceView = (
 /// What a face without casters ends up as: moments (1, 1), the light's radius everywhere.
 const UNSHADOWED: LinearRgba = LinearRgba::new(1.0, 1.0, 0.0, 1.0);
 
-/// Renders one face or cascade. When it can't, it tells the main world to render them all
-/// again.
+/// What every view draws with.
+struct Shared<'a> {
+    world: &'a World,
+    phases: &'a ViewBinnedRenderPhases<ShadowFace3d>,
+    pipelines: &'a ShadowPipelines,
+    layers: &'a ShadowLayerViews,
+    groups: &'a ShadowFaceBindGroups,
+    cache: &'a PipelineCache,
+    feedback: &'a ShadowFeedback,
+}
+
+/// Renders every face and cascade view, one after another, into one command encoder. A view
+/// that can't render is reported to the main world, which renders it again.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn shadow_face_pass(
     world: &World,
-    view: ViewQuery<FaceView>,
+    views: Query<FaceView>,
+    preprocessed: Res<PreprocessedShadowViews>,
     phases: Res<ViewBinnedRenderPhases<ShadowFace3d>>,
     pipelines: Res<ShadowPipelines>,
     layers: Res<ShadowLayerViews>,
@@ -165,45 +179,71 @@ pub(super) fn shadow_face_pass(
     feedback: Res<ShadowFeedback>,
     mut ctx: RenderContext,
 ) {
-    let (view_entity, extracted, face, face_index, view_offset) = view.into_inner();
-    let Some(target) = layers.layer(face.target) else {
+    if views.is_empty() {
+        return;
+    }
+    let shared = Shared {
+        world,
+        phases: &phases,
+        pipelines: &pipelines,
+        layers: &layers,
+        groups: &groups,
+        cache: &cache,
+        feedback: &feedback,
+    };
+    let diagnostics = ctx.diagnostic_recorder();
+    let diagnostics = diagnostics.as_deref();
+    let time_span = diagnostics.time_span(ctx.command_encoder(), "dynlight_shadow_views");
+    for view in &views {
+        let ready = preprocessed.0.contains(&view.0);
+        draw_view(&shared, &mut ctx, view, ready);
+    }
+    time_span.end(ctx.command_encoder());
+}
+
+/// Renders one face or cascade: depth, then moments with the horizontal blur into the scratch
+/// texture, then the vertical blur into its layer. `ready`: its meshes were preprocessed.
+fn draw_view(
+    shared: &Shared,
+    ctx: &mut RenderContext,
+    (view_entity, extracted, face, face_index, view_offset): QueryItem<FaceView>,
+    ready: bool,
+) {
+    let feedback = shared.feedback;
+    let Some(target) = shared.layers.layer(face.target) else {
         feedback.report_incomplete();
         return;
     };
-    let span = match face.target {
-        ShadowTarget::Face(_) => "dynlight_shadow_face",
-        ShadowTarget::Cascade(_) => "dynlight_sun_cascade",
-    };
-    let phase = phases.get(&extracted.retained_view_entity);
-    let diagnostics = ctx.diagnostic_recorder();
-    let diagnostics = diagnostics.as_deref();
+    let phase = shared.phases.get(&extracted.retained_view_entity);
     // The depth, moments and blur passes of an empty view only turn cleared depth into
     // `UNSHADOWED`, so the layer is cleared to it instead.
     let Some(phase) = phase.filter(|phase| !phase.is_empty()) else {
-        let time_span = diagnostics.time_span(ctx.command_encoder(), span);
         color_pass(ctx.command_encoder(), target, UNSHADOWED, None);
-        time_span.end(ctx.command_encoder());
         return;
     };
-    let through = layers.targets(face.target, &pipelines);
+    if !ready {
+        feedback.report(face.target);
+        return;
+    }
+    let pipelines = shared.pipelines;
+    let through = shared.layers.targets(face.target, pipelines);
     let variant = through
         .as_ref()
         .and_then(|through| pipelines.variant(Some(through.format)));
-    let (Some(through), Some(variant), Some(groups)) = (through, variant, groups.get(face.target))
-    else {
+    let groups = shared.groups.get(face.target);
+    let (Some(through), Some(variant), Some(groups)) = (through, variant, groups) else {
         feedback.report_incomplete();
         return;
     };
     let (Some(moments), Some(blur)) = (
-        cache.get_render_pipeline(variant.moments),
-        cache.get_render_pipeline(variant.blur),
+        shared.cache.get_render_pipeline(variant.moments),
+        shared.cache.get_render_pipeline(variant.blur),
     ) else {
         feedback.report_incomplete();
         return;
     };
     let depth = through.depth;
 
-    let time_span = diagnostics.time_span(ctx.command_encoder(), span);
     {
         let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("dynlight_shadow_face_depth"),
@@ -220,7 +260,7 @@ pub(super) fn shadow_face_pass(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        if let Err(error) = phase.render(&mut pass, world, view_entity) {
+        if let Err(error) = phase.render(&mut pass, shared.world, view_entity) {
             error!(
                 "dynlight shadows: {:?} failed to draw: {error:?}",
                 face.target
@@ -249,7 +289,6 @@ pub(super) fn shadow_face_pass(
             Some((pipeline, group, offsets)),
         );
     }
-    time_span.end(ctx.command_encoder());
 }
 
 /// Clears `target` to `clear`, then draws a fullscreen triangle with `draw` if given.

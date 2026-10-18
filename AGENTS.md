@@ -52,8 +52,8 @@ src/
                          primitive-index path + triangle-ID fallback, stale-bake detection, triangles.wesl
   dynamic_geometry/      light BVH, distance cubes, sun maps and sky probes at runtime, distance_cubes.wesl,
                          sun_map.wesl, sky_probes.wesl
-  realtime_shadows/      VSM shadow cubemap pass (Core3d systems), the sun's cascades, vsm.wesl,
-                         sun_vsm.wesl, blur
+  realtime_shadows/      VSM shadow cubemap pass (its own schedule, all views in one run), the sun's
+                         cascades, vsm.wesl, sun_vsm.wesl, blur
   cookies/               cookie texture array
   environment/           sky light from an equirect image: CPU prefilter (SH9 + GGX cube), sky background pass
   fog/                   volumetric fog pass
@@ -122,7 +122,7 @@ find src tests examples benches features -type f \( -name '*.rs' -o -name '*.wes
   - Integer defs are read as `constants::NAME`; the material group is `@group(constants::MATERIAL_BIND_GROUP)`.
   - No naga_oil syntax (`#import`, `#ifdef`, `#define_import_path`, `#{...}`).
 - **Storage buffers:** `ShaderBuffer` (`bevy::render::storage`) copies raw bytemuck bytes, so padding is manual.
-- **Render passes** are systems in the `Core3d` schedule (`Core3dSystems::{Prepass, MainPass, PostProcess}`), not render-graph nodes.
+- **Render passes** are systems in the `Core3d` schedule (`Core3dSystems::{Prepass, MainPass, PostProcess}`), not render-graph nodes. One exception: the realtime shadow views run in our own `ShadowViews` schedule (`realtime_shadows::driver`), all of them in one run, because a `Core3d` run per view cost most of a frame with moving shadows. Don't give views their own `Core3d` run when there are many of them.
 - **Errors:** fallible systems and loaders return `Result` and use `BevyError` `.context(...)`. Don't `unwrap` in runtime paths unless it guards a real invariant.
 - **Change ticks:** use `#[component(summary_tick)]` on components that are queried with `Changed` often but change rarely.
 - **Camera visibility tests:** Bevy's perspective projections are infinite reverse-Z, so a camera's `far` clips nothing. Test spheres with `shared::sees_sphere`, which ignores the far plane like Bevy's own culling, not with `Frustum::intersects_sphere`.

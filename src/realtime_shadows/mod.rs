@@ -1,6 +1,6 @@
 //! Realtime variance shadow cubemaps for lights with `ShadowMode::Realtime`: six depth-only
-//! face views per light, drawn by our own render phase and `Core3d` pass, turned into blurred
-//! distance moments and sampled by the lit material.
+//! face views per light, drawn by our own render phase and pass (all views at once, before the
+//! cameras), turned into blurred distance moments and sampled by the lit material.
 //!
 //! Cubes are cached: a light keeps its slot in the cube array, and a face renders again only
 //! when its light moves or a shadow caster it can see changes. Lights that use their baked
@@ -19,6 +19,7 @@ mod cascade_tests;
 pub mod cascades;
 pub mod casters;
 mod cubemaps;
+mod driver;
 mod extract;
 #[cfg(test)]
 mod face_tests;
@@ -41,7 +42,6 @@ mod views;
 
 use bevy::asset::{AssetPlugin, embedded_asset};
 use bevy::camera::visibility::VisibilitySystems;
-use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::pbr::{DrawDepthOnlyPrepass, DrawPrepass, MeshPipeline};
 use bevy::prelude::*;
 use bevy::render::extract_component::UniformComponentPlugin;
@@ -97,7 +97,12 @@ impl Plugin for RealtimeShadowsPlugin {
             .add_render_command::<phase::ShadowFace3d, phase::Reported<DrawPrepass>>()
             .add_render_command::<phase::ShadowFace3d, phase::Reported<DrawDepthOnlyPrepass>>()
             .insert_resource(feedback)
-            .add_systems(RenderStartup, render::init_shadow_pipelines)
+            .init_resource::<driver::PreprocessedShadowViews>()
+            .add_schedule(driver::shadow_views_schedule())
+            .add_systems(
+                RenderStartup,
+                (render::init_shadow_pipelines, driver::spawn_shadow_driver),
+            )
             .add_systems(ExtractSchedule, extract::extract_shadow_faces)
             .add_systems(
                 Render,
@@ -108,10 +113,8 @@ impl Plugin for RealtimeShadowsPlugin {
                 ),
             )
             .add_systems(
-                Core3d,
-                render::shadow_face_pass
-                    .after(Core3dSystems::Prepass)
-                    .before(Core3dSystems::MainPass),
+                driver::ShadowViews,
+                (driver::preprocess_shadow_views, render::shadow_face_pass).chain(),
             );
     }
 

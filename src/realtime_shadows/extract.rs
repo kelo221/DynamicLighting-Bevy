@@ -1,13 +1,9 @@
 //! Hands every face and sun cascade rendering this frame to the render world as a view of its
-//! own, run through the `Core3d` schedule before the cameras like Bevy's point-light shadow
-//! views, with the casters it draws. Views that don't render lose their view, so nothing runs
-//! for them.
+//! own, with the casters it draws; the shadow driver (`driver`) renders them all before the
+//! cameras. Views that don't render lose their view, so nothing runs for them.
 
-use bevy::core_pipeline::Core3d;
 use bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT;
-use bevy::core_pipeline::schedule::RootNonCameraView;
 use bevy::ecs::entity::EntityHashSet;
-use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
 use bevy::render::Extract;
 use bevy::render::sync_world::{MainEntity, RenderEntity};
@@ -30,7 +26,6 @@ pub(super) struct ShadowFaceView {
 
 type FaceViewBundle = (
     ExtractedView,
-    RootNonCameraView,
     NoIndirectDrawing,
     ShadowFaceUniform,
     ShadowFaceView,
@@ -65,9 +60,9 @@ fn insert_view(commands: &mut Commands, render_entity: Entity, rendering: Render
         .iter()
         .map(|&caster| (Entity::PLACEHOLDER, MainEntity::from(caster)))
         .collect();
+    // Drawn directly: the driver repeats only Bevy's direct mesh preprocessing for them.
     commands.entity(render_entity).insert((
         view,
-        RootNonCameraView(Core3d.intern()),
         NoIndirectDrawing,
         rendering.uniform,
         ShadowFaceView {

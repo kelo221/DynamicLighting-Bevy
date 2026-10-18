@@ -101,10 +101,11 @@ fn listed_casters_are_visible_without_a_camera() {
     assert!(listed(1).is_empty(), "face 1 looks away from it");
 }
 
+/// The view is drawn directly and by the shadow driver alone, not by a schedule of its own.
 fn has_view(render: &World, entity: Entity) -> bool {
     let entity = render.entity(entity);
     entity.contains::<ExtractedView>()
-        && entity.contains::<RootNonCameraView>()
+        && !entity.contains::<RootNonCameraView>()
         && entity.contains::<NoIndirectDrawing>()
         && entity.contains::<ShadowFaceView>()
 }
@@ -136,8 +137,7 @@ fn only_rendering_faces_carry_a_view() {
     render.run_system_once(extract_shadow_faces).unwrap();
     assert!(has_view(&render, first));
     let stopped = render.entity(second);
-    assert!(!stopped.contains::<ExtractedView>() && !stopped.contains::<RootNonCameraView>());
-    assert!(!stopped.contains::<ShadowFaceView>());
+    assert!(!stopped.contains::<ExtractedView>() && !stopped.contains::<ShadowFaceView>());
 }
 
 #[test]
