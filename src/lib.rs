@@ -40,8 +40,8 @@ pub mod prelude {
     pub use crate::environment::{NoSkyBackground, SkyEnvironment};
     pub use crate::fog::{FogPostProcess, VolumetricLight, VolumetricShape};
     pub use crate::light::{
-        DynamicLight, Illumination, LightBounce, LightType, ShadowMode, Shimmer, Transparency,
-        sun_light,
+        DynamicLight, Illumination, LightBounce, LightType, LightingViewer, ShadowMode, Shimmer,
+        Transparency, sun_light,
     };
     pub use crate::shared::{
         BakeId, DynamicLightingSettings, FeatureSelection, RuntimeQuality, ShaderFeatures,

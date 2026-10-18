@@ -9,6 +9,7 @@
 mod alpha_mask;
 mod material;
 pub mod mirror;
+mod reflection;
 #[cfg(test)]
 mod shader_tests;
 mod shared_arrays;
@@ -21,6 +22,7 @@ use bevy::shader::load_shader_library;
 
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
+pub use reflection::Reflection;
 
 use crate::realtime_shadows::CasterMaterialPlugin;
 use crate::shared::shaders_available;

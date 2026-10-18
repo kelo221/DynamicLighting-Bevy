@@ -1,5 +1,4 @@
-//! Where the six face views of a shadow cubemap look, which lights get a cubemap, and which sun
-//! gets the cascades.
+//! Where the six face views of a shadow cubemap look, and which lights get a cubemap.
 
 use bevy::math::Vec3;
 
@@ -55,15 +54,6 @@ pub fn select_shadow_lights<K: Copy + Ord>(
     candidates.into_iter().map(|(key, _)| key).collect()
 }
 
-/// The sun that gets the realtime shadow cascades among `candidates` (key, intensity, name
-/// path): the brightest, ties by name path.
-pub fn select_shadowed_sun<K: Copy>(candidates: &[(K, f32, Vec<String>)]) -> Option<K> {
-    candidates
-        .iter()
-        .min_by(|(_, a, path_a), (_, b, path_b)| b.total_cmp(a).then_with(|| path_a.cmp(path_b)))
-        .map(|(key, ..)| *key)
-}
-
 #[cfg(test)]
 mod tests {
     use bevy::math::Vec2;
@@ -116,19 +106,6 @@ mod tests {
             [2, 0, 1]
         );
         assert_eq!(select_shadow_lights(lights, None, 2), [0, 1]);
-    }
-
-    #[test]
-    fn the_brightest_sun_gets_the_cascades() {
-        let path = |name: &str| vec![name.to_string()];
-        let suns = [
-            (1, 2.0, path("b")),
-            (2, 3.0, path("c")),
-            (3, 3.0, path("a")),
-        ];
-        assert_eq!(select_shadowed_sun(&suns), Some(3), "ties go by name path");
-        assert_eq!(select_shadowed_sun(&suns[..1]), Some(1));
-        assert_eq!(select_shadowed_sun::<u32>(&[]), None);
     }
 
     #[test]

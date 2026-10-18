@@ -240,7 +240,9 @@ impl CascadePose {
 
 /// The cascades over `viewer`'s view up to view depth `distance`, for a sun towards unit
 /// `to_sun`. `casters` are the bounding spheres of what the cascades may draw; each cascade's
-/// depth reaches the sunward end of those over it.
+/// depth reaches over those over it, from their sunward end to their far end or the far side of
+/// the last slice, whichever comes first. So a receiver the cascades shadow that lies past a
+/// cascade's far end lies behind every caster it holds.
 pub fn fit_cascades(
     viewer: &CascadeViewer,
     to_sun: Vec3,
@@ -250,36 +252,49 @@ pub fn fit_cascades(
 ) -> [CascadePose; SUN_CASCADE_COUNT] {
     let basis = SunBasis::new(to_sun);
     let depths = split_depths(viewer.near(), distance);
-    core::array::from_fn(|index| {
+    let mut spheres = [(Vec3::ZERO, 0.0); SUN_CASCADE_COUNT];
+    for (index, sphere) in spheres.iter_mut().enumerate() {
         let (center, radius) = bounding_sphere(&viewer.slice(depths[index], depths[index + 1]));
         // Wide enough that the sphere stays inside the rim while its center snaps to the
         // nearest step: half a step is a sixteenth of the half side.
         let snap = SNAP_TEXELS as f32 / SUN_CASCADE_RESOLUTION as f32;
         let fit = 1.0 - SUN_CASCADE_MARGIN - snap;
-        let half = (radius / fit / HALF_QUANTUM).ceil() * HALF_QUANTUM;
+        *sphere = (
+            basis.local(center),
+            (radius / fit / HALF_QUANTUM).ceil() * HALF_QUANTUM,
+        );
+    }
+    let last = spheres
+        .iter()
+        .map(|(local, half)| local.z + half)
+        .fold(f32::MIN, f32::max);
+    spheres.map(|(local, half)| {
         let step = 2.0 * half / SUN_CASCADE_RESOLUTION as f32 * SNAP_TEXELS as f32;
-        let local = basis.local(center);
         let grid = IVec2::new(
             (local.x / step).round() as i32,
             (local.y / step).round() as i32,
         );
         let (x, y) = (grid.x as f32 * step, grid.y as f32 * step);
-        let sunward = casters
+        let (sunward, far) = casters
             .iter()
             .map(|&(center, radius)| (basis.local(center), radius))
             .filter(|(at, radius)| {
                 (at.x - x).abs() <= half + radius && (at.y - y).abs() <= half + radius
             })
-            .map(|(at, radius)| at.z - radius)
-            .fold(local.z - half, f32::min);
+            .fold(
+                (local.z - half, local.z + half),
+                |(sunward, far), (at, radius)| {
+                    (
+                        sunward.min(at.z - radius),
+                        far.max((at.z + radius).min(last)),
+                    )
+                },
+            );
         CascadePose {
             basis,
             half,
             center: grid,
-            depth: IVec2::new(
-                (sunward / step).floor() as i32,
-                ((local.z + half) / step).ceil() as i32,
-            ),
+            depth: IVec2::new((sunward / step).floor() as i32, (far / step).ceil() as i32),
             moving_only,
         }
     })

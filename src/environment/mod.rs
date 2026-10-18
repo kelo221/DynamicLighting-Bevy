@@ -77,10 +77,14 @@ impl SkyEnvironment {
 #[extract_app(RenderApp)]
 pub struct NoSkyBackground;
 
-/// Whether the sky's lighting is still on its way: its image is loading or being built.
+/// Where the sky's lighting stands.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SkyStatus {
+    /// Still on its way: the image is loading or being built.
     pub building: bool,
+    /// The image can't light the scene (see the log), so the sky adds no light until the image
+    /// changes.
+    pub failed: bool,
 }
 
 /// The sky the background pass draws, if any; extracted to the render world.
@@ -135,8 +139,12 @@ impl Plugin for EnvironmentPlugin {
             return;
         }
         systems::insert_placeholders(app);
-        app.init_resource::<systems::SkyBuilds>()
-            .add_systems(PostUpdate, systems::build_skies.before(LightSystems::Pack));
+        app.init_resource::<systems::SkyBuilds>().add_systems(
+            PostUpdate,
+            systems::build_skies
+                .after(LightSystems::Choose)
+                .before(LightSystems::Pack),
+        );
         if shaders_available(app) {
             load_shader_library!(app, "shaders/sky.wesl");
         }

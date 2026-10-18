@@ -10,12 +10,12 @@ use bevy::render::render_resource::{
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
+use super::reflection::Reflection;
 use crate::baked_lighting::{
     ATTRIBUTE_TRIANGLE_ID, BAKED_AUX, BAKED_TRIANGLES, TRIANGLE_ID_LOCATION,
     primitive_index_supported,
 };
 use crate::cookies::COOKIE_ARRAY;
-use crate::environment::SKY_SPECULAR;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
 use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS, SUN_CASCADES};
@@ -42,8 +42,8 @@ pub enum ShadingModel {
 /// Texture conventions follow glTF: `metallic_roughness_texture` has roughness in green and
 /// metallic in blue, `occlusion_texture` uses red, and `normal_map_texture` is a linear
 /// tangent-space map that needs mesh tangents. `lights`, `cookies`, `baked_triangles`,
-/// `baked_aux`, `shadow_cubemaps`, `area_light_lut`, `realtime_clusters`, `sky_specular` and
-/// `sun_cascades` point at the scene-wide lighting resources and should stay at their defaults.
+/// `baked_aux`, `shadow_cubemaps`, `area_light_lut`, `realtime_clusters` and `sun_cascades`
+/// point at the scene-wide lighting resources and should stay at their defaults.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 #[uniform(0, DynLitUniform)]
 #[bind_group_data(DynLitKey)]
@@ -76,11 +76,10 @@ pub struct DynLitMaterial {
     pub occlusion_texture: Option<Handle<Image>>,
     /// How much of the occlusion texture applies, 0 to 1.
     pub occlusion_strength: f32,
-    /// Environment reflected by metallic surfaces, sampled at a mip level by roughness, in place
-    /// of the sky's reflection. Without either the ambient color is reflected.
-    #[texture(11, dimension = "cube")]
-    #[sampler(12)]
-    pub reflection_cubemap: Option<Handle<Image>>,
+    /// What metallic surfaces reflect: the sky by default.
+    #[texture(30, dimension = "cube")]
+    #[sampler(31)]
+    pub reflection: Reflection,
     /// `Mask(cutoff)` discards fragments below the cutoff; `Blend` is Henry's transparent mode.
     pub alpha_mode: AlphaMode,
     /// Faces to skip. `None` renders both sides and lights back faces with the flipped normal.
@@ -104,9 +103,6 @@ pub struct DynLitMaterial {
     pub area_light_lut: Handle<Image>,
     #[storage(29, read_only)]
     pub realtime_clusters: Handle<ShaderBuffer>,
-    #[texture(30, dimension = "cube")]
-    #[sampler(31)]
-    pub sky_specular: Handle<Image>,
     /// Sampled with the shadow cubemaps' sampler.
     #[texture(32, dimension = "2d_array")]
     pub sun_cascades: Handle<Image>,
@@ -127,7 +123,7 @@ impl Default for DynLitMaterial {
             normal_scale: 1.0,
             occlusion_texture: None,
             occlusion_strength: 1.0,
-            reflection_cubemap: None,
+            reflection: Reflection::Sky,
             alpha_mode: AlphaMode::Opaque,
             cull_mode: Some(Face::Back),
             unlit: false,
@@ -138,7 +134,6 @@ impl Default for DynLitMaterial {
             shadow_cubemaps: SHADOW_CUBEMAPS,
             area_light_lut: AREA_LIGHT_LUT,
             realtime_clusters: REALTIME_CLUSTERS,
-            sky_specular: SKY_SPECULAR,
             sun_cascades: SUN_CASCADES,
         }
     }
@@ -219,7 +214,10 @@ impl From<&DynLitMaterial> for DynLitUniform {
                 material.occlusion_texture.is_some(),
                 flags::OCCLUSION_TEXTURE,
             ),
-            (material.reflection_cubemap.is_some(), flags::REFLECTION),
+            (
+                matches!(material.reflection, Reflection::Cubemap(_)),
+                flags::REFLECTION,
+            ),
             (
                 material.shading == ShadingModel::Metallic,
                 flags::METALLIC_SHADING,
@@ -323,12 +321,12 @@ impl Material for DynLitMaterial {
 impl CasterMaterial for DynLitMaterial {
     fn visit_textures(&self, visit: &mut dyn FnMut(AssetId<Image>)) {
         [
-            &self.base_color_texture,
-            &self.emissive_texture,
-            &self.metallic_roughness_texture,
-            &self.normal_map_texture,
-            &self.occlusion_texture,
-            &self.reflection_cubemap,
+            self.base_color_texture.as_ref(),
+            self.emissive_texture.as_ref(),
+            self.metallic_roughness_texture.as_ref(),
+            self.normal_map_texture.as_ref(),
+            self.occlusion_texture.as_ref(),
+            self.reflection.cubemap(),
         ]
         .into_iter()
         .flatten()
@@ -350,6 +348,20 @@ mod tests {
         let mut seen = Vec::new();
         material.visit_textures(&mut |id| seen.push(id));
         assert_eq!(seen, [texture.id(), texture.id()]);
+    }
+
+    #[test]
+    fn only_a_cube_of_its_own_flags_the_reflection() {
+        let flags = |reflection: Reflection| {
+            let material = DynLitMaterial {
+                reflection,
+                ..default()
+            };
+            DynLitUniform::from(&material).flags & flags::REFLECTION
+        };
+        assert_eq!(flags(Reflection::Sky), 0);
+        let cube = Reflection::Cubemap(Handle::default());
+        assert_eq!(flags(cube), flags::REFLECTION);
     }
 
     #[test]

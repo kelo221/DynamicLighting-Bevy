@@ -24,7 +24,8 @@ use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
     BinnedRenderPhaseType, DrawFunctions, InputUniformIndex, ViewBinnedRenderPhases,
 };
-use bevy::render::render_resource::CachedRenderPipelineId;
+use bevy::render::render_resource::{CachedRenderPipelineId, WgpuFeatures};
+use bevy::render::renderer::RenderDevice;
 use bevy::render::sync_world::MainEntity;
 use bevy::render::view::{ExtractedView, RetainedViewEntity};
 
@@ -44,6 +45,7 @@ pub(super) struct FaceQueue<'w, 's> {
     draw_functions: Res<'w, DrawFunctions<ShadowFace3d>>,
     preprocessing: Res<'w, GpuPreprocessingSupport>,
     feedback: Res<'w, ShadowFeedback>,
+    device: Res<'w, RenderDevice>,
 }
 
 /// One caster of one face, waiting for its pipeline.
@@ -69,7 +71,14 @@ type PipelineKey = (ErasedMaterialPipelineKey, MeshVertexBufferLayoutRef);
 
 /// Bevy's prepass key for a caster with `properties` and mesh key bits `mesh_bits`, as a
 /// single-sampled depth prepass view sees it; `None` for materials that don't cast.
-fn caster_key(properties: &MaterialProperties, mesh_bits: u64) -> Option<MeshPipelineKey> {
+///
+/// Cascades don't clip depth: casters without bounds can stand sunward of a cascade's fit and
+/// are flattened onto its sunward end instead, as Bevy does for its directional shadows.
+fn caster_key(
+    properties: &MaterialProperties,
+    mesh_bits: u64,
+    cascade: bool,
+) -> Option<MeshPipelineKey> {
     if properties.reads_view_transmission_texture
         || !matches!(
             properties.render_phase_type,
@@ -81,6 +90,7 @@ fn caster_key(properties: &MaterialProperties, mesh_bits: u64) -> Option<MeshPip
     let mut key = MeshPipelineKey::from_msaa_samples(1)
         | MeshPipelineKey::DEPTH_PREPASS
         | MeshPipelineKey::from_bits_retain(mesh_bits);
+    key.set(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO, cascade);
     match properties.alpha_mode {
         AlphaMode::Opaque => {}
         AlphaMode::Mask(_) | AlphaMode::AlphaToCoverage => key |= MeshPipelineKey::MAY_DISCARD,
@@ -103,7 +113,14 @@ pub(super) fn queue_shadow_faces(world: &mut World, state: &mut SystemState<Face
             return;
         };
         let mut indices: HashMap<PipelineKey, usize> = HashMap::default();
+        // Without the feature, Bevy's prepass emulates unclipped depth in a fragment shader
+        // that reads the material.
+        let clip_control = queue
+            .device
+            .features()
+            .contains(WgpuFeatures::DEPTH_CLIP_CONTROL);
         for (view, face_view) in &queue.views {
+            let cascade = matches!(face_view.target, ShadowTarget::Cascade(_));
             let mut face = Face {
                 view: view.retained_view_entity,
                 target: face_view.target,
@@ -130,7 +147,7 @@ pub(super) fn queue_shadow_faces(world: &mut World, state: &mut SystemState<Face
                 if properties.prepass_specialize.is_none() || !properties.prepass_enabled {
                     continue;
                 }
-                let Some(mesh_key) = caster_key(properties, mesh.key_bits.bits()) else {
+                let Some(mesh_key) = caster_key(properties, mesh.key_bits.bits(), cascade) else {
                     continue;
                 };
                 let key = ErasedMaterialPipelineKey {
@@ -146,10 +163,11 @@ pub(super) fn queue_shadow_faces(world: &mut World, state: &mut SystemState<Face
                     });
                 let reads_material =
                     MeshPipelineKey::MAY_DISCARD | MeshPipelineKey::PREPASS_READS_MATERIAL;
+                let emulated = cascade && !clip_control;
                 face.casters.push(Queued {
                     entity: (entity, main_entity),
                     pipeline,
-                    depth_only: !mesh_key.intersects(reads_material),
+                    depth_only: !mesh_key.intersects(reads_material) && !emulated,
                     material_bind_group: prepared.binding.group.0,
                     mesh: mesh_id.into(),
                     slabs,
@@ -231,15 +249,26 @@ mod tests {
     #[test]
     fn opaque_and_masked_materials_cast_and_blended_ones_dont() {
         let mut properties = MaterialProperties::default();
-        let opaque = caster_key(&properties, 0).expect("opaque casts");
+        let opaque = caster_key(&properties, 0, false).expect("opaque casts");
         assert!(opaque.contains(MeshPipelineKey::DEPTH_PREPASS));
         assert!(!opaque.intersects(MeshPipelineKey::MAY_DISCARD));
         properties.alpha_mode = AlphaMode::Mask(0.5);
         properties.render_phase_type = RenderPhaseType::AlphaMask;
-        let masked = caster_key(&properties, 0).expect("masked casts");
+        let masked = caster_key(&properties, 0, false).expect("masked casts");
         assert!(masked.contains(MeshPipelineKey::MAY_DISCARD));
         properties.alpha_mode = AlphaMode::Blend;
         properties.render_phase_type = RenderPhaseType::Transparent;
-        assert_eq!(caster_key(&properties, 0), None);
+        assert_eq!(caster_key(&properties, 0, false), None);
+    }
+
+    #[test]
+    fn only_cascades_draw_without_depth_clipping() {
+        let properties = MaterialProperties::default();
+        let unclipped = |cascade| {
+            caster_key(&properties, 0, cascade)
+                .is_some_and(|key| key.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO))
+        };
+        assert!(unclipped(true));
+        assert!(!unclipped(false), "cube faces clip at the light");
     }
 }

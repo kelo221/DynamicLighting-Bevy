@@ -89,23 +89,27 @@ impl Equirect {
         row(top).lerp(row(bottom), fy)
     }
 
-    /// The image at half the size, each texel the solid-angle weighted mean of the 2×2 texels
-    /// it covers. A side of 1 stays 1; the last row or column of an odd side is dropped.
+    /// The image at half the size, rounded down (a side of 1 stays 1), each texel the
+    /// solid-angle weighted mean of the part of the image it covers: 2×2 texels, or parts of 3
+    /// along an odd side.
     pub fn downsample(&self) -> Self {
         let width = (self.width / 2).max(1);
         let height = (self.height / 2).max(1);
+        let rows = self.height as f32;
         let texels = (0..width * height)
             .into_par_iter()
             .map(|index| {
                 let (x, y) = (index % width, index / width);
                 let mut sum = Vec3::ZERO;
                 let mut weight = 0.0;
-                for sy in [y * 2, y * 2 + 1] {
-                    let sy = sy.min(self.height - 1);
-                    let solid_angle = self.texel_solid_angle(sy);
-                    for sx in [x * 2, x * 2 + 1] {
-                        sum += self.texel(sx.min(self.width - 1), sy) * solid_angle;
-                        weight += solid_angle;
+                for (sy, top, bottom) in footprint(y, self.height, height) {
+                    // The solid angle of a whole texel's column over the covered band.
+                    let band = TAU / self.width as f32
+                        * ((top / rows * PI).cos() - (bottom / rows * PI).cos());
+                    for (sx, left, right) in footprint(x, self.width, width) {
+                        let share = band * (right - left);
+                        sum += self.texel(sx, sy) * share;
+                        weight += share;
                     }
                 }
                 sum / weight
@@ -131,6 +135,19 @@ impl Equirect {
             .collect();
         Self::new(self.width, self.height, texels)
     }
+}
+
+/// The source texels that texel `index` of `to` covers along a side of `from` texels: each with
+/// the start and end of the covered part, in source texels.
+fn footprint(index: u32, from: u32, to: u32) -> impl Iterator<Item = (u32, f32, f32)> {
+    let scale = from as f32 / to as f32;
+    let (start, end) = (index as f32 * scale, (index + 1) as f32 * scale);
+    let last = (end.ceil() as u32).min(from);
+    (start.floor() as u32..last).map(move |source| {
+        let low = (source as f32).max(start);
+        let high = ((source + 1) as f32).min(end);
+        (source, low, high)
+    })
 }
 
 /// An image and its downsampled levels, down to 1×1.
@@ -231,6 +248,34 @@ mod tests {
         assert!((top - 0.25).abs() < 0.01, "{top}");
         let blended = pyramid.sample(Vec3::Y, 0.5);
         assert!(blended.x > 0.9 && blended.x <= 1.0, "{blended}");
+    }
+
+    /// The solid-angle weighted mean radiance of an image.
+    fn mean(image: &Equirect) -> Vec3 {
+        let mut sum = Vec3::ZERO;
+        for y in 0..image.height {
+            for x in 0..image.width {
+                sum += image.texel(x, y) * image.texel_solid_angle(y);
+            }
+        }
+        sum / (4.0 * PI)
+    }
+
+    #[test]
+    fn odd_sides_keep_their_last_row_and_column() {
+        let mut image = Equirect::from_fn(5, 3, |_| Vec3::ZERO);
+        for y in 0..3 {
+            image.texels[(y * 5 + 4) as usize] = Vec3::splat(10.0);
+        }
+        image.texels[12] = Vec3::splat(3.0);
+        let half = image.downsample();
+        assert_eq!((half.width, half.height), (2, 1));
+        assert!(half.texels[1].x > 0.0, "the last column counts");
+        assert!(mean(&half).abs_diff_eq(mean(&image), 1e-5));
+        let pyramid = Pyramid::new(image.clone());
+        let top = pyramid.levels.last().unwrap();
+        assert_eq!((top.width, top.height), (1, 1));
+        assert!(top.texels[0].abs_diff_eq(mean(&image), 1e-5));
     }
 
     #[test]

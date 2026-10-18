@@ -1,18 +1,79 @@
-//! Per-frame light packing: baked slots, moved lights and the realtime budget.
+//! Per-frame light packing: the sky choice, baked slots, moved lights and the realtime budget.
 
 use bevy::camera::primitives::Frustum;
 use bevy::prelude::*;
 
 use super::budget::{RealtimeCandidate, select_realtime};
-use super::buffer::{BakedLightSlots, LightAttachments, PackedLights, RealtimeViewer};
+use super::buffer::{
+    BakedLightSlots, LightAttachments, LightChoices, PackedLights, RealtimeViewer,
+};
+use super::choice::{LightRank, first_ranked};
 use super::component::DynamicLight;
+use super::kinds::LightType;
 use super::pack::{PackContext, pack};
 use super::placement::{LightPlacement, pose_of};
+use super::viewer::{LightingViewer, viewer_rank};
 use crate::effects::LightEffectState;
 use crate::shared::{
-    DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, RuntimeQuality,
-    SkyIrradiance, SunShadowBlock, sees_sphere,
+    DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, NamePaths,
+    RuntimeQuality, SkyIrradiance, SunShadowBlock, sees_sphere,
 };
+
+type CameraItem<'a> = (
+    &'a Camera,
+    &'a GlobalTransform,
+    &'a Frustum,
+    Has<Camera3d>,
+    Has<LightingViewer>,
+);
+
+type SkyItem<'a> = (
+    Entity,
+    &'a DynamicLight,
+    &'a GlobalTransform,
+    &'a InheritedVisibility,
+);
+
+/// Chooses the sky light that lights the scene into [`LightChoices`]: the first by
+/// [`LightRank`] among the visible, valid sky lights.
+pub(super) fn choose_sky(
+    lights: Query<SkyItem>,
+    paths: NamePaths,
+    mut choices: ResMut<LightChoices>,
+    mut warned: Local<bool>,
+) {
+    let skies: Vec<_> = lights
+        .iter()
+        .filter(|(_, light, _, visible)| {
+            light.light_type == LightType::Sky && light.is_valid() && visible.get()
+        })
+        .collect();
+    let sky = match skies.as_slice() {
+        [] => None,
+        [(entity, ..)] => Some(*entity),
+        _ => {
+            let ranked = skies.iter().map(|&(entity, light, transform, _)| {
+                (
+                    entity,
+                    LightRank::new(light, pose_of(transform), paths.name_path(entity)),
+                )
+            });
+            let sky = first_ranked(ranked);
+            if !*warned && let Some(sky) = sky {
+                *warned = true;
+                warn!(
+                    "dynlight sky: {} sky lights; only one lights the scene, \"{}\"",
+                    skies.len(),
+                    paths.name_path(sky).join("/")
+                );
+            }
+            sky
+        }
+    };
+    if choices.sky != sky {
+        choices.sky = sky;
+    }
+}
 
 type LightItem<'a> = (
     Entity,
@@ -24,17 +85,19 @@ type LightItem<'a> = (
 
 /// Packs every visible light into [`PackedLights`]: baked lights at their bake slots, then the
 /// realtime lights (lights marked realtime, lights the bake doesn't know, and baked lights that
-/// moved): distant lights first, all of them, then the others that fit the budget.
+/// moved): distant lights first, all of them in [`LightRank`] order, then the others that fit
+/// the budget. Of the sky lights only the chosen one is packed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pack_lights(
     time: Res<Time>,
     settings: Res<DynamicLightingSettings>,
     slots: Res<BakedLightSlots>,
     placement: Res<LightPlacement>,
-    attachments: Res<LightAttachments>,
+    (attachments, choices): (Res<LightAttachments>, Res<LightChoices>),
     (sky, sun_shadow): (Res<SkyIrradiance>, Res<SunShadowBlock>),
     lights: Query<LightItem>,
-    cameras: Query<(&Camera, &GlobalTransform, &Frustum)>,
+    cameras: Query<CameraItem>,
+    paths: NamePaths,
     mut packed: ResMut<PackedLights>,
 ) {
     let seconds = time.elapsed_secs();
@@ -64,7 +127,8 @@ pub(super) fn pack_lights(
     let mut candidates = Vec::new();
     let mut distant = Vec::new();
     for (entity, light, transform, visibility, effect) in &lights {
-        if !visibility.get() {
+        if !visibility.get() || (light.light_type == LightType::Sky && choices.sky != Some(entity))
+        {
             continue;
         }
         let pose = pose_of(transform);
@@ -91,13 +155,30 @@ pub(super) fn pack_lights(
 
     let camera = cameras
         .iter()
-        .filter(|(camera, ..)| camera.is_active)
-        .max_by_key(|(camera, ..)| camera.order);
+        .filter_map(|(camera, transform, frustum, three_d, marked)| {
+            let rank = viewer_rank(camera.is_active, camera.order, three_d, marked)?;
+            Some((rank, (camera, transform, frustum)))
+        })
+        .max_by_key(|(rank, _)| *rank)
+        .map(|(_, camera)| camera);
     packed.viewer = camera.map(|(camera, transform, _)| RealtimeViewer {
         view_from_world: transform.to_matrix().inverse(),
         clip_from_view: camera.clip_from_view(),
     });
     // Distant lights reach every fragment, so they need no budget, frustum test or grid.
+    if distant.len() > 1 {
+        let mut ranked: Vec<_> = distant
+            .drain(..)
+            .map(|item| {
+                (
+                    LightRank::new(item.1, item.2, paths.name_path(item.0)),
+                    item,
+                )
+            })
+            .collect();
+        ranked.sort_by(|(a, _), (b, _)| a.order(b));
+        distant.extend(ranked.into_iter().map(|(_, item)| item));
+    }
     let realtime_distant = distant.len() as u32;
     for (entity, light, pose, effect) in distant {
         packed
@@ -143,4 +224,39 @@ pub(super) fn pack_lights(
 
 pub fn quality_level(quality: RuntimeQuality) -> u32 {
     quality.level()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The name of the sky chosen among sky lights with these intensities and names, spawned in
+    /// this order.
+    fn chosen(skies: &[(f32, &str)]) -> Option<String> {
+        let mut app = App::new();
+        app.init_resource::<LightChoices>()
+            .add_systems(Update, choose_sky);
+        for &(intensity, name) in skies {
+            let light = DynamicLight {
+                intensity,
+                ..DynamicLight::sky()
+            };
+            let visible = InheritedVisibility::VISIBLE;
+            let name = Name::new(name.to_string());
+            app.world_mut().spawn((light, name, visible));
+        }
+        app.update();
+        let sky = app.world().resource::<LightChoices>().sky?;
+        app.world().get::<Name>(sky).map(|name| name.to_string())
+    }
+
+    #[test]
+    fn one_sky_is_chosen_whatever_the_spawn_order() {
+        assert_eq!(chosen(&[(1.0, "a"), (2.0, "b")]).as_deref(), Some("b"));
+        assert_eq!(chosen(&[(2.0, "b"), (1.0, "a")]).as_deref(), Some("b"));
+        assert_eq!(chosen(&[(1.0, "b"), (1.0, "a")]).as_deref(), Some("a"));
+        assert_eq!(chosen(&[(1.0, "a"), (1.0, "b")]).as_deref(), Some("a"));
+        assert_eq!(chosen(&[(1.0, "only")]).as_deref(), Some("only"));
+        assert_eq!(chosen(&[]), None);
+    }
 }

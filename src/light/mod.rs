@@ -13,6 +13,7 @@ mod area_record_tests;
 mod area_tests;
 mod budget;
 mod buffer;
+mod choice;
 mod component;
 mod features;
 mod kinds;
@@ -32,6 +33,7 @@ pub mod sun;
 mod systems;
 #[cfg(test)]
 mod tests;
+mod viewer;
 
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
@@ -41,8 +43,10 @@ use bevy::transform::TransformSystems;
 pub use area::AreaLightShape;
 pub use budget::{RealtimeCandidate, select_realtime};
 pub use buffer::{
-    BakedLightSlots, BakedSlot, LIGHT_BUFFER, LightAttachments, PackedLights, RealtimeViewer,
+    BakedLightSlots, BakedSlot, LIGHT_BUFFER, LightAttachments, LightChoices, PackedLights,
+    RealtimeViewer,
 };
+pub use choice::{LightRank, first_ranked};
 pub use component::DynamicLight;
 pub use features::light_features;
 pub use kinds::{
@@ -55,6 +59,7 @@ pub use presets::sun_light;
 pub use shape::{LightShape, SunDisk};
 pub use spatial::{cookie_projection_scale, type_parameters};
 pub use systems::quality_level;
+pub use viewer::{LightingViewer, viewer_rank};
 
 use crate::effects::EffectsSystems;
 use crate::shared::shaders_available;
@@ -64,6 +69,8 @@ use crate::shared::shaders_available;
 pub enum LightSystems {
     /// [`BakedInPlace`] is brought up to date, before camera frusta are computed.
     Locate,
+    /// The sky that lights the scene is chosen into [`LightChoices`].
+    Choose,
     /// Other slices assign cookie and shadow-cubemap slots in [`LightAttachments`].
     Attach,
     /// Lights are packed into [`PackedLights`] and uploaded.
@@ -75,13 +82,19 @@ pub struct LightPlugin;
 impl Plugin for LightPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<DynamicLight>()
+            .register_type::<LightingViewer>()
             .init_resource::<BakedLightSlots>()
             .init_resource::<LightAttachments>()
+            .init_resource::<LightChoices>()
             .init_resource::<PackedLights>()
             .init_resource::<placement::LightPlacement>()
             .configure_sets(
                 PostUpdate,
-                (LightSystems::Attach, LightSystems::Pack)
+                (
+                    LightSystems::Choose,
+                    LightSystems::Attach,
+                    LightSystems::Pack,
+                )
                     .chain()
                     .after(EffectsSystems)
                     .after(TransformSystems::Propagate)
@@ -96,7 +109,10 @@ impl Plugin for LightPlugin {
             )
             .add_systems(
                 PostUpdate,
-                placement::mark_baked_in_place.in_set(LightSystems::Locate),
+                (
+                    placement::mark_baked_in_place.in_set(LightSystems::Locate),
+                    systems::choose_sky.in_set(LightSystems::Choose),
+                ),
             )
             .add_systems(
                 PostUpdate,

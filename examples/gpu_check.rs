@@ -11,10 +11,14 @@
 //! the grid is built for, sees only part of the floor, so the readback also covers fragments
 //! outside the grid.
 //!
-//! `--webgpu-limits` caps the device at WebGPU's default limits (8 storage buffers per shader
-//! stage, among others) instead of whatever this GPU offers, as the most limited browsers do.
+//! `--webgpu-limits` caps the device at WebGPU's default limits (8 storage buffers and 16
+//! textures per shader stage, among others) instead of whatever this GPU offers, as the most
+//! limited browsers do. With `--many`, `--prepasses` gives the window camera, which has no `Hdr`
+//! and so tonemaps in the lit shader, depth, normal and motion-vector prepasses: the most
+//! textures Bevy's view bindings add to the material's.
 
 use bevy::camera::{CameraProjection, Hdr, ImageRenderTarget, RenderTarget, ScalingMode};
+use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass, NormalPrepass};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
@@ -155,7 +159,7 @@ fn setup_many(
         checked,
     ));
     // The grid is built for this camera, which sees only the near part of the floor.
-    commands.spawn((
+    let mut window = commands.spawn((
         Camera3d::default(),
         Camera {
             order: 1,
@@ -164,6 +168,9 @@ fn setup_many(
         Projection::Perspective(projection),
         Transform::from_xyz(-4.0, 5.0, 8.0).looking_at(Vec3::new(-6.0, 0.0, -2.0), Vec3::Y),
     ));
+    if std::env::args().any(|arg| arg == "--prepasses") {
+        window.insert((DepthPrepass, NormalPrepass, MotionVectorPrepass));
+    }
     commands.spawn(Readback::texture(target)).observe(check);
 }
 

@@ -13,10 +13,12 @@ use bevy::render::sync_world::SyncToRenderWorld;
 use super::cascades::{CascadePose, CascadeViewer, fit_cascades, plan_cascades};
 use super::casters::Caster;
 use super::cubemaps::{SUN_CASCADES, cascade_array, shadow_cubemap_format};
-use super::faces::select_shadowed_sun;
 use super::tracking::{CasterBounds, CasterChanges};
 use super::views::{CasterQuery, ShadowCubemapStats, caster_of};
-use crate::light::{BakedInPlace, DynamicLight, LightAttachments, LightType, ShadowMode};
+use crate::light::{
+    BakedInPlace, DynamicLight, LightAttachments, LightPose, LightRank, LightType, LightingViewer,
+    ShadowMode, first_ranked, viewer_rank,
+};
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuSunShadow, NamePaths, RuntimeQuality,
     SUN_CASCADE_COUNT, SunShadowBlock,
@@ -57,9 +59,10 @@ type SunItem<'a> = (
     Has<BakedInPlace>,
 );
 
-/// The sun with realtime shadows, if any: suns asking for them, visible and valid.
+/// The sun with realtime shadows, if any: the first by [`LightRank`] of the suns asking for them,
+/// visible and valid.
 fn shadowed_sun(suns: &Query<SunItem>, paths: &NamePaths, warned: &mut bool) -> Option<Entity> {
-    let candidates: Vec<(Entity, f32, Vec<String>)> = suns
+    let candidates: Vec<_> = suns
         .iter()
         .filter(|(_, light, _, visible, _)| {
             light.light_type == LightType::Sun
@@ -67,19 +70,24 @@ fn shadowed_sun(suns: &Query<SunItem>, paths: &NamePaths, warned: &mut bool) -> 
                 && light.is_valid()
                 && visible.get()
         })
-        .map(|(entity, light, ..)| (entity, light.intensity, paths.name_path(entity)))
         .collect();
-    let sun = select_shadowed_sun(&candidates)?;
-    if candidates.len() > 1 && !*warned {
+    if let [(sun, ..)] = candidates.as_slice() {
+        return Some(*sun);
+    }
+    let ranked = candidates.iter().map(|&(entity, light, transform, ..)| {
+        let pose = LightPose {
+            position: transform.translation(),
+            rotation: transform.rotation(),
+        };
+        (entity, LightRank::new(light, pose, paths.name_path(entity)))
+    });
+    let sun = first_ranked(ranked)?;
+    if !*warned {
         *warned = true;
-        let path = candidates
-            .iter()
-            .find(|(entity, ..)| *entity == sun)
-            .map(|(.., path)| path.join("/"))
-            .unwrap_or_default();
         warn!(
-            "dynlight shadows: {} suns have realtime shadows; only one is supported, \"{path}\"",
-            candidates.len()
+            "dynlight shadows: {} suns have realtime shadows; only one is supported, \"{}\"",
+            candidates.len(),
+            paths.name_path(sun).join("/")
         );
     }
     Some(sun)
@@ -92,7 +100,12 @@ pub(super) fn place_sun_cascades(
     mut commands: Commands,
     settings: Res<DynamicLightingSettings>,
     suns: Query<SunItem>,
-    viewers: Query<(&Camera, &GlobalTransform)>,
+    viewers: Query<(
+        &Camera,
+        &GlobalTransform,
+        Has<Camera3d>,
+        Has<LightingViewer>,
+    )>,
     paths: NamePaths,
     (known, changes): (Res<CasterBounds>, Res<CasterChanges>),
     mut cascades: ResMut<SunCascades>,
@@ -107,9 +120,12 @@ pub(super) fn place_sun_cascades(
     let sun = shadowed_sun(&suns, &paths, &mut cascades.warned);
     let viewer = viewers
         .iter()
-        .filter(|(camera, _)| camera.is_active)
-        .max_by_key(|(camera, _)| camera.order)
-        .map(|(camera, transform)| CascadeViewer {
+        .filter_map(|(camera, transform, three_d, marked)| {
+            let rank = viewer_rank(camera.is_active, camera.order, three_d, marked)?;
+            Some((rank, camera, transform))
+        })
+        .max_by_key(|(rank, ..)| *rank)
+        .map(|(_, camera, transform)| CascadeViewer {
             world_from_view: transform.to_matrix(),
             clip_from_view: camera.clip_from_view(),
         });

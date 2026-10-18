@@ -8,8 +8,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use super::systems::{SkyBuilds, build_skies, insert_placeholders};
-use super::{SKY_SPECULAR, SkyEnvironment};
-use crate::light::{DynamicLight, LightType};
+use super::{SKY_SPECULAR, SkyEnvironment, SkyStatus};
+use crate::light::{DynamicLight, LightChoices, LightType};
 use crate::shared::SkyIrradiance;
 
 fn sky_image(radiance: f32) -> Image {
@@ -36,10 +36,16 @@ fn app() -> App {
         .init_asset::<Image>()
         .init_resource::<SkyIrradiance>()
         .init_resource::<SkyBuilds>()
-        .init_resource::<super::SkyStatus>()
+        .init_resource::<SkyStatus>()
+        .init_resource::<LightChoices>()
         .add_systems(Update, build_skies);
     insert_placeholders(&mut app);
     app
+}
+
+/// Makes `sky` the sky that lights the scene, as the light slice's choice would.
+fn choose(app: &mut App, sky: Option<Entity>) {
+    app.world_mut().resource_mut::<LightChoices>().sky = sky;
 }
 
 /// The constant term of the sky's irradiance once it is built, waiting up to a minute.
@@ -72,6 +78,7 @@ fn the_sky_builds_and_rebuilds_when_its_image_changes() {
         Some(LightType::Sky),
         "the sky light comes with the image"
     );
+    choose(&mut app, Some(sky));
 
     // A uniform sky of radiance 2 has irradiance over π 2, all in the constant term.
     let level = wait_for_irradiance(&mut app, 0.0);
@@ -86,6 +93,45 @@ fn the_sky_builds_and_rebuilds_when_its_image_changes() {
         .insert(&image, sky_image(4.0));
     let brighter = wait_for_irradiance(&mut app, level);
     assert!((brighter - 2.0 * level).abs() < 0.01 * level, "{brighter}");
+}
+
+#[test]
+fn a_failed_build_drops_the_old_sky_and_says_so() {
+    let mut app = app();
+    let image = app
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .add(sky_image(2.0));
+    let sky = app
+        .world_mut()
+        .spawn(SkyEnvironment::new(image.clone()))
+        .id();
+    choose(&mut app, Some(sky));
+    let level = wait_for_irradiance(&mut app, 0.0);
+
+    let mut volume = sky_image(4.0);
+    volume.texture_descriptor.dimension = TextureDimension::D3;
+    let _ = app
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .insert(&image, volume);
+    assert_eq!(wait_for_irradiance(&mut app, level), 0.0, "no light");
+    let status = *app.world().resource::<SkyStatus>();
+    assert_eq!(
+        status,
+        SkyStatus {
+            building: false,
+            failed: true
+        }
+    );
+    assert_eq!(first_specular_texel(&app), 0.0);
+
+    let _ = app
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .insert(&image, sky_image(2.0));
+    assert!((wait_for_irradiance(&mut app, 0.0) - level).abs() < 1e-4);
+    assert!(!app.world().resource::<SkyStatus>().failed);
 }
 
 /// The constant term of the sky's irradiance, scaled to the radiance of a uniform sky.
@@ -106,7 +152,8 @@ fn first_specular_texel(app: &App) -> f32 {
 #[test]
 fn a_sky_without_an_image_is_uniform_white_until_an_image_sky_is_built() {
     let mut app = app();
-    app.world_mut().spawn(DynamicLight::sky());
+    let plain = app.world_mut().spawn(DynamicLight::sky()).id();
+    choose(&mut app, Some(plain));
     app.update();
     assert!((uniform_level(&app) - 1.0).abs() < 1e-5);
     assert_eq!(first_specular_texel(&app), 1.0);
@@ -116,6 +163,7 @@ fn a_sky_without_an_image_is_uniform_white_until_an_image_sky_is_built() {
         .resource_mut::<Assets<Image>>()
         .add(sky_image(2.0));
     let sky = app.world_mut().spawn(SkyEnvironment::new(image)).id();
+    choose(&mut app, Some(sky));
     app.update();
     assert_eq!(
         uniform_level(&app),
@@ -127,6 +175,7 @@ fn a_sky_without_an_image_is_uniform_white_until_an_image_sky_is_built() {
     assert!((level - 2.0).abs() < 0.01, "{level}");
 
     app.world_mut().despawn(sky);
+    choose(&mut app, Some(plain));
     app.update();
     assert!((uniform_level(&app) - 1.0).abs() < 1e-5);
     assert_eq!(first_specular_texel(&app), 1.0);

@@ -64,6 +64,14 @@ pub struct LightAttachments {
     pub sun_cascades: Option<Entity>,
 }
 
+/// Lights of which only one is used, chosen before the other slices attach theirs.
+#[derive(Resource, Default, Debug, PartialEq)]
+pub struct LightChoices {
+    /// The sky light that lights the scene: the first by `LightRank` among the visible, valid
+    /// sky lights. The others aren't packed.
+    pub sky: Option<Entity>,
+}
+
 /// The packed light buffer for this frame, and which entity is in which slot.
 #[derive(Resource, Default, Debug)]
 pub struct PackedLights {

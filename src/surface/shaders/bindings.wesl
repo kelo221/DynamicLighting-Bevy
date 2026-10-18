@@ -1,7 +1,8 @@
 // The `DynLitMaterial` bind group. Bindings 0–19 are the material's own; 20 and up are the
 // scene-wide lighting resources every lit material shares (23 and 24 are declared by
 // `dynlight::baked_lighting::shaders::baked_data`, 25, 26 and 32 by the realtime shadows, 29 by
-// `dynlight::light_clusters::shaders::clusters`).
+// `dynlight::light_clusters::shaders::clusters`), except 30–31, the reflection, which is the
+// sky's cube unless the material has one of its own.
 
 import dynlight::shared::shaders::types::DynamicLights;
 
@@ -38,8 +39,6 @@ const FLAG_METALLIC_SHADING: u32 = 256u;
 @group(constants::MATERIAL_BIND_GROUP) @binding(8) var normal_map_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(9) var occlusion_texture: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(10) var occlusion_sampler: sampler;
-@group(constants::MATERIAL_BIND_GROUP) @binding(11) var reflection_texture: texture_cube<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(12) var reflection_sampler: sampler;
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(20) var<storage, read> dynamic_lights: DynamicLights;
 @group(constants::MATERIAL_BIND_GROUP) @binding(21) var light_cookies: texture_2d_array<f32>;
@@ -47,6 +46,7 @@ const FLAG_METALLIC_SHADING: u32 = 256u;
 // The LTC table for rectangle-light specular (`dynlight::light::shaders::ltc`).
 @group(constants::MATERIAL_BIND_GROUP) @binding(27) var area_light_lut: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(28) var area_light_lut_sampler: sampler;
-// The sky's prefiltered specular cube (`dynlight::environment::SKY_SPECULAR`), in the sky's frame.
-@group(constants::MATERIAL_BIND_GROUP) @binding(30) var sky_specular: texture_cube<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(31) var sky_specular_sampler: sampler;
+// What the material reflects: with `FLAG_REFLECTION` its own cube in world space, otherwise the
+// sky's prefiltered specular cube (`dynlight::environment::SKY_SPECULAR`) in the sky's frame.
+@group(constants::MATERIAL_BIND_GROUP) @binding(30) var reflection_texture: texture_cube<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(31) var reflection_sampler: sampler;

@@ -15,7 +15,7 @@ use super::images::{
 use super::prefilter::{SPECULAR_LEVELS, SPECULAR_RESOLUTION, SPECULAR_SAMPLES, prefilter};
 use super::sh::{irradiance_over_pi, project, to_gpu, uniform};
 use super::{SKY_BACKGROUND, SKY_SPECULAR, SkyBackground, SkyEnvironment, SkyStatus};
-use crate::light::{DynamicLight, LightType, PackedLights};
+use crate::light::{LightChoices, PackedLights};
 use crate::shared::{GpuSkyIrradiance, SkyIrradiance};
 
 /// The widest pyramid level the diffuse light is projected from; three bands need no more.
@@ -65,10 +65,11 @@ pub(super) struct SkyBuilds {
     shown: Shown,
     /// The source the current images and irradiance came from.
     built: Option<SkySource>,
+    /// A source whose build failed; it isn't tried again until its image changes.
+    failed: Option<SkySource>,
     running: Option<(SkySource, SkyTask)>,
     /// The running build's image changed after it started.
     restart: bool,
-    warned_extra_skies: bool,
 }
 
 /// The sky's diffuse light, specular cube and background from its image.
@@ -103,9 +104,10 @@ pub(super) fn build_sky(
 }
 
 /// Starts a build when the sky's source changes and applies finished builds. One sky lights the
-/// scene; with several, the first found is used.
+/// scene, the one in [`LightChoices`].
 pub(super) fn build_skies(
-    skies: Query<(&SkyEnvironment, &DynamicLight)>,
+    chosen: Res<LightChoices>,
+    skies: Query<&SkyEnvironment>,
     mut events: MessageReader<AssetEvent<Image>>,
     mut images: ResMut<Assets<Image>>,
     mut builds: ResMut<SkyBuilds>,
@@ -132,6 +134,7 @@ pub(super) fn build_skies(
         .is_some_and(|(_, task)| task.is_finished())
         && let Some((source, task)) = builds.running.take()
     {
+        let current = (!core::mem::take(&mut builds.restart)).then_some(source);
         // Finished, so this returns at once.
         match block_on(task) {
             Ok(data) => {
@@ -143,23 +146,31 @@ pub(super) fn build_skies(
                 let _ = images.insert(&SKY_BACKGROUND, data.background);
                 irradiance.0 = data.irradiance;
                 builds.shown = Shown::Image;
+                builds.built = current;
             }
-            Err(error) => warn!("dynlight sky: can't light with the sky image: {error}"),
+            Err(error) => {
+                warn!("dynlight sky: can't light with the sky image: {error}");
+                // An earlier sky's data would light the scene in its place.
+                let _ = images.insert(&SKY_SPECULAR, placeholder_specular());
+                irradiance.0 = GpuSkyIrradiance::default();
+                builds.shown = Shown::Nothing;
+                (builds.built, builds.failed) = (None, current);
+            }
         }
-        builds.built = (!core::mem::take(&mut builds.restart)).then_some(source);
     }
 
-    let mut sources = skies
-        .iter()
-        .filter(|(_, light)| light.light_type == LightType::Sky)
-        .map(|(sky, _)| SkySource {
+    let source = chosen
+        .sky
+        .and_then(|sky| skies.get(sky).ok())
+        .map(|sky| SkySource {
             image: sky.image.id(),
             max_radiance: sky.max_radiance,
         });
-    let Some(source) = sources.next() else {
-        status.building = false;
+    let Some(source) = source else {
+        *status = SkyStatus::default();
         // Sky lights without an image light like a uniform white sky.
-        (builds.running, builds.restart, builds.built) = (None, false, None);
+        (builds.running, builds.restart) = (None, false);
+        (builds.built, builds.failed) = (None, None);
         if builds.shown != Shown::Uniform {
             let _ = images.insert(&SKY_SPECULAR, uniform_specular());
             irradiance.0 = to_gpu(&uniform(Vec3::ONE));
@@ -173,15 +184,18 @@ pub(super) fn build_skies(
         irradiance.0 = GpuSkyIrradiance::default();
         builds.shown = Shown::Nothing;
     }
-    if !builds.warned_extra_skies && sources.any(|other| other != source) {
-        warn!("dynlight sky: more than one sky image; one of them lights the scene");
-        builds.warned_extra_skies = true;
+    if changed.contains(&source.image) {
+        builds.failed = None;
+        if builds.running.is_none() {
+            builds.built = None;
+        }
     }
-    if changed.contains(&source.image) && builds.running.is_none() {
-        builds.built = None;
-    }
-    status.building = builds.built != Some(source);
-    if builds.built == Some(source) || builds.running.is_some() {
+    let failed = builds.failed == Some(source);
+    *status = SkyStatus {
+        building: builds.built != Some(source) && !failed,
+        failed,
+    };
+    if builds.built == Some(source) || failed || builds.running.is_some() {
         return;
     }
     let Some(image) = images.get(source.image) else {

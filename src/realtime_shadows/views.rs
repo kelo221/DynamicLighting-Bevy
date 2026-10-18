@@ -22,7 +22,9 @@ use super::faces::{
 use super::slots::{CubePose, CubeSlots};
 use super::tracking::{CasterChanges, bounds};
 use crate::baked_lighting::BakedReceiver;
-use crate::light::{BakedInPlace, DynamicLight, LightAttachments, ShadowMode};
+use crate::light::{
+    BakedInPlace, DynamicLight, LightAttachments, LightingViewer, ShadowMode, viewer_rank,
+};
 use crate::shared::cube::CUBE_FACE_COUNT;
 use crate::shared::{DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality, sees_sphere};
 
@@ -89,7 +91,13 @@ type ShadowLight<'a> = (
     &'a InheritedVisibility,
     Has<BakedInPlace>,
 );
-type Viewer<'a> = (&'a Camera, &'a GlobalTransform, &'a Frustum);
+type Viewer<'a> = (
+    &'a Camera,
+    &'a GlobalTransform,
+    &'a Frustum,
+    Has<Camera3d>,
+    Has<LightingViewer>,
+);
 
 /// Gives the nearest visible `ShadowMode::Realtime` lights within the budget a cube slot,
 /// decides which faces render again, places them at their lights and records the slots in
@@ -109,13 +117,18 @@ pub(super) fn place_shadow_faces(
     mut stats: ResMut<ShadowCubemapStats>,
     device: Option<Res<RenderDevice>>,
 ) {
+    // Every camera that could be the viewer keeps the lights it sees; the viewer's distance
+    // picks among them.
     let viewers: Vec<_> = viewers
         .iter()
-        .filter(|(camera, ..)| camera.is_active)
+        .filter_map(|(camera, transform, frustum, three_d, marked)| {
+            let rank = viewer_rank(camera.is_active, camera.order, three_d, marked)?;
+            Some((rank, transform, frustum))
+        })
         .collect();
     let viewer = viewers
         .iter()
-        .max_by_key(|(camera, ..)| camera.order)
+        .max_by_key(|(rank, ..)| *rank)
         .map(|(_, transform, _)| transform.translation());
     let budget = match settings.quality {
         RuntimeQuality::IntegratedGraphics => 0,

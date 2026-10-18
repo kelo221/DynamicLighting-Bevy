@@ -52,11 +52,12 @@ fn gpu_lighting_matches_the_cpu_mirror() {
 
 /// 200 small lights seen in perspective, so the realtime lights come from the light grid's
 /// per-cell lists, which must not miss any light that reaches a pixel. Runs at WebGPU's default
-/// limits, where the lit material's fragment stage binds all 8 storage buffers allowed.
+/// limits, where the lit material's fragment stage binds all 8 storage buffers allowed, and with
+/// the window camera's prepasses, whose textures count against the stage's 16 sampled textures.
 #[test]
 #[ignore = "needs a GPU"]
 fn gpu_clustered_lights_match_the_cpu_mirror() {
-    let log = run_example("gpu_check", &["--many", "--webgpu-limits"]);
+    let log = run_example("gpu_check", &["--many", "--webgpu-limits", "--prepasses"]);
     assert!(log.contains("GPU lighting matches the CPU mirror"), "{log}");
     assert!(!log.contains(", 0 inside the light grid"), "{log}");
 }

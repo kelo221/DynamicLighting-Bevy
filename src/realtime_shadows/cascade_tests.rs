@@ -189,21 +189,23 @@ fn cascades_draw_what_can_shadow_them() {
     assert!(!pose.draws(caster(below, false, true)), "past its far end");
 }
 
-/// The cascades of a sun overhead, and a filtered map with a box whose top is at height 1 over
-/// x and z in -0.5..0.5.
-fn box_scene() -> (GpuSunShadow, impl Fn(usize, Vec2) -> Vec2) {
-    let poses = cascades(Vec3::Y, false, &[(Vec3::new(0.0, 0.5, 0.0), 0.9)]);
+/// The cascades of a sun overhead over the view of `camera`, and their filtered maps with a box
+/// whose top is at `height` over x and z in -0.5..0.5, in the cascades that draw it.
+fn box_over(camera: Transform, height: f32) -> (GpuSunShadow, impl Fn(usize, Vec2) -> Vec2) {
+    let bounds = (Vec3::new(0.0, height - 0.5, 0.0), 0.9);
+    let poses = fit_cascades(&viewer(camera), Vec3::Y, DISTANCE, false, &[bounds]);
     let shadow = GpuSunShadow {
         cascades: poses.map(|pose| pose.gpu()),
         count: SUN_CASCADE_COUNT as u32,
         ..default()
     };
     let gpu = shadow.cascades;
+    let draws = poses.map(|pose| pose.touches(bounds.0, bounds.1));
     let sample = move |index: usize, uv: Vec2| {
-        let at = |x: f32, z: f32| cascade_point(&gpu[index], Vec3::new(x, 1.0, z), Vec3::ZERO);
+        let at = |x: f32, z: f32| cascade_point(&gpu[index], Vec3::new(x, height, z), Vec3::ZERO);
         let (a, b) = (at(-0.5, -0.5), at(0.5, 0.5));
         let (low, high) = (a.uv.min(b.uv), a.uv.max(b.uv));
-        if uv.cmpge(low).all() && uv.cmple(high).all() {
+        if draws[index] && uv.cmpge(low).all() && uv.cmple(high).all() {
             let depth = a.depth;
             Vec2::new(depth, depth * depth)
         } else {
@@ -211,6 +213,10 @@ fn box_scene() -> (GpuSunShadow, impl Fn(usize, Vec2) -> Vec2) {
         }
     };
     (shadow, sample)
+}
+
+fn box_scene() -> (GpuSunShadow, impl Fn(usize, Vec2) -> Vec2) {
+    box_over(camera(), 1.0)
 }
 
 #[test]
@@ -233,6 +239,43 @@ fn the_box_shadows_the_ground_under_it() {
     let none = GpuSunShadow::default();
     assert_eq!(
         sun_shadow(&none, Vec3::ZERO, Vec3::Y, 1.0, false, &sample),
+        1.0
+    );
+}
+
+#[test]
+fn cascades_reach_past_their_slice_to_the_casters_under_them() {
+    // Looking down under a sun overhead, every cascade covers the view's center. The near ones'
+    // slices end high above the box standing on the ground, but they reach down to draw it, so
+    // the ground past their far ends lies behind everything they hold.
+    let above = Transform::from_xyz(0.0, 30.0, 0.0).looking_at(Vec3::ZERO, Vec3::Z);
+    let (center, radius) = (Vec3::new(0.0, 4.5, 0.0), 0.9);
+    let open = fit_cascades(&viewer(above), Vec3::Y, DISTANCE, false, &[]);
+    assert!(!open[0].touches(center, radius));
+    let poses = fit_cascades(
+        &viewer(above),
+        Vec3::Y,
+        DISTANCE,
+        false,
+        &[(center, radius)],
+    );
+    assert!(poses.iter().all(|pose| pose.touches(center, radius)));
+    // Casters past the last slice don't stretch them.
+    let deep = (Vec3::new(0.0, -500.0, 0.0), 1.0);
+    let poses = fit_cascades(&viewer(above), Vec3::Y, DISTANCE, false, &[deep]);
+    assert!(poses.iter().all(|pose| !pose.touches(deep.0, deep.1)));
+
+    let (shadow, sample) = box_over(above, 5.0);
+    let ground = Vec3::ZERO;
+    let first = cascade_point(&shadow.cascades[0], ground, Vec3::Y);
+    assert!(first.rim < 0.5 && first.depth == 1.0, "{first:?}");
+    assert_eq!(
+        sun_shadow(&shadow, ground, Vec3::Y, 1.0, false, &sample),
+        0.0
+    );
+    let beside = Vec3::new(2.0, 0.0, 0.0);
+    assert_eq!(
+        sun_shadow(&shadow, beside, Vec3::Y, 1.0, false, &sample),
         1.0
     );
 }
