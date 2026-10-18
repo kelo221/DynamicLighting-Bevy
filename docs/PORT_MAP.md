@@ -12,6 +12,7 @@ Provenance for every source file of the crate: one row per `*.rs` / `*.wesl` fil
 | SmoShaders | Daniel Ilett, [smo-shaders](https://github.com/daniel-ilett/smo-shaders) Gaussian blur, as found in Henry's package: `S/Operations/GaussianBlur.shader` (VSM blur) and `C/Utilities/GuassianBlur.cs` (bounce blur); Henry ships the notice as `AlpacaIT.DynamicLighting/Licenses/SmoShaders.txt` | MIT, © 2019 Daniel Ilett, notice in `LICENSES/SmoShaders-MIT.txt` |
 | LTC | Eric Heitz, Jonathan Dupuy, Stephen Hill and David Neubelt, [ltc_code](https://github.com/selfshadow/ltc_code) commit `31e5e96`: the fitted GGX tables `fit/results/ltc_1.dds` and `ltc_2.dds`, from "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines" (SIGGRAPH 2016) | BSD-2-Clause with a request to cite the paper, notice in `LICENSES/LTC-BSD-2.txt` |
 | `BO/` | [kelo221/bevyout](https://github.com/kelo221/bevyout) branch `DynamicLightsPort`, `src/vsa/dynamic_lighting/`, commit `f2c7a6a`. Paths outside that folder are written as `bevyout/src/...` | The repository is GPL-3.0; the code lifted here is relicensed by its sole author under this crate's MIT OR Apache-2.0 |
+| Godot | lawnjelly's rooms and portals in [Godot](https://github.com/godotengine/godot) 3: the design of `portals/` only (convex rooms joined by portals, a per-camera trace that narrows its planes through each portal it sees). No code is ported, so no row below names it | MIT; nothing is copied, so `LICENSES/` holds no notice for it |
 
 Nothing here is copied from Unity. Where Henry or bevyout relied on Unity behaviour (`UnityEngine.Random`, `Mathf.PerlinNoise`, physics raycasts, camera renders, `ScriptableObject` storage, InstanceIDs, Unity goldens), the replacement is our own code and the "Status" column says so. Henry's code that reproduces third-party snippets (LearnOpenGL BRDF, Shadertoy `rand`) is not ported; see the rows for `brdf.wesl` and `light_types.wesl`.
 
@@ -226,6 +227,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 |---|---|---|---|
 | `src/realtime_shadows/mod.rs` | none | none | New; wiring: `RealtimeShadowsPlugin`, the face phase and its draw commands, extraction, queue, the shadow driver's schedule, the sun's cascades, loads `vsm` / `sun_vsm` / `shadow_kernel` WESL |
 | `src/realtime_shadows/driver.rs` | none | none | New (M24); one render-world `RootNonCameraView` runs every shadow view: Bevy's direct mesh preprocessing for all of them in one compute pass, then the face pass |
+| `src/realtime_shadows/choice.rs` | `C/Core/DynamicLightManager.ShadowCamera.cs:152-172` (`ShadowCameraProcessLight`: which lights get a cubemap) | none | Replaced (M27); `ShadowChoice`, chosen headless in `LightSystems::Attach`: the lights some relevant camera sees through the rooms, nearest the viewer first, within the budget |
 | `src/realtime_shadows/cascades.rs` | none | none | New (M22); pure fit of the sun's cascades: practical split scheme, bounding spheres, snapped squares and depth ranges in the sun's frame, the GPU rows, what a cascade draws, the redraw plan |
 | `src/realtime_shadows/cascade_tests.rs` | none | none | New (M22); cascade fit, snapping, depth reach, redraw plan and caster tests, and `sun_mirror` shadowing a box's footprint |
 | `src/realtime_shadows/casters.rs` | none | none | New; pure caster lists per face from bounding spheres (default render layer, hidden meshes out, meshes without bounds in every face, baked meshes out of cubes whose light is at its baked position) |
@@ -284,8 +286,9 @@ Henry's package has no sky light; the whole slice is New (M20, PLAN §12). The f
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
 | `src/fog/mod.rs` | none | none | New; wiring: `FogPlugin`, loads `fog_volumes` WESL, render-world setup |
+| `src/fog/bound_tests.rs` | none | none | New; every shape's culling sphere holds the fog the shader mirror draws, at cutoffs from 1° to 180° |
 | `src/fog/mirror.rs` | `S/DynamicLightingPostProcessing.shader:78-183` | `BO/core/volumetric.rs` | Ported; the turning box and the `Frustum` shaft (a ray clipped against six planes) are New |
-| `src/fog/params.rs` | `C/Core/DynamicLightManager.PostProcessing.cs:52-123`; `C/Core/DynamicLightManager.cs:1421-1437` | `BO/core/volumetric.rs`, `BO/shaders/dynamic_lighting_volumetric.wgsl` (record layout) | Lifted; `Frustum` packing and bounds are New |
+| `src/fog/params.rs` | `C/Core/DynamicLightManager.PostProcessing.cs:52-123`; `C/Core/DynamicLightManager.cs:1421-1437` | `BO/core/volumetric.rs`, `BO/shaders/dynamic_lighting_volumetric.wgsl` (record layout) | Lifted; `Frustum` packing and bounds are New; cone bounds follow the cone the shader draws, not Henry's `C/Lighting/DynamicLight.cs:440-449` (PLAN §12) |
 | `src/fog/render.rs` | `C/Lighting/DynamicLightingPostProcessing.cs:11-46` | `BO/render/pipeline.rs:149-181,300-362` | Lifted; runs after tonemapping (display-space blend like Henry's image effect); MSAA depth supported |
 | `src/fog/shader_tests.rs` | none | none | New |
 | `src/fog/shaders/fog.wesl` | `S/DynamicLightingPostProcessing.shader:71-80` | `BO/shaders/dynamic_lighting_volumetric.wgsl:37-69,227-249` | Lifted; depth reconstruction for reverse-Z with an infinite far plane |
@@ -293,6 +296,27 @@ Henry's package has no sky light; the whole slice is New (M20, PLAN §12). The f
 | `src/fog/tests.rs` | none | none (the parity tests in `BO/core/volumetric.rs:431-507` are dropped) | New |
 | `src/fog/volumes.rs` | `C/Core/DynamicLightManager.PostProcessing.cs:52-123` | `BO/render/extract.rs:109-130`, `BO/render/gpu.rs:163-221` | Lifted; bevyout's cap of two volumes removed; own persistent buffer |
 | `src/fog/volumetric.rs` | volumetric fields of `C/Lighting/DynamicLight.cs:323-370`; `C/Lighting/DynamicLightVolumetricType.cs` | `BO/core/volumetric.rs` | Lifted; split out of the light component; `VolumetricShape::Frustum` is New |
+
+### `portals/`
+
+Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12, Beyond Henry). Its design follows Godot 3's rooms and portals (see Sources); the geometry is written from scratch.
+
+| Our file | Henry | bevyout | Status |
+|---|---|---|---|
+| `src/portals/mod.rs` | none | none | New; wiring: `PortalsPlugin`, `PortalSystems::{Link, Trace}` after transform propagation and frustum updates, re-exports |
+| `src/portals/authoring.rs` | none | none | New; `Room`, `Portal`, `PortalSide`, `PortalSettings` |
+| `src/portals/cell.rs` | none | none | New; cells as six planes and eight corners of a box under an affine transform, portal apertures, overlap by separating axes, corner-ray spans |
+| `src/portals/graph.rs` | none | none | New; validates the rooms and portals, links them into nodes (0 is Outside), finds the cells holding a point and the cells a sphere reaches |
+| `src/portals/link.rs` | none | none | New; resolves an `Auto` portal side: one touching cell that covers the aperture, the outside past 1 m, anything else unresolved |
+| `src/portals/sight.rs` | none | none | New; `sees`: a sphere against every camera's frustum and traced view, with its reach computed once |
+| `src/portals/state.rs` | none | none | New; `RoomGraph` (generation, state, culprits), `RoomView`, `PortalState`, `PortalStats` |
+| `src/portals/systems.rs` | none | none | New; rebuilds the graph on change and warns about broken rooms by name, traces every camera's view |
+| `src/portals/trace.rs` | none | none | New; the depth-first trace relative to the eye, plane narrowing per portal, depth and work limits |
+| `src/portals/brute_tests.rs` | none | none | New; seeded cameras and spheres among walls with door holes: any sphere in sight is kept, and enough are culled |
+| `src/portals/fixtures.rs` | none | none | New (test-only); room and portal layouts for the tests |
+| `src/portals/link_tests.rs` | none | none | New; cells under shear, overlaps, every linking case, spawn order, homes and reach |
+| `src/portals/system_tests.rs` | none | none | New; the systems in an app: first frame, rebuilds, parents, cameras, toggling, stale generations, culprits |
+| `src/portals/trace_tests.rs` | none | none | New; doors in and out of view, doorways, coplanar and edge-on portals, limits, the plane invariant, far coordinates, non-finite input |
 
 ### `gltf_import/`
 
@@ -308,6 +332,7 @@ Henry's package has no sky light; the whole slice is New (M20, PLAN §12). The f
 |---|---|---|---|
 | `src/debug/mod.rs` | none | none | New; wiring: `DebugPlugin`, `LightGizmos` toggle (the debug views are `shared::DebugView`, drawn by the surface shaders) |
 | `src/debug/gizmos.rs` | `C/Lighting/DynamicLight.cs:502-672` (gizmo ideas) | none | New; Bevy gizmos, including area-light shapes |
+| `src/debug/room_gizmos.rs` | none | none | New (M27); room cells drawn inside their walls, green when a camera sees into them, and portals coloured by what they link |
 
 ### Examples and tests
 
@@ -334,6 +359,10 @@ Henry's package has no sky light; the whole slice is New (M20, PLAN §12). The f
 | `examples/support/lightmap_uvs.rs` | none | none | New; UV1 sets for Bevy's primitive meshes (a per-face atlas for boxes, moved from `lighting_test`) |
 | `examples/outdoor/main.rs`, `scene.rs` | none | none | New; a courtyard under a baked soft sun and a baked sky with a porch, a lamp, two Metallic balls, and moving objects shadowed by the sun map and the sky probes that cast realtime sun shadows (M22); `--camera` |
 | `examples/outdoor/sky.rs` | none | none | New; a procedural sky image matched to the sun, or an HDRI from `--hdri`, scaled and turned to the sun |
+| `examples/rooms/main.rs` | none | none | New (M27); the rooms example: options, P and G keys, the once-a-second `dynlight portals:` log and the `--frames` summary |
+| `examples/rooms/layout.rs` | none | none | New (M27); walls with doors and windows, the corridor with six rooms and a yard, the rooms' lights |
+| `examples/rooms/grid.rs` | none | none | New (M27); `--grid N`: N × N rooms joined by offset doors |
+| `examples/rooms/path.rs` | none | none | New (M27); the `--path` flythroughs on virtual time (a fixed step while `--frames` measures), bobbing lamps |
 | `tests/area_light_bake.rs` | none | none | New; panels bake soft shadows close to a brute-force trace, tubes soften only along their length, point lights keep one bit |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
@@ -341,6 +370,7 @@ Henry's package has no sky light; the whole slice is New (M20, PLAN §12). The f
 | `tests/gpu_baselines.rs` | none | none | New; visual baselines: still frames of the examples compared with `tests/baselines/` by FLIP |
 | `tests/common/mod.rs` | none | none | New; helpers shared by the GPU test files |
 | `tests/headless_app.rs` | none | none | New |
+| `tests/portal_culling.rs` | none | none | New (M27); the whole plugin headless: a light reaching the seen room through a wall stays packed at any cube budget, a light only a second camera sees keeps its cube and fog, cone fog seen past its radius stays |
 | `tests/repo_hygiene.rs` | none | none | New; enforces the `AGENTS.md` rules |
 
 ### `benches/`

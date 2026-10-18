@@ -16,6 +16,7 @@ The crate is its own lighting system. It never uses Bevy's lights (`PointLight`,
 - **Realtime lights and shadows:** lights marked `realtime` are evaluated every frame, nearest first within a budget, and each pixel only visits the realtime lights that reach its cell of a view-space grid. `ShadowMode::Realtime` adds a variance shadow cubemap so moving objects cast shadows; on a sun it adds three shadow cascades over the camera's view instead. A cubemap only redraws the faces where something changed, and a cascade only when the camera moves past its snapping step or a caster in it changes. A light or sun at its baked position leaves baked meshes out, so a still scene renders no shadow faces or cascades at all. Area lights blur their cubemaps wider.
 - **Materials:** `DynLitMaterial` covers Henry's Diffuse, Metallic (GGX) and Unlit shaders, with normal, occlusion and metallic-roughness maps. glTF `StandardMaterial`s and light extras are converted on load.
 - **Volumetric fog:** sphere, box, cone and square-shaft (`Frustum`) fog volumes per light, as a post-process pass. The shaft starts at an area light's size, for fluorescent fixtures.
+- **Rooms and portals:** optional `Room` cells and `Portal` openings stop each camera's view at the walls, so realtime lights, shadow cubemaps and fog volumes that no camera can see through a door or window are left out. Walls are never assumed to stop light: only lights whose whole sphere is out of sight are dropped, so while every light fits the budgets the image doesn't change, and when they don't the budget goes to lights a camera can see.
 - **Debug views:** `DynamicLightingSettings::debug_view` shows lighting on white surfaces, or a heat map of how many lights reach each fragment.
 
 ## Compared with Henry's original
@@ -29,6 +30,7 @@ The core is Henry's design, ported closely: baking per-triangle light lists with
 - **An HDRI sky.** Henry's scenes get a flat ambient color; `LightType::Sky` lights them from an HDR image, with reflections on Metallic materials, and draws the image as the background. It is a light like the others (color, intensity and effects change live). Its baked shadow is how much of the sky each texel sees, in 8 bits from 64 rays over the hemisphere, and it dims the sky's reflection as much as its diffuse light, so the sky stays out from under roofs. It doesn't depend on the image, so the sky can turn or change its image without a new bake. Moving objects get sky shadows from a baked grid of probes about a meter apart. Faces turned to the ground see no sky and stay dark, since nothing bakes bounce light from the sun or the sky.
 - **Cached realtime shadows.** Shadow cubemaps redraw only the faces where something changed, and leave baked meshes out while their light stands where it was baked. Area lights blur their cubemaps wider.
 - **Clustered realtime lights.** Henry's shader visits every realtime light at every pixel; dynlight lists the realtime lights per cell of a view-space grid, so with 1000 realtime lights our lit pass takes 2.0 ms of GPU time, where Henry's whole frame takes 6.1 ms (see Performance).
+- **Rooms and portals.** Henry culls realtime lights, cubemaps and fog by the camera's frustum alone; rooms also cull what no camera sees through the doors and windows.
 - **Fog:** a square shaft (`VolumetricShape::Frustum`) for panel lights, and box fog that turns with its light.
 - **Platforms and tools:** bakes in memory and in the browser (WebGPU), a triangle-ID fallback for GPUs without primitive indices, debug views (lighting only, light count), and a CPU reference of the shader math that is checked against GPU readback.
 
@@ -143,6 +145,35 @@ app.insert_resource(DynamicLightingSettings {
 
 The lit shader then waits until the scene's bake is applied and compiles once with only the paths in use (at most `shader_features`). A path first needed later, such as the first spot light spawned in a scene of point lights, is added then, and the recompile hides lit meshes for a second or more. Applying another bake chooses again. It suits scenes whose kinds of lights and meshes are known when they load.
 
+### Rooms and portals
+
+Indoor scenes can describe their rooms, so lights behind walls stop costing GPU time:
+
+```rust,ignore
+// Two rooms on either side of a wall in the plane z = 0; each cell runs to the wall's middle.
+commands.spawn((Name::new("Hall"), Room::new(Vec3::new(8.0, 3.0, 4.0)), Transform::from_xyz(0.0, 1.5, 2.0)));
+commands.spawn((Name::new("Kitchen"), Room::new(Vec3::new(8.0, 3.0, 4.0)), Transform::from_xyz(0.0, 1.5, -2.0)));
+// The door between them, a rectangle in its local XY plane, linked to both cells automatically.
+commands.spawn((Name::new("Door"), Portal::new(Vec2::new(1.2, 2.2)), Transform::from_xyz(1.0, 1.1, 0.0)));
+// A window in the hall's east wall. No cell lies past it, so it opens onto the outside.
+commands.spawn((
+    Name::new("Window"),
+    Portal::new(Vec2::new(2.0, 1.2)),
+    Transform::from_xyz(4.0, 1.6, 2.0).looking_to(Vec3::X, Vec3::Y),
+));
+```
+
+Every frame each camera's view is traced from the cell it stands in through the portals it can see. A realtime light, a shadow cubemap or a fog volume is then dropped only when its whole sphere of influence lies outside everything any active 3D camera (or `LightingViewer`) sees, the frustum and the walls included; for fog, any active `FogPostProcess` camera. Walls never stop light, because a light whose cubemap is missing (budget, `IntegratedGraphics`) shines through them, and so does some of a shadowed light's light near thin walls. Dropping only what can't reach a visible point keeps the image unchanged while every light fits the budgets; when they don't, the freed budget goes to lights a camera can see. Suns and skies are never dropped, and baked lights where they were baked stay packed; only their cubemaps are culled.
+
+The rules for rooms:
+
+- Cells are boxes (under any transform, a parent's shear included) and must not overlap.
+- A cell reaches the portals in its walls: at a doorway it runs to the wall's middle, where the portal is.
+- Every opening a camera could look through (doors, windows, glass, gaps) needs a portal. A closed door can stay an open portal; that only culls less.
+- Everything outside the cells is one outside space, so a window with no cell within a meter of it opens there.
+
+Anything dynlight can't be sure of turns portal culling off, so the cameras' frusta cull alone, and logs a `dynlight portals:` warning that names the rooms and portals: overlapping cells, a portal side that touches two cells or a cell that stops short of it, a singular transform. Set the side yourself with `Portal { front: PortalSide::Into { rooms: vec![hall], outside: false }, .. }` (the front is the portal's local +Z side); listing more rooms than the side really opens into is always safe. Orthographic cameras and views more than `PortalSettings::depth_limit` (16) portals deep cull nothing either. `PortalSettings::enabled` switches portal culling off, `PortalStats` reports what it did last frame, and with `LightGizmos` on the cells and portals are drawn (portals in red when they turned culling off).
+
 ### Platforms
 
 - **Primitive indices:** baked shadows are looked up by triangle. On GPUs with wgpu's `PRIMITIVE_INDEX` feature (desktop Vulkan, DX12, Metal) this is free. Elsewhere, baked meshes are de-indexed when they load and carry a triangle-ID vertex attribute instead. `DynamicLightingSettings::triangle_ids` forces either path.
@@ -157,6 +188,7 @@ The lit shader then waits until the scene's bake is applied and compiles once wi
 | `cargo run --example realtime_shadows` | Orbiting point and spot lights with realtime shadow cubemaps over moving crates; logs the cube faces rendered per frame. `--still` stops everything, so no face renders. |
 | `cargo run --release --example stress_lights -- --bake` | 1000 baked lights among about 1000 pillars; `--realtime` makes them all realtime (and drifting) instead. |
 | `cargo run --example outdoor -- --bake` | A courtyard under a baked soft sun and a baked procedural sky, with a porch, a pergola, trees, a lamp post and two metal balls reflecting the sky; a rolling ball and a spinning crate take the sun's shadows from the sun map and the sky's from the sky probes, and cast theirs through the sun's realtime cascades. Later runs load the bake. `--hdri path.exr` lights it with an HDR image instead, turned so its sun matches the sun light. |
+| `cargo run --example rooms` | A corridor with six rooms and a window onto a yard, each room with a shadowed lamp, cone fog in one, culled through the doors. P (or `--no-portals`) switches portal culling, G the room gizmos; `--path` flies a fixed route, `--grid N` builds N × N rooms, `--budgets` raises the light budgets. Logs the lights, cubemaps and fog kept once a second. |
 | `cargo run --example gpu_check` | Reads the rendered image back and compares it with the CPU reference of the light shaders. Exits with an error on a mismatch. |
 | `cargo run --example inspector --features inspector` | A Bevy Feathers panel for editing one light live and baking with a button. |
 
@@ -164,7 +196,7 @@ All examples except `gpu_check` accept `--frames N` (exit after N frames) and `-
 
 The GPU checks need a GPU, so they are skipped by `cargo test`; run them with `cargo test --test gpu_examples -- --ignored --test-threads=1`.
 
-Visual baselines guard the look: `cargo test --test gpu_baselines -- --ignored --test-threads=1` renders still frames of `lighting_test`, `outdoor`, `realtime_shadows` and `stress_lights` (`--capture path.png` freezes time and waits for the bake and the shaders) and compares them with `tests/baselines/` using NVIDIA's [FLIP](https://github.com/NVlabs/flip) metric. A failure leaves the new frame and an error map in `target/tmp/baselines/`. After an intended change to the look, rerun with `DYNLIGHT_BLESS=1` and review the new images before committing them.
+Visual baselines guard the look: `cargo test --test gpu_baselines -- --ignored --test-threads=1` renders still frames of `lighting_test`, `outdoor`, `realtime_shadows`, `rooms` and `stress_lights` (`--capture path.png` freezes time and waits for the bake and the shaders) and compares them with `tests/baselines/` using NVIDIA's [FLIP](https://github.com/NVlabs/flip) metric. A failure leaves the new frame and an error map in `target/tmp/baselines/`. After an intended change to the look, rerun with `DYNLIGHT_BLESS=1` and review the new images before committing them.
 
 ## Performance
 
@@ -200,7 +232,7 @@ Install the `wasm32-unknown-unknown` target, the `wasm-bindgen-cli` version that
 
 ## Credits and licence
 
-The lighting design, formulas and shaders are Henry de Jongh's, ported from [Henry00IS/DynamicLighting](https://github.com/Henry00IS/DynamicLighting) under the MIT licence; his notice is in [`LICENSES/DynamicLighting-MIT.txt`](LICENSES/DynamicLighting-MIT.txt). The shadow blur kernel comes from Daniel Ilett's SmoShaders (MIT), notice in [`LICENSES/SmoShaders-MIT.txt`](LICENSES/SmoShaders-MIT.txt). Rectangle-light highlights use the fitted tables of Heitz, Dupuy, Hill and Neubelt, "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines" (SIGGRAPH 2016), BSD-2, notice in [`LICENSES/LTC-BSD-2.txt`](LICENSES/LTC-BSD-2.txt). [`docs/PORT_MAP.md`](docs/PORT_MAP.md) lists where every ported file comes from. Nothing is taken from Unity's own code; where Henry relied on Unity (random numbers, Perlin noise, camera rendering), dynlight uses its own implementations.
+The lighting design, formulas and shaders are Henry de Jongh's, ported from [Henry00IS/DynamicLighting](https://github.com/Henry00IS/DynamicLighting) under the MIT licence; his notice is in [`LICENSES/DynamicLighting-MIT.txt`](LICENSES/DynamicLighting-MIT.txt). The shadow blur kernel comes from Daniel Ilett's SmoShaders (MIT), notice in [`LICENSES/SmoShaders-MIT.txt`](LICENSES/SmoShaders-MIT.txt). Rectangle-light highlights use the fitted tables of Heitz, Dupuy, Hill and Neubelt, "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines" (SIGGRAPH 2016), BSD-2, notice in [`LICENSES/LTC-BSD-2.txt`](LICENSES/LTC-BSD-2.txt). Rooms and portals follow the design of Godot 3's rooms and portals by lawnjelly (MIT); no code is taken from it. [`docs/PORT_MAP.md`](docs/PORT_MAP.md) lists where every ported file comes from. Nothing is taken from Unity's own code; where Henry relied on Unity (random numbers, Perlin noise, camera rendering), dynlight uses its own implementations.
 
 Code reused from the user-owned [bevyout](https://github.com/kelo221/bevyout) `DynamicLightsPort` branch is relicensed by its sole author under this crate's MIT OR Apache-2.0 terms; the original repository is GPL-3.0. The provenance map records the reused files.
 

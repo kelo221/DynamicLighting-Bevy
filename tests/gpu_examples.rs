@@ -130,6 +130,35 @@ fn still_shadow_cubemaps_stay_cached() {
     assert!((6.0..12.0).contains(&moving), "{moving} faces per frame");
 }
 
+/// The per-frame mean of `stat` from the `rooms` summary line.
+fn rooms_stat(log: &str, stat: &str) -> f32 {
+    let line = log
+        .lines()
+        .find(|line| line.contains("rooms: portals"))
+        .unwrap_or_else(|| panic!("no rooms report:\n{log}"));
+    let after = line
+        .split(&format!("{stat} "))
+        .nth(1)
+        .unwrap_or_else(|| panic!("no {stat} in {line}"));
+    after
+        .split([',', ' '])
+        .next()
+        .and_then(|value| value.parse().ok())
+        .expect("a number")
+}
+
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms_out_of_sight_are_left_out() {
+    let on = run_example("rooms", &["--frames", "120", "--still"]);
+    let off = run_example("rooms", &["--frames", "120", "--still", "--no-portals"]);
+    assert_eq!(rooms_stat(&on, "visits"), 6.0, "{on}");
+    for stat in ["realtime lights", "cubes"] {
+        let (on, off) = (rooms_stat(&on, stat), rooms_stat(&off, stat));
+        assert!(on < off, "{stat}: {on} with portals, {off} without");
+    }
+}
+
 #[test]
 #[ignore = "needs a GPU"]
 fn lighting_test_renders_a_lit_scene() {

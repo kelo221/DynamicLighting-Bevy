@@ -30,6 +30,8 @@ const MAX_MEAN: f32 = 0.002;
 const MAX_VISIBLE_SHARE: f32 = 0.0001;
 
 const OVERVIEW: &str = "0,6,14,0,0.6,0";
+/// In the corridor of `rooms`, facing the door of the middle north room.
+const ROOMS_DOOR: &str = "13,1.6,-1.2,13.8,1.1,6";
 
 #[test]
 #[ignore = "needs a GPU"]
@@ -199,6 +201,26 @@ fn outdoor_on_fxc_matches() {
 #[ignore = "needs a GPU"]
 fn outdoor_unbaked() {
     check("outdoor_unbaked", "outdoor", &[]);
+}
+
+/// A room seen through its door from the corridor: a shadowed lamp, a crate's shadow and a cone
+/// of fog. Portal culling leaves out the lights, cubes and fog of the rooms out of sight.
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms() {
+    check("rooms", "rooms", &["--camera", ROOMS_DOOR]);
+}
+
+/// What portal culling leaves out lights nothing in view.
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms_without_portals_match() {
+    check_against(
+        "rooms_no_portals",
+        "rooms",
+        "rooms",
+        &["--no-portals", "--camera", ROOMS_DOOR],
+    );
 }
 
 fn check(name: &str, example: &str, args: &[&str]) {

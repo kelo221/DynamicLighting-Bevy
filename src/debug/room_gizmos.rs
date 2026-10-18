@@ -63,7 +63,15 @@ pub(super) fn draw_room_gizmos(
     }
 }
 
+/// Cells are drawn this far inside their faces, which usually lie in the middle of walls.
+const INSET: f32 = 0.15;
+
 fn draw_cell(gizmos: &mut Gizmos, shape: &Parallelepiped, color: Color) {
+    let mut shape = *shape;
+    for axis in &mut shape.axes {
+        let length = axis.length();
+        *axis *= (length - INSET).max(length * 0.5) / length;
+    }
     let corners = shape.corners();
     for (index, &corner) in corners.iter().enumerate() {
         for bit in [1, 2, 4] {
