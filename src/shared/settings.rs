@@ -31,6 +31,8 @@ pub struct DynamicLightingSettings {
     pub dynamic_geometry: DynamicGeometryMode,
     pub tracking: TrackingMode,
     pub triangle_ids: TriangleIdSource,
+    /// Read once, when the renderer starts.
+    pub subgroups: SubgroupUse,
     pub debug_view: DebugView,
     /// Seed for every random choice: effect randomness at runtime and sampling during bakes.
     pub seed: u64,
@@ -50,6 +52,7 @@ impl Default for DynamicLightingSettings {
             dynamic_geometry: DynamicGeometryMode::default(),
             tracking: TrackingMode::default(),
             triangle_ids: TriangleIdSource::default(),
+            subgroups: SubgroupUse::default(),
             debug_view: DebugView::None,
             seed: 0,
         }
@@ -248,6 +251,19 @@ pub enum TriangleIdSource {
     /// triples the vertex count of smooth meshes. Works on every GPU; set it to try the fallback
     /// on a GPU that has primitive indices.
     VertexAttribute,
+}
+
+/// Whether the lit shader uses subgroup (wave) operations, wgpu's `Features::SUBGROUP`: desktop
+/// Vulkan, Direct3D 12 with DXC, and Metal have them, WebGPU doesn't. A subgroup of neighbouring
+/// pixels that all lie on one baked triangle, or in one cell of realtime lights, then loads each
+/// light once for the subgroup instead of once per pixel. The image is the same either way.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[reflect(Default, Debug, PartialEq, Hash, Clone)]
+pub enum SubgroupUse {
+    /// Where the GPU has them.
+    #[default]
+    Auto,
+    Off,
 }
 
 /// Replaces the shading of every `DynLitMaterial` to show what the lighting does.

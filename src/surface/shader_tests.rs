@@ -111,6 +111,40 @@ fn shading_compiles_with_and_without_uvs() {
     }
 }
 
+fn has_subgroup_ops(block: &naga::Block) -> bool {
+    use naga::Statement;
+    block.iter().any(|statement| match statement {
+        Statement::SubgroupGather { .. } | Statement::SubgroupCollectiveOperation { .. } => true,
+        Statement::If { accept, reject, .. } => {
+            has_subgroup_ops(accept) || has_subgroup_ops(reject)
+        }
+        Statement::Block(block) => has_subgroup_ops(block),
+        Statement::Loop {
+            body, continuing, ..
+        } => has_subgroup_ops(body) || has_subgroup_ops(continuing),
+        _ => false,
+    })
+}
+
+#[test]
+fn subgroup_fast_paths_compile_only_when_asked() {
+    for subgroups in [false, true] {
+        let module = compile(LIGHTING.0, &surface_modules(), &[("SUBGROUPS", subgroups)]);
+        let using: Vec<_> = module
+            .functions
+            .iter()
+            .filter(|(_, function)| has_subgroup_ops(&function.body))
+            .filter_map(|(_, function)| function.name.clone())
+            .collect();
+        let expected: &[&str] = if subgroups {
+            &["add_unshadowed_lights", "add_triangle_lights"]
+        } else {
+            &[]
+        };
+        assert_eq!(using, expected);
+    }
+}
+
 #[test]
 fn material_uniform_layout_matches_wesl() {
     use bevy::render::render_resource::ShaderType;

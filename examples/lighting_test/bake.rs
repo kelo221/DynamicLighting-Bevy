@@ -1,7 +1,8 @@
 //! Baking the test scene: native `--bake` (or B) writes `assets/lighting_test.dynlight`;
 //! an existing bake is applied at startup. Browser runs automatically bake a small in-memory
-//! Preview (shadows only, no bounce). `--triangle-ids` forces the primitive-index fallback, and
-//! `--auto-features` compiles only the shader features the scene uses.
+//! Preview (shadows only, no bounce). `--triangle-ids` forces the primitive-index fallback,
+//! `--auto-features` compiles only the shader features the scene uses, and `--no-subgroups`
+//! turns the subgroup fast paths off.
 
 use bevy::prelude::*;
 use dynlight::bake::{BakeFinished, BakePreset, BakeStatus};
@@ -23,9 +24,11 @@ pub fn plugin(app: &mut App) {
     }
     let triangle_ids = support::args().any(|arg| arg == "--triangle-ids");
     let automatic = support::args().any(|arg| arg == "--auto-features");
-    if triangle_ids || automatic {
-        let defaults = DynamicLightingSettings::default();
+    let subgroups = support::subgroups();
+    let defaults = DynamicLightingSettings::default();
+    if triangle_ids || automatic || subgroups != defaults.subgroups {
         app.insert_resource(DynamicLightingSettings {
+            subgroups,
             triangle_ids: if triangle_ids {
                 TriangleIdSource::VertexAttribute
             } else {

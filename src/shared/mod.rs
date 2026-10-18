@@ -35,7 +35,7 @@ pub use mesh_hash::{hash_mesh, mesh_content_hash};
 pub use name_path::NamePaths;
 pub use settings::{
     DEBUG_LIGHT_COUNT_MAX, DebugView, DynamicGeometryMode, DynamicLightingSettings,
-    FeatureSelection, RuntimeQuality, ShaderFeatures, TrackingMode, TriangleIdSource,
+    FeatureSelection, RuntimeQuality, ShaderFeatures, SubgroupUse, TrackingMode, TriangleIdSource,
 };
 pub use shader_buffer::{buffer_capacity, frame_shader_buffer, write_shader_buffer};
 pub use sky::{GPU_SKY_SIZE, GpuSkyIrradiance, SkyIrradiance};

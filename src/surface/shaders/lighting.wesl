@@ -94,6 +94,28 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
         add_realtime_distant(&sum, shading, surface, globals);
         span = realtime_span(world, globals.realtime_count - globals.realtime_distant);
     }
+    add_unshadowed_lights(&sum, shading, surface, globals, unshadowed_baked, span);
+    return sum;
+}
+
+// The first `unshadowed_baked` lights, then the realtime lights of `span`, unshadowed. With
+// `SUBGROUPS`, a subgroup whose pixels share their span visits it with broadcast values, which
+// the compiler knows are the same across the subgroup, so it loads each light once for all of
+// them. Both paths do the same arithmetic, so the image doesn't change.
+fn add_unshadowed_lights(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, globals: LightGlobals, unshadowed_baked: u32, span: RealtimeSpan) {
+@if(SUBGROUPS) {
+    let words = vec3(span.first, span.count, u32(span.clustered));
+    let lead = subgroupBroadcastFirst(words);
+    if subgroupAll(all(words == lead)) {
+        let lead_span = RealtimeSpan(lead.x, lead.y, lead.z != 0u);
+        visit_unshadowed_lights(sum, shading, surface, globals, unshadowed_baked, lead_span);
+        return;
+    }
+}
+    visit_unshadowed_lights(sum, shading, surface, globals, unshadowed_baked, span);
+}
+
+fn visit_unshadowed_lights(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, globals: LightGlobals, unshadowed_baked: u32, span: RealtimeSpan) {
     let local_base = globals.baked_count + globals.realtime_distant;
     let count = unshadowed_baked + span.count;
     for (var k = 0u; k < count; k++) {
@@ -105,9 +127,8 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
             }
             slot = local_base + realtime;
         }
-        add_unshadowed(&sum, shading, dynamic_lights.lights[slot], surface, globals.time);
+        add_unshadowed(sum, shading, dynamic_lights.lights[slot], surface, globals.time);
     }
-    return sum;
 }
 
 // The realtime distant lights (suns and skies), which reach every fragment and are in no grid
@@ -174,31 +195,42 @@ fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) 
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
     let surface = SurfacePoint(input.world, input.normal, true);
-    let triangle = load_triangle(record, input.primitive);
-    let at = footprint(triangle, input.lightmap_uv * f32(record.resolution));
+    add_triangle_lights(&sum, shading, surface, input, record, globals);
+    if !FEATURE_REALTIME_LIGHTS {
+        return sum;
+    }
+    add_realtime_distant(&sum, shading, surface, globals);
+    let span = realtime_span(input.world, globals.realtime_count - globals.realtime_distant);
+    add_unshadowed_lights(&sum, shading, surface, globals, 0u, span);
+    return sum;
+}
+
+// The baked lights of the fragment's triangle. With `SUBGROUPS`, a subgroup whose pixels all lie
+// on one triangle loads the triangle and its lights once for all of them, as in
+// `add_unshadowed_lights`.
+fn add_triangle_lights(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, input: SurfaceInput, record: Receiver, globals: LightGlobals) {
+@if(SUBGROUPS) {
+    let id = vec2(input.tag, input.primitive);
+    let lead = subgroupBroadcastFirst(id);
+    if subgroupAll(all(id == lead)) {
+        visit_triangle_lights(sum, shading, surface, input.lightmap_uv, receiver(lead.x), lead.y, globals);
+        return;
+    }
+}
+    visit_triangle_lights(sum, shading, surface, input.lightmap_uv, record, input.primitive, globals);
+}
+
+fn visit_triangle_lights(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, lightmap_uv: vec2<f32>, record: Receiver, primitive: u32, globals: LightGlobals) {
+    let triangle = load_triangle(record, primitive);
+    let at = footprint(triangle, lightmap_uv * f32(record.resolution));
     for (var k = 0u; k < triangle.light_count; k++) {
         let entry = triangle_light(triangle, k);
         // A bake that doesn't match the light buffer must not read realtime slots.
         if entry.index < globals.baked_count {
             let light = dynamic_lights.lights[entry.index];
-            add_baked(&sum, shading, light, surface, triangle, entry, at, globals);
+            add_baked(sum, shading, light, surface, triangle, entry, at, globals);
         }
     }
-    if !FEATURE_REALTIME_LIGHTS {
-        return sum;
-    }
-    add_realtime_distant(&sum, shading, surface, globals);
-    let local_base = globals.baked_count + globals.realtime_distant;
-    let local_count = globals.realtime_count - globals.realtime_distant;
-    let span = realtime_span(input.world, local_count);
-    for (var k = 0u; k < span.count; k++) {
-        let realtime = span_light(span, k);
-        if realtime < local_count {
-            let light = dynamic_lights.lights[local_base + realtime];
-            add_unshadowed(&sum, shading, light, surface, globals.time);
-        }
-    }
-    return sum;
 }
 
 // One baked light on a baked triangle (Henry's `LightProcessor.cginc` for static geometry).

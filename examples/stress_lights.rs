@@ -107,6 +107,7 @@ fn main() -> AppExit {
     .insert_resource(DynamicLightingSettings {
         realtime_light_budget: if options.realtime { options.lights } else { 32 },
         ambient: Color::srgba(1.0, 1.0, 1.0, 0.05),
+        subgroups: support::subgroups(),
         ..default()
     })
     .init_resource::<Measurement>()

@@ -159,6 +159,19 @@ fn stress_lights_baked() {
     );
 }
 
+/// The lit shader's subgroup fast paths must not change the image. (FXC has no subgroups, so
+/// the FXC cases cover the other scenes.)
+#[test]
+#[ignore = "needs a GPU"]
+fn stress_lights_without_subgroups_match() {
+    check_against(
+        "stress_lights_no_subgroups",
+        "stress_lights_baked",
+        "stress_lights",
+        &["--lights", "100", "--bake", "--no-subgroups"],
+    );
+}
+
 /// A baked soft sun and a baked sky over a courtyard with a porch, with a lamp; the ball and the
 /// crate aren't baked and take the pergola's and a tree's shadows from the sun map and the sky's
 /// from the sky probes, and cast theirs through the sun's realtime cascades.

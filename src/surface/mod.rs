@@ -12,18 +12,20 @@ pub mod mirror;
 #[cfg(test)]
 mod shader_tests;
 mod shared_arrays;
+mod subgroups;
 mod unbaked;
 
 use bevy::asset::{AssetPlugin, embedded_asset};
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
+use bevy::render::{RenderApp, RenderStartup};
 use bevy::shader::load_shader_library;
 
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
 
 use crate::realtime_shadows::CasterMaterialPlugin;
-use crate::shared::shaders_available;
+use crate::shared::{DynamicLightingSettings, shaders_available};
 
 pub struct SurfacePlugin;
 
@@ -56,6 +58,10 @@ impl Plugin for SurfacePlugin {
                 ),
             )
             .add_systems(PostUpdate, unbaked::note_unbaked_meshes);
+        }
+        let setting = app.world().resource::<DynamicLightingSettings>().subgroups;
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(RenderStartup, subgroups::detect_subgroups(setting));
         }
         if shaders_available(app) {
             load_shader_library!(app, "shaders/bindings.wesl");

@@ -146,6 +146,7 @@ The lit shader then waits until the scene's bake is applied and compiles once wi
 ### Platforms
 
 - **Primitive indices:** baked shadows are looked up by triangle. On GPUs with wgpu's `PRIMITIVE_INDEX` feature (desktop Vulkan, DX12, Metal) this is free. Elsewhere, baked meshes are de-indexed when they load and carry a triangle-ID vertex attribute instead. `DynamicLightingSettings::triangle_ids` forces either path.
+- **Subgroups:** where wgpu has `SUBGROUP` (desktop Vulkan, DX12 with DXC, Metal), neighbouring pixels on one baked triangle or in one cell of realtime lights load each light once per subgroup. The image is the same either way; `DynamicLightingSettings::subgroups` can switch it off.
 - **Shadow cubemaps:** use `Rg32Float` where the GPU can filter 32-bit floats, and `Rg16Float` otherwise.
 - **Web:** WebGPU works, through the triangle-ID path (wgpu doesn't expose primitive indices on the web). Bakes run on the browser's main thread with `BakeRequest { output: None, .. }`. WebGL2 is not supported, because it has no storage buffers in fragment shaders.
 
