@@ -20,8 +20,6 @@ use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
 use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS, SUN_CASCADES};
 
-use super::subgroups::subgroups_enabled;
-
 const SHADER: &str = "embedded://dynlight/surface/shaders/dynlit.wesl";
 const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
 const PREPASS_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_prepass.wesl";
@@ -316,9 +314,6 @@ impl Material for DynLitMaterial {
             }
             if key.bind_group_data.metallic {
                 fragment.shader_defs.push("METALLIC_SHADING".into());
-            }
-            if subgroups_enabled() {
-                fragment.shader_defs.push("SUBGROUPS".into());
             }
         }
         Ok(())

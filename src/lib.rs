@@ -45,7 +45,7 @@ pub mod prelude {
     };
     pub use crate::shared::{
         BakeId, DynamicLightingSettings, FeatureSelection, RuntimeQuality, ShaderFeatures,
-        SubgroupUse, TriangleIdSource,
+        TriangleIdSource,
     };
     pub use crate::surface::{DynLitMaterial, ShadingModel};
 }

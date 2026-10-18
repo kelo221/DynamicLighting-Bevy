@@ -57,16 +57,6 @@ pub fn flag(name: &str) -> bool {
     args().any(|arg| arg == name)
 }
 
-/// `--no-subgroups` renders without the lit shader's subgroup fast paths, which must not change
-/// the image.
-pub fn subgroups() -> dynlight::shared::SubgroupUse {
-    if flag("--no-subgroups") {
-        dynlight::shared::SubgroupUse::Off
-    } else {
-        dynlight::shared::SubgroupUse::Auto
-    }
-}
-
 /// The camera from `--camera x,y,z,target_x,target_y,target_z`.
 pub fn fixed_camera() -> Option<Transform> {
     let numbers: Vec<f32> = argument("--camera")?

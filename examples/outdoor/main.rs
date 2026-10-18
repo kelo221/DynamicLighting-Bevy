@@ -58,7 +58,6 @@ fn main() -> AppExit {
     // The sky is the only fill light.
     .insert_resource(DynamicLightingSettings {
         ambient: Color::NONE,
-        subgroups: support::subgroups(),
         ..default()
     })
     .add_systems(Startup, (spawn, load_or_bake))
