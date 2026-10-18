@@ -66,14 +66,7 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
     let bvh_lights = globals.baked_count - globals.baked_distant;
     var unshadowed_baked = bvh_lights;
     if bvh_node_count() > 0u {
-        var stack: BvhStack;
-        var walk = bvh_start(&stack);
-        while bvh_next(&walk, &stack, world) {
-            if walk.light < bvh_lights {
-                let light = dynamic_lights.lights[walk.light];
-                add_cube_shadowed(&sum, shading, light, walk.light, surface, globals.time, shadows);
-            }
-        }
+        add_bvh_lights(&sum, shading, surface, bvh_lights, globals.time, shadows);
         unshadowed_baked = 0u;
     }
     // The suns come first, so the `sun`-th distant light has the `sun`-th sun map.
@@ -108,6 +101,20 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
         add_unshadowed(&sum, shading, dynamic_lights.lights[slot], surface, globals.time);
     }
     return sum;
+}
+
+// The baked lights of the light BVH whose leaves contain the point, shadowed by their distance
+// cubes. WGSL zero-fills a function's variables when it is entered, so the node stack lives
+// here, where only fragments of a scene with a light BVH pay for clearing it.
+fn add_bvh_lights(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, bvh_lights: u32, time: f32, shadows: bool) {
+    var stack: BvhStack;
+    var walk = bvh_start(&stack);
+    while bvh_next(&walk, &stack, surface.world) {
+        if walk.light < bvh_lights {
+            let light = dynamic_lights.lights[walk.light];
+            add_cube_shadowed(sum, shading, light, walk.light, surface, time, shadows);
+        }
+    }
 }
 
 // The realtime distant lights (suns and skies), which reach every fragment and are in no grid

@@ -19,6 +19,9 @@ struct BvhNode {
 // The node stack of a walk, declared by the caller as a function variable. It isn't part of
 // `BvhWalk` because Direct3D's FXC compiler can't write to an array inside a struct at a run-time
 // index. It isn't a module-scope `var<private>` either: DXC keeps those in slow scratch memory.
+// Declare it in a function that runs only when there are nodes: WGSL zero-fills function
+// variables on entry, and clearing it in every fragment costs more than the rest of an unbaked
+// fragment's fixed work.
 alias BvhStack = array<u32, BVH_STACK_SIZE>;
 
 // A traversal in progress; advance it with `bvh_next`. Its nodes are on a `BvhStack`.
