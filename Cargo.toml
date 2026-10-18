@@ -89,6 +89,10 @@ harness = false
 name = "clusters"
 harness = false
 
+[[bench]]
+name = "portals"
+harness = false
+
 # Bevy's recommended dev profile: some optimization for our code, full for deps.
 [profile.dev]
 opt-level = 1

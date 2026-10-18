@@ -232,4 +232,20 @@ impl Graph {
             out.push(OUTSIDE);
         }
     }
+
+    /// Whether `node` is one of the nodes [`Graph::reach`] gives for the sphere. A cell costs
+    /// one test, the outside a pass over every cell.
+    pub fn reaches(&self, node: usize, center: Vec3, radius: f32) -> bool {
+        match node.checked_sub(1) {
+            Some(cell) => self
+                .cells
+                .get(cell)
+                .is_some_and(|cell| cell.touches_sphere(center, radius + self.tolerance)),
+            // A cell that holds the sphere touches it too.
+            None => !self
+                .cells
+                .iter()
+                .any(|cell| cell.holds_sphere(center, radius)),
+        }
+    }
 }

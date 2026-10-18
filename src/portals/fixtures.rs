@@ -103,7 +103,10 @@ pub fn sees(graph: &Graph, eye: Vec3, target: Vec3, center: Vec3, radius: f32) -
     let Some(view) = view(graph, eye, target) else {
         return true;
     };
-    let mut reach = Vec::new();
-    graph.reach(center, radius, &mut reach);
-    view.sees(&reach, center, radius, graph.tolerance)
+    view.sees(
+        |node| graph.reaches(node, center, radius),
+        center,
+        radius,
+        graph.tolerance,
+    )
 }

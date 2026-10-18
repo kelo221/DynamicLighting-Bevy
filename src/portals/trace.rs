@@ -53,16 +53,22 @@ pub struct TracedView {
 }
 
 impl TracedView {
-    /// Whether some visit to a node in `reach` may see part of the sphere.
-    pub fn sees(&self, reach: &[usize], center: Vec3, radius: f32, tolerance: f32) -> bool {
+    /// Whether some visit to a node the sphere `reaches` may see part of it. The planes are
+    /// tested first: `reaches` can cost a pass over every cell.
+    pub fn sees(
+        &self,
+        mut reaches: impl FnMut(usize) -> bool,
+        center: Vec3,
+        radius: f32,
+        tolerance: f32,
+    ) -> bool {
         let center = center - self.eye;
         let reach_out = -(radius + tolerance);
         self.visits.iter().any(|visit| {
-            reach.contains(&visit.node)
-                && self
-                    .planes(visit)
-                    .iter()
-                    .all(|&plane| distance(plane, center) >= reach_out)
+            self.planes(visit)
+                .iter()
+                .all(|&plane| distance(plane, center) >= reach_out)
+                && reaches(visit.node)
         })
     }
 

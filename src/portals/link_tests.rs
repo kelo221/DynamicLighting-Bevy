@@ -310,3 +310,26 @@ fn spheres_reach_through_walls() {
     graph.reach(Vec3::new(-3.0, 1.5, 0.0), 1.0, &mut reach);
     assert_eq!(reach, [OUTSIDE]);
 }
+
+#[test]
+fn one_node_at_a_time_reaches_the_same_nodes() {
+    let graph = row_graph(3, &[0.0, 1.0]);
+    let mut reach = Vec::new();
+    for i in 0..400u32 {
+        // A lattice over the rooms and past them, with radii from 0.1 to 3 m.
+        let center = Vec3::new(
+            (i % 20) as f32 - 2.0,
+            (i % 7) as f32 * 0.6 - 0.5,
+            ((i / 20) % 10) as f32 - 4.5,
+        );
+        let radius = 0.1 + (i % 11) as f32 * 0.29;
+        graph.reach(center, radius, &mut reach);
+        for node in 0..graph.node_count() {
+            assert_eq!(
+                graph.reaches(node, center, radius),
+                reach.contains(&node),
+                "node {node}, sphere at {center} r {radius}"
+            );
+        }
+    }
+}

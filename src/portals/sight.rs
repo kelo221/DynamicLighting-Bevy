@@ -19,7 +19,8 @@ pub fn sees<'a>(
     radius: f32,
 ) -> bool {
     let ready = graph.ready();
-    let mut reach: Option<Vec<usize>> = None;
+    // The nodes asked about so far and whether the sphere reaches them, for every camera.
+    let mut known: Vec<(usize, bool)> = Vec::new();
     for (frustum, view) in cameras {
         if !sees_sphere(frustum, center, radius) {
             continue;
@@ -28,12 +29,15 @@ pub fn sees<'a>(
         let (Some(rooms), Some(traced)) = (ready, traced) else {
             return true;
         };
-        let reach = reach.get_or_insert_with(|| {
-            let mut nodes = Vec::new();
-            rooms.reach(center, radius, &mut nodes);
-            nodes
-        });
-        if traced.sees(reach, center, radius, rooms.tolerance) {
+        let reaches = |node: usize| {
+            if let Some(&(_, reached)) = known.iter().find(|&&(known, _)| known == node) {
+                return reached;
+            }
+            let reached = rooms.reaches(node, center, radius);
+            known.push((node, reached));
+            reached
+        };
+        if traced.sees(reaches, center, radius, rooms.tolerance) {
             return true;
         }
     }

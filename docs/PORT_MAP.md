@@ -359,14 +359,15 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | `examples/support/lightmap_uvs.rs` | none | none | New; UV1 sets for Bevy's primitive meshes (a per-face atlas for boxes, moved from `lighting_test`) |
 | `examples/outdoor/main.rs`, `scene.rs` | none | none | New; a courtyard under a baked soft sun and a baked sky with a porch, a lamp, two Metallic balls, and moving objects shadowed by the sun map and the sky probes that cast realtime sun shadows (M22); `--camera` |
 | `examples/outdoor/sky.rs` | none | none | New; a procedural sky image matched to the sun, or an HDRI from `--hdri`, scaled and turned to the sun |
-| `examples/rooms/main.rs` | none | none | New (M27); the rooms example: options, P and G keys, the once-a-second `dynlight portals:` log and the `--frames` summary |
+| `examples/rooms/main.rs` | none | none | New (M27); the rooms example: options, P and G keys, the once-a-second `dynlight portals:` log |
+| `examples/rooms/measure.rs` | none | none | New (M27); the `--frames` summary: mean, median and p95 frame times, each render pass's GPU time (every batch of timings counted once), the stats per frame |
 | `examples/rooms/layout.rs` | none | none | New (M27); walls with doors and windows, the corridor with six rooms and a yard, the rooms' lights |
 | `examples/rooms/grid.rs` | none | none | New (M27); `--grid N`: N × N rooms joined by offset doors |
 | `examples/rooms/path.rs` | none | none | New (M27); the `--path` flythroughs on virtual time (a fixed step while `--frames` measures), bobbing lamps |
 | `tests/area_light_bake.rs` | none | none | New; panels bake soft shadows close to a brute-force trace, tubes soften only along their length, point lights keep one bit |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
-| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular`, `gpu_check_area`, `gpu_check_sun` and `gpu_check_sky` examples and check `lighting_test` screenshots |
+| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular`, `gpu_check_area`, `gpu_check_sun` and `gpu_check_sky` examples, check `lighting_test` screenshots, and check what `rooms` culls |
 | `tests/gpu_baselines.rs` | none | none | New; visual baselines: still frames of the examples compared with `tests/baselines/` by FLIP |
 | `tests/common/mod.rs` | none | none | New; helpers shared by the GPU test files |
 | `tests/headless_app.rs` | none | none | New |
@@ -379,3 +380,4 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `benches/bake.rs` | none | none | New; synthetic bake benchmark (`harness = false`): without bounce, with bounce, 4× lights |
 | `benches/clusters.rs` | none | none | New; light grid build time for 100, 1000 and 10 000 scattered point lights (`harness = false`) |
+| `benches/portals.rs` | none | none | New (M27); graph rebuild, view trace and `portals::sees` for every light sphere in 6 × 6 and 16 × 16 room grids (`harness = false`) |

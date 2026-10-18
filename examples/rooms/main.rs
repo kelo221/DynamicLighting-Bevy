@@ -16,27 +16,32 @@
 //! - `--still` stops the lamps bobbing, so cached shadow faces stay cached.
 //! - `--grid N` builds `N × N` rooms instead, three lights and a cube each; `--budgets` raises
 //!   the realtime light and shadow cubemap budgets to fit every light.
-//! - `--frames N` exits after measuring N frames and logs the mean frame time and stats;
-//!   `--screenshot path.png` also saves an image. `--capture path.png` saves a still frame for
+//! - `--frames N` exits after measuring N frames at 1920×1080 and logs the frame times, the GPU
+//!   time of each pass and the stats; `--screenshot path.png` also saves an image. `--capture path.png` saves a still frame for
 //!   the visual baselines, `--camera x,y,z,tx,ty,tz` holds the camera somewhere else.
 
 #[path = "../support/capture.rs"]
 mod capture;
 mod grid;
 mod layout;
+mod measure;
 mod path;
 #[path = "../support/mod.rs"]
 mod support;
 
+use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;
+use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use bevy::window::{PresentMode, PrimaryWindow};
+use bevy::window::{PresentMode, PrimaryWindow, WindowResolution};
+use bevy::winit::WinitSettings;
 use dynlight::fog::FogVolumes;
 use dynlight::light::PackedLights;
 use dynlight::light_clusters::RealtimeClusters;
 use dynlight::portals::{PortalStats, RoomGraph, RoomView};
 use dynlight::prelude::*;
 use dynlight::realtime_shadows::ShadowCubemapStats;
+use measure::{Frame, Measurement};
 use support::{argument, flag};
 
 /// Real time before `--frames` starts counting, so pipelines have compiled.
@@ -59,6 +64,7 @@ fn main() -> AppExit {
     if options.frames.is_some() {
         // Measure the real cost, not the display's refresh rate.
         window.present_mode = PresentMode::AutoNoVsync;
+        window.resolution = WindowResolution::new(1920, 1080).with_scale_factor_override(1.0);
     }
     let mut settings = DynamicLightingSettings::default();
     if flag("--budgets") {
@@ -86,6 +92,11 @@ fn main() -> AppExit {
     .add_systems(Last, report);
     if !flag("--still") {
         app.add_systems(Update, path::bob);
+    }
+    if options.frames.is_some() {
+        // A window without focus would otherwise update only 60 times a second.
+        app.add_plugins(RenderDiagnosticsPlugin)
+            .insert_resource(WinitSettings::continuous());
     }
     if flag("--path") && !capture::active() {
         let mut path = path::Path::new(options.grid);
@@ -126,27 +137,13 @@ fn toggle(
     }
 }
 
-/// This frame's numbers.
-#[derive(Clone, Copy, Default)]
-struct Frame {
-    visits: u32,
-    lights: u32,
-    cubes: u32,
-    assigned: u32,
-    faces: u32,
-    entries: u32,
-    fog: u32,
-}
-
 #[derive(Default)]
 struct Report {
     last_log: f32,
     last_title: f32,
     /// Cubes assigned and faces rendered since the last log line.
     since_log: (u32, u32),
-    frames: u32,
-    seconds: f64,
-    sums: [f64; 7],
+    measurement: Measurement,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -156,7 +153,11 @@ fn report(
     time: Res<Time<Real>>,
     (portals, settings, graph): (Res<PortalStats>, Res<PortalSettings>, Res<RoomGraph>),
     (packed, shadows): (Res<PackedLights>, Res<ShadowCubemapStats>),
-    (clusters, fog): (Res<RealtimeClusters>, Res<FogVolumes>),
+    (clusters, fog, diagnostics): (
+        Res<RealtimeClusters>,
+        Res<FogVolumes>,
+        Res<DiagnosticsStore>,
+    ),
     views: Query<&RoomView, With<Camera3d>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut state: Local<Report>,
@@ -218,67 +219,25 @@ fn report(
             window.title = title;
         }
     }
-    measure(
-        &mut commands,
-        &options,
-        &time,
-        frame,
-        &mut state,
-        &mut exit,
-        settings.enabled,
-    );
-}
-
-/// With `--frames`: counts frames after the warm-up, saves the screenshot near the end and logs
-/// the means before exiting.
-fn measure(
-    commands: &mut Commands,
-    options: &Options,
-    time: &Time<Real>,
-    frame: Frame,
-    state: &mut Report,
-    exit: &mut MessageWriter<AppExit>,
-    portals: bool,
-) {
-    let Some(frames) = options.frames else {
+    // With `--frames`: count frames after the warm-up, save the screenshot near the end and log
+    // the summary before exiting.
+    let Some(frames) = options.frames.map(|frames| frames as usize) else {
         return;
     };
-    if time.elapsed_secs() < WARM_UP_SECONDS {
+    if now < WARM_UP_SECONDS {
         return;
     }
-    state.frames += 1;
-    state.seconds += time.delta_secs_f64();
-    let values = [
-        frame.visits,
-        frame.lights,
-        frame.cubes,
-        frame.assigned,
-        frame.faces,
-        frame.entries,
-        frame.fog,
-    ];
-    for (sum, value) in state.sums.iter_mut().zip(values) {
-        *sum += f64::from(value);
-    }
+    let measurement = &mut state.measurement;
+    measurement.add(time.delta_secs_f64() * 1000.0, frame, &diagnostics);
     if let Some(path) = &options.screenshot
-        && state.frames == frames.saturating_sub(5).max(1)
+        && measurement.frames() == frames.saturating_sub(5).max(1)
     {
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(path.clone()));
     }
-    if state.frames >= frames {
-        let count = f64::from(state.frames);
-        let [visits, lights, cubes, assigned, faces, entries, fog] =
-            state.sums.map(|sum| sum / count);
-        info!(
-            "rooms: portals {}, mean {:.3} ms per frame over {} frames; per frame: visits {visits:.1}, \
-             realtime lights {lights:.2}, cubes {cubes:.2}, cubes assigned {assigned:.3}, faces \
-             {faces:.2}, cluster entries {entries:.0}, fog {fog:.2}",
-            if portals { "on" } else { "off" },
-            state.seconds * 1000.0 / count,
-            state.frames
-        );
+    if measurement.frames() >= frames {
+        info!("{}", measurement.summary(settings.enabled));
         exit.write(AppExit::Success);
     }
 }
