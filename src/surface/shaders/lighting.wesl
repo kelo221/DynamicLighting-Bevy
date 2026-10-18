@@ -48,7 +48,7 @@ fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
         if FEATURE_UNBAKED_MESHES {
             return dynamic_surface_light(input.world, input.normal, shading);
         }
-        return LightSum(vec3(0.0), vec3(0.0), 0u);
+        return LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
     }
     return baked_surface_light(input, record, shading);
 }
@@ -59,7 +59,7 @@ fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
 // Without a light BVH every other baked light is visited unshadowed.
 fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
-    var sum = LightSum(vec3(0.0), vec3(0.0), 0u);
+    var sum = LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
     let surface = SurfacePoint(world, normal, false);
     let shadows = (globals.flags & GLOBALS_FLAG_LIGHTING_ONLY) == 0u;
     let bvh_lights = globals.baked_count - globals.baked_distant;
@@ -162,7 +162,7 @@ fn add_sun_map_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: G
 // it, unshadowed. Lambert diffuse.
 fn baked_surface_light(input: SurfaceInput, record: Receiver, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
-    var sum = LightSum(vec3(0.0), vec3(0.0), 0u);
+    var sum = LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
     let surface = SurfacePoint(input.world, input.normal, true);
     let triangle = load_triangle(record, input.primitive);
     let at = footprint(triangle, input.lightmap_uv * f32(record.resolution));

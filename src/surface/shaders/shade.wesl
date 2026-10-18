@@ -83,5 +83,5 @@ fn shade(base: vec3<f32>, input: SurfaceInput, uv: vec2<f32>, camera: vec3<f32>)
         environment = textureSampleLevel(reflection_texture, reflection_sampler, direction, lod).rgb;
     }
     let lit = base * (diffuse_weight * ambient + lights.diffuse) + lights.specular;
-    return lit * occlusion + environment * fresnel;
+    return lit * occlusion + environment * fresnel + lights.reflection;
 }

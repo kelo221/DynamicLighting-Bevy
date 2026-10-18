@@ -88,6 +88,50 @@ fn the_sky_builds_and_rebuilds_when_its_image_changes() {
     assert!((brighter - 2.0 * level).abs() < 0.01 * level, "{brighter}");
 }
 
+/// The constant term of the sky's irradiance, scaled to the radiance of a uniform sky.
+fn uniform_level(app: &App) -> f32 {
+    app.world().resource::<SkyIrradiance>().0.sh[0][0] * 0.282_095
+}
+
+/// The first channel of the specular cube's first texel.
+fn first_specular_texel(app: &App) -> f32 {
+    let images = app.world().resource::<Assets<Image>>();
+    let data = images
+        .get(&SKY_SPECULAR)
+        .and_then(|image| image.data.as_deref());
+    let bytes = data.expect("the specular cube has CPU data");
+    half::f16::from_le_bytes([bytes[0], bytes[1]]).to_f32()
+}
+
+#[test]
+fn a_sky_without_an_image_is_uniform_white_until_an_image_sky_is_built() {
+    let mut app = app();
+    app.world_mut().spawn(DynamicLight::sky());
+    app.update();
+    assert!((uniform_level(&app) - 1.0).abs() < 1e-5);
+    assert_eq!(first_specular_texel(&app), 1.0);
+
+    let image = app
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .add(sky_image(2.0));
+    let sky = app.world_mut().spawn(SkyEnvironment::new(image)).id();
+    app.update();
+    assert_eq!(
+        uniform_level(&app),
+        0.0,
+        "no light until the image is built"
+    );
+    assert_eq!(first_specular_texel(&app), 0.0);
+    let level = wait_for_irradiance(&mut app, 0.0) * 0.282_095;
+    assert!((level - 2.0).abs() < 0.01, "{level}");
+
+    app.world_mut().despawn(sky);
+    app.update();
+    assert!((uniform_level(&app) - 1.0).abs() < 1e-5);
+    assert_eq!(first_specular_texel(&app), 1.0);
+}
+
 #[test]
 fn a_clamp_limits_the_light_but_not_the_background() {
     let image = sky_image(100.0);

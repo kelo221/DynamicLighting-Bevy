@@ -39,7 +39,8 @@ use crate::light::{DynamicLight, LightSystems};
 use crate::shared::shaders_available;
 
 /// The prefiltered specular cube every lit material binds: mip level `m` is the sky seen by
-/// perceptual roughness `m / (levels − 1)`, in the sky's own frame. Black until a sky is built.
+/// perceptual roughness `m / (levels − 1)`, in the sky's own frame. White while no sky has an
+/// image, black while an image sky is being built.
 pub const SKY_SPECULAR: Handle<Image> = uuid_handle!("2f6c1d8e-93a4-4b7f-b0e5-6a1c9d3e7f28");
 /// The sky image with mips that the background pass draws.
 pub const SKY_BACKGROUND: Handle<Image> = uuid_handle!("7a3e5b90-1c4d-4e8f-a6b2-d95f0c3e1a47");

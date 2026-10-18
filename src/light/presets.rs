@@ -60,6 +60,8 @@ impl DynamicLight {
 
     /// The sky around the scene at intensity 1, which shows its image as it is. Add
     /// `environment::SkyEnvironment` with the image next to it; turning the entity turns the sky.
+    /// Without an image it is a uniform sky of its color: Henry's flat ambient as a light, with
+    /// effects.
     pub fn sky() -> Self {
         Self {
             light_type: LightType::Sky,

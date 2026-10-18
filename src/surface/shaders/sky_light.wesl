@@ -31,5 +31,5 @@ fn add_sky(sum: ptr<function, LightSum>, shading: Shading, light: GpuLight, surf
     let direction = sky_local(light, reflect(-shading.view, surface.normal));
     let lod = shading.roughness * f32(textureNumLevels(sky_specular) - 1u);
     let reflected = textureSampleLevel(sky_specular, sky_specular_sampler, direction, lod).rgb;
-    (*sum).specular += reflected * strength * fresnel;
+    (*sum).reflection += reflected * strength * fresnel;
 }

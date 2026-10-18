@@ -10,10 +10,10 @@ use super::equirect::Pyramid;
 use super::frame::first_sky;
 use super::images::{
     SkyImageError, background_image, equirect_from_image, placeholder_background,
-    placeholder_specular, specular_image,
+    placeholder_specular, specular_image, uniform_specular,
 };
 use super::prefilter::{SPECULAR_LEVELS, SPECULAR_RESOLUTION, SPECULAR_SAMPLES, prefilter};
-use super::sh::{irradiance_over_pi, project, to_gpu};
+use super::sh::{irradiance_over_pi, project, to_gpu, uniform};
 use super::{SKY_BACKGROUND, SKY_SPECULAR, SkyBackground, SkyEnvironment, SkyStatus};
 use crate::light::{DynamicLight, LightType, PackedLights};
 use crate::shared::{GpuSkyIrradiance, SkyIrradiance};
@@ -48,8 +48,21 @@ impl SkyData {
 
 type SkyTask = Task<Result<SkyData, SkyImageError>>;
 
+/// What the bound sky data shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Shown {
+    /// Black: nothing yet, or an image sky on its way.
+    #[default]
+    Nothing,
+    /// The uniform white sky of sky lights without an image.
+    Uniform,
+    /// A built image.
+    Image,
+}
+
 #[derive(Resource, Default)]
 pub(super) struct SkyBuilds {
+    shown: Shown,
     /// The source the current images and irradiance came from.
     built: Option<SkySource>,
     running: Option<(SkySource, SkyTask)>,
@@ -129,6 +142,7 @@ pub(super) fn build_skies(
                 let _ = images.insert(&SKY_SPECULAR, data.specular);
                 let _ = images.insert(&SKY_BACKGROUND, data.background);
                 irradiance.0 = data.irradiance;
+                builds.shown = Shown::Image;
             }
             Err(error) => warn!("dynlight sky: can't light with the sky image: {error}"),
         }
@@ -144,8 +158,21 @@ pub(super) fn build_skies(
         });
     let Some(source) = sources.next() else {
         status.building = false;
+        // Sky lights without an image light like a uniform white sky.
+        (builds.running, builds.restart, builds.built) = (None, false, None);
+        if builds.shown != Shown::Uniform {
+            let _ = images.insert(&SKY_SPECULAR, uniform_specular());
+            irradiance.0 = to_gpu(&uniform(Vec3::ONE));
+            builds.shown = Shown::Uniform;
+        }
         return;
     };
+    if builds.shown == Shown::Uniform {
+        // An image sky adds no light until it is built.
+        let _ = images.insert(&SKY_SPECULAR, placeholder_specular());
+        irradiance.0 = GpuSkyIrradiance::default();
+        builds.shown = Shown::Nothing;
+    }
     if !builds.warned_extra_skies && sources.any(|other| other != source) {
         warn!("dynlight sky: more than one sky image; one of them lights the scene");
         builds.warned_extra_skies = true;
@@ -166,12 +193,18 @@ pub(super) fn build_skies(
     builds.running = Some((source, task));
 }
 
-/// The sky the background pass draws this frame.
+/// The sky the background pass draws this frame. A sky without an image leaves the cameras'
+/// clear color.
 pub(super) fn note_sky_background(
     packed: Res<PackedLights>,
+    builds: Option<Res<SkyBuilds>>,
     mut background: ResMut<SkyBackground>,
 ) {
-    let sky = first_sky(&packed.globals, &packed.lights);
+    let sky = if builds.is_some_and(|builds| builds.shown == Shown::Image) {
+        first_sky(&packed.globals, &packed.lights)
+    } else {
+        None
+    };
     if background.0 != sky {
         background.0 = sky;
     }

@@ -176,11 +176,19 @@ pub fn background_image(pyramid: &Pyramid) -> Image {
     float_image(size, pyramid.levels.len() as u32, data)
 }
 
-/// A black 1×1 cube, bound until a sky is ready.
+/// A black 1×1 cube, bound while an image sky is being built.
 pub fn placeholder_specular() -> Image {
     specular_image(&SpecularCube {
         resolution: 1,
         levels: vec![vec![Vec3::ZERO; CUBE_FACE_COUNT as usize]],
+    })
+}
+
+/// A white 1×1 cube: the reflection of a sky light without an image, at every roughness.
+pub fn uniform_specular() -> Image {
+    specular_image(&SpecularCube {
+        resolution: 1,
+        levels: vec![vec![Vec3::ONE; CUBE_FACE_COUNT as usize]],
     })
 }
 

@@ -117,7 +117,7 @@ commands.spawn((
 ));
 ```
 
-The image is equirectangular, in Blender's mapping: its center looks along +X and its top is straight up. Loading `.exr` or `.hdr` files needs Bevy's `exr` or `hdr` feature; 8-bit images work too. The sky is built on a background task once the image loads (25 ms for a 1024 × 512 image and 51 ms for 2048 × 1024 on a desktop CPU); `environment::SkyStatus::building` is true until it is ready. `max_radiance` limits the image's light but not the background, so a sun in the image isn't counted twice next to a sun light. Put `NoSkyBackground` on a camera to keep its clear color. One sky lights the scene at a time.
+The image is equirectangular, in Blender's mapping: its center looks along +X and its top is straight up. Loading `.exr` or `.hdr` files needs Bevy's `exr` or `hdr` feature; 8-bit images work too. The sky is built on a background task once the image loads (25 ms for a 1024 × 512 image and 51 ms for 2048 × 1024 on a desktop CPU); `environment::SkyStatus::building` is true until it is ready. `max_radiance` limits the image's light but not the background, so a sun in the image isn't counted twice next to a sun light. Put `NoSkyBackground` on a camera to keep its clear color. One sky lights the scene at a time. A `DynamicLight::sky()` without `SkyEnvironment` is a uniform sky of its color, Henry's ambient light as a light with effects, and draws no background.
 
 ### Shader variants
 

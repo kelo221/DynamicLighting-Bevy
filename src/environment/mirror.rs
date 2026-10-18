@@ -59,7 +59,7 @@ pub fn sample_specular(cube: &SpecularCube, direction: Vec3, lod: f32) -> Vec3 {
     at(level).lerp(at(level + 1), lod - level as f32)
 }
 
-/// What a sky light adds at a surface: `(diffuse, specular)` of the lit shader's light sum,
+/// What a sky light adds at a surface: `(diffuse, reflection)` of the lit shader's light sum,
 /// with Diffuse shading when `metallic` is `None`, otherwise Metallic shading of that metallic
 /// value with reflectance `f0`. `normal` and `view` are unit vectors.
 pub struct SkySurface {

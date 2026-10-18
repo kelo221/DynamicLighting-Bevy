@@ -195,6 +195,9 @@ struct LightSum {
     diffuse: vec3<f32>,
     // Reflected light, final.
     specular: vec3<f32>,
+    // The sky's reflection, final: like Henry's environment reflection, the material's
+    // occlusion texture doesn't darken it.
+    reflection: vec3<f32>,
     // Lights that added light or bounce light, for the light count debug view.
     lights: u32,
 }

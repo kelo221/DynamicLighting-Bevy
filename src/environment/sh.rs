@@ -79,6 +79,14 @@ pub fn irradiance_over_pi(radiance: [Vec3; SH_COUNT]) -> [Vec3; SH_COUNT] {
     out
 }
 
+/// The coefficients [`irradiance_over_pi`] gives for a sky of `radiance` in every direction: all
+/// in the constant term.
+pub fn uniform(radiance: Vec3) -> [Vec3; SH_COUNT] {
+    let mut coefficients = [Vec3::ZERO; SH_COUNT];
+    coefficients[0] = radiance / basis(Vec3::Y)[0];
+    coefficients
+}
+
 /// The coefficients evaluated at unit direction `n`, clamped at zero like the shader.
 pub fn evaluate(coefficients: &[Vec3; SH_COUNT], n: Vec3) -> Vec3 {
     let value = coefficients
@@ -130,6 +138,16 @@ mod tests {
             let e = evaluate(&sh, n);
             assert!(e.abs_diff_eq(Vec3::new(1.0, 0.5, 0.25), 2e-3), "{n} {e}");
         }
+    }
+
+    #[test]
+    fn the_uniform_coefficients_match_a_projected_uniform_sky() {
+        let color = Vec3::new(1.0, 0.5, 0.25);
+        let projected = irradiance(&Equirect::from_fn(64, 32, |_| color));
+        for (exact, sampled) in uniform(color).iter().zip(projected) {
+            assert!(exact.abs_diff_eq(sampled, 1e-2), "{exact} {sampled}");
+        }
+        assert!(evaluate(&uniform(color), Vec3::NEG_X).abs_diff_eq(color, 1e-6));
     }
 
     #[test]
