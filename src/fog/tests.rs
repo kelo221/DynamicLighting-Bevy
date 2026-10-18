@@ -136,14 +136,16 @@ fn bounding_radius_contains_each_shape() {
         shape: VolumetricShape::ConeZ,
         ..fog
     };
+    // The shader's cone opens to |cone_term| radians: 0.55 at 30°, wider than the cutoff.
     let radius = bounding_radius(&cone, &light, Vec3::ONE);
-    assert!((radius - 4.0 / 30.0_f32.to_radians().cos()).abs() < 1e-5);
+    assert!((radius - 4.0 / 0.55_f32.cos()).abs() < 1e-4, "{radius}");
     let wide_light = DynamicLight {
         outer_cutoff: 147.5,
         ..light.clone()
     };
     let wide = bounding_radius(&cone, &wide_light, Vec3::ONE);
-    assert!((wide - 4.0 / 37.5_f32.to_radians().cos()).abs() < 1e-5);
+    let angle = 147.5_f32.to_radians().sin() * 1.3;
+    assert!((wide - 4.0 / angle.cos()).abs() < 1e-4, "{wide}");
     // A shaft's farthest corners: 4 m along, half extents grown by 4 · tan 30° on each side.
     let shaft = VolumetricLight {
         shape: VolumetricShape::Frustum,

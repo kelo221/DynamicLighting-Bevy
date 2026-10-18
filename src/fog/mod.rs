@@ -4,6 +4,8 @@
 //!
 //! Shader modules: `dynlight::fog::shaders::fog_volumes`; the pass entry is `fog.wesl`.
 
+#[cfg(test)]
+mod bound_tests;
 pub mod mirror;
 mod params;
 mod render;

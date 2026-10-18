@@ -7,7 +7,7 @@ use bevy::math::{Quat, Vec2, Vec3};
 use super::volumetric::{VolumetricLight, VolumetricShape};
 use crate::light::DynamicLight;
 use crate::shared::GpuLight;
-use crate::shared::math::{inverse_lerp_clamped, lerp_clamped};
+use crate::shared::math::lerp_clamped;
 
 const MIN_VISIBILITY: f32 = 1.0e-5;
 /// The widest a fog shaft opens, in degrees, so its far end stays finite.
@@ -98,12 +98,10 @@ pub fn bounding_radius(fog: &VolumetricLight, light: &DynamicLight, scale: Vec3)
     match fog.shape {
         VolumetricShape::Sphere => fog.radius,
         VolumetricShape::Box => (scale.abs() * fog.radius).length(),
+        // The shader opens the cone to |cone_term| radians (at most 1.3), not to the cutoff, and
+        // its rim lies `radius / cos` from the tip.
         VolumetricShape::ConeZ | VolumetricShape::ConeY => {
-            let mut angle = outer_cutoff.clamp(0.0, 75.0);
-            if outer_cutoff > 90.0 {
-                angle = (1.0 - inverse_lerp_clamped(115.0, 180.0, outer_cutoff)) * 75.0;
-            }
-            fog.radius / angle.to_radians().cos()
+            fog.radius / cone_term(outer_cutoff).abs().cos()
         }
         VolumetricShape::Frustum => {
             let far = light.half_extents() + Vec2::splat(fog.radius * shaft_slope(outer_cutoff));
