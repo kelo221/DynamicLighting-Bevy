@@ -668,6 +668,7 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
     - M24: one render-world driver preprocesses and draws every shadow view. Today each face runs Bevy's whole `Core3d` schedule, with four command encoders and two empty compute passes.
     - M25: a subgroup fast path for the light loops.
     - M26: a depth prepass by default, only on a clear win.
+  - Outcome: M24 kept (moving shadows 22.6 → 8.6 ms per frame); M23, M25 and M26 measured and dropped.
   - Fixed first: shadow cubemaps, realtime lights and fog volumes were picked with the cameras' far plane, which Bevy's infinite reverse-Z projections never clip at. A light past a camera's `far` (1000 m by default) was dropped even though it reaches what the camera shows. `shared::sees_sphere` ignores the far plane, like Bevy's own culling, and `repo_hygiene` keeps `intersects_sphere` out of every other file. Images are unchanged, since no example sets `far`.
   - M23 dropped: in the moving-shadow benchmark (15 lights, 90 faces per frame), none of the faces that render is out of every camera's view. Every shadowed light's center lies inside the view, and from there all six faces can be read. The face test was measured, not shipped: per face, a five-point hull (the light and the corners at its radius, two texels wider for the seam) against the cameras' side and near planes. It is kept as a patch in the benchmark harness (`patches/m23-face-culling.patch`, outside the repo) for scenes whose shadowed lights stand behind or beside the camera.
   - M24, the shadow driver (§10):
@@ -683,6 +684,12 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
       - High quality: 1.48 against 1.38 ms. Worse, its pipeline took more than 6 s to compile on Direct3D 12, and lit meshes stay invisible meanwhile.
     - Codegen: each loop is compiled twice, so the shader binary grew by 42% (383 to 543 KB) while the register counts stayed the same. The shared loads saved less than the extra code cost.
     - Kept for later: the patch is in the harness (`patches/m25-subgroups.patch`), for GPUs where scalar loads matter more (AMD). A one-loop version, taking the `subgroupMin` of each pixel's next light, would compile each loop once, but it needs ascending light lists.
+  - M26 not done: a depth prepass by default was to land only on a clear win, and it isn't one. These are 10 alternating runs at 6c210f5, medians of the mean frame time and of p95:
+    - 1000 baked lights: the frame goes from 1.98 to 2.10 ms (p95 2.38 against 2.37). The lit pass drops from 0.69 to 0.64 ms, but the prepass itself takes 0.07 ms.
+    - 1000 moving realtime lights: the frame stays at 2.17 ms. GPU time drops from 1.61 to 1.49 ms, counting the prepass.
+    - Still shadows: the frame goes from 1.93 to 2.15 ms, p95 from 2.18 to 2.46 ms.
+    - Moving shadows: the frame goes from 8.38 to 8.63 ms, p95 from 9.04 to 9.48 ms.
+    - So the prepass stays an opt-in `DepthPrepass` on the camera. It pays only where the lit pass is heavy and the frame waits on the GPU.
   - Found on the way: the harness's baked scene (`bench_1000.dynlight`) was still in format 2 and failed to load at version 4, so its baked runs silently fell back to unbaked meshes. Re-baked, the baked lit pass takes 0.70 ms, against 0.61 ms in the README (2026-10-17). Draw order, which changes between builds, can explain part of that. But the shader also grew with the sun and sky paths (M19–M22): shader-report counts 96 registers for the all-features variant on the RTX 4080, where it counted 80 in round 2.
 
 ## 15. Testing
