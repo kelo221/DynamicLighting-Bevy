@@ -94,6 +94,19 @@ fn lighting_test_unbaked() {
     );
 }
 
+/// Without a bake, `FeatureSelection::Automatic` leaves out the light BVH and the bake's other
+/// paths, and the frame stays the same.
+#[test]
+#[ignore = "needs a GPU"]
+fn lighting_test_unbaked_automatic_features_match() {
+    check_against(
+        "lighting_test_unbaked_automatic",
+        "lighting_test_unbaked",
+        "lighting_test",
+        &["--auto-features", "--camera", OVERVIEW],
+    );
+}
+
 #[test]
 #[ignore = "needs a GPU"]
 fn lighting_test_light_count_view() {

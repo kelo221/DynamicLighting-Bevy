@@ -6,8 +6,8 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
-use super::layout::{BakedBuffers, flags as layout_flags, header};
-use crate::shared::{BakeId, ResolvedBakeId, ShaderFeaturesInUse, hash_mesh};
+use super::layout::BakedBuffers;
+use crate::shared::{BakeId, ResolvedBakeId, hash_mesh};
 
 /// Every baked mesh's triangle words (binding 23 of lit materials).
 pub const BAKED_TRIANGLES: Handle<ShaderBuffer> =
@@ -62,12 +62,6 @@ pub(super) fn create_buffers(app: &mut App) {
             .insert(handle, buffer)
             .expect("the baked buffer handles are fixed UUIDs");
     }
-}
-
-/// Marks bounce light as used while the applied bake has bounce data.
-pub(super) fn note_bounce(applied: Res<AppliedBake>, mut in_use: ResMut<ShaderFeaturesInUse>) {
-    let flags = applied.buffers.aux.get(header::FLAGS).copied().unwrap_or(0);
-    in_use.0.bounce |= flags & layout_flags::BOUNCE_LAYOUT != 0;
 }
 
 pub(super) fn upload_bake(applied: Res<AppliedBake>, assets: Option<ResMut<Assets<ShaderBuffer>>>) {

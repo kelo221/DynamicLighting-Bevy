@@ -9,7 +9,7 @@ import dynlight::dynamic_geometry::shaders::light_bvh::{
     BvhStack, bvh_node_count, bvh_start, bvh_next,
 };
 import dynlight::shared::shaders::variant::{
-    QUALITY, FEATURE_REALTIME_LIGHTS, FEATURE_UNBAKED_MESHES, FEATURE_BOUNCE,
+    QUALITY, FEATURE_REALTIME_LIGHTS, FEATURE_UNBAKED_MESHES, FEATURE_LIGHT_BVH, FEATURE_BOUNCE,
 };
 import dynlight::dynamic_geometry::shaders::distance_cubes::{cube_shadow, cube_area_shadow};
 import dynlight::dynamic_geometry::shaders::sun_map::{sun_map_available, sun_map_shadow};
@@ -57,7 +57,8 @@ fn surface_light(input: SurfaceInput, shading: Shading) -> LightSum {
 // Light on a surface without bake data, with half-Lambert diffuse (Henry's dynamic-geometry
 // path): the baked lights whose BVH leaves contain the point, shadowed by their distance cubes,
 // the baked suns and skies, shadowed by their sun maps and the sky probes, then the realtime
-// lights that can reach it. Without a light BVH every other baked light is visited unshadowed.
+// lights that can reach it. Without a light BVH, or with `FEATURE_LIGHT_BVH` off, every other
+// baked light is visited unshadowed.
 fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) -> LightSum {
     let globals = dynamic_lights.globals;
     var sum = LightSum(vec3(0.0), vec3(0.0), vec3(0.0), 0u);
@@ -65,7 +66,7 @@ fn dynamic_surface_light(world: vec3<f32>, normal: vec3<f32>, shading: Shading) 
     let shadows = (globals.flags & GLOBALS_FLAG_LIGHTING_ONLY) == 0u;
     let bvh_lights = globals.baked_count - globals.baked_distant;
     var unshadowed_baked = bvh_lights;
-    if bvh_node_count() > 0u {
+    if FEATURE_LIGHT_BVH && bvh_node_count() > 0u {
         add_bvh_lights(&sum, shading, surface, bvh_lights, globals.time, shadows);
         unshadowed_baked = 0u;
     }

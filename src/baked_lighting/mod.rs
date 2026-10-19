@@ -5,6 +5,7 @@
 //! Shader modules: `dynlight::baked_lighting::shaders::{baked_data, triangles}`.
 
 mod apply;
+mod bake_features;
 mod features;
 pub mod layout;
 pub mod mirror;
@@ -18,6 +19,7 @@ use bevy::render::{RenderApp, RenderStartup};
 use bevy::shader::load_shader_library;
 
 pub use apply::{ActiveBake, scene_buffers, scene_slots};
+pub use bake_features::bake_features;
 pub use features::primitive_index_supported;
 pub use layout::{BakedBuffers, Receiver, ReceiverInput, SceneInput};
 pub use systems::{AppliedBake, BAKED_AUX, BAKED_TRIANGLES, BakedReceiver};
@@ -50,7 +52,12 @@ impl Plugin for BakedLightingPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (systems::upload_bake, systems::note_bounce).in_set(BakedLightingSystems),
+                (
+                    systems::upload_bake,
+                    // Every frame, after a new bake is applied: the use is cleared in `Last`.
+                    bake_features::note_bake_features.after(apply::apply_bake),
+                )
+                    .in_set(BakedLightingSystems),
             );
     }
 

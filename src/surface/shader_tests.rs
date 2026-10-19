@@ -91,7 +91,22 @@ fn lighting_compiles_in_every_variant() {
         RuntimeQuality::Medium,
         RuntimeQuality::High,
     ] {
-        for features in [ShaderFeatures::ALL, ShaderFeatures::NONE] {
+        let without_bvh = ShaderFeatures {
+            light_bvh: false,
+            ..ShaderFeatures::ALL
+        };
+        // What a scene of realtime lights and no bake gets from `FeatureSelection::Automatic`.
+        let realtime_unbaked = ShaderFeatures {
+            realtime_lights: true,
+            unbaked_meshes: true,
+            ..ShaderFeatures::NONE
+        };
+        for features in [
+            ShaderFeatures::ALL,
+            ShaderFeatures::NONE,
+            without_bvh,
+            realtime_unbaked,
+        ] {
             let mut modules = surface_modules();
             modules[2] = shared_variant(ShaderVariant { quality, features });
             compile(SHADE.0, &modules, &[]);

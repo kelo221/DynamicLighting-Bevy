@@ -88,6 +88,9 @@ pub struct ShaderFeatures {
     pub realtime_shadows: bool,
     /// Meshes without bake data, such as moving meshes. Off: they only get ambient light.
     pub unbaked_meshes: bool,
+    /// The bake's light BVH on meshes without bake data: which baked lights reach them, and
+    /// their shadows from the distance cubes. Off: such meshes get every baked light, unshadowed.
+    pub light_bvh: bool,
     /// Baked bounce light. Off: baked lights add only their direct light.
     pub bounce: bool,
     /// Suns. Off: they shine like point lights at their position.
@@ -103,6 +106,7 @@ impl ShaderFeatures {
         realtime_lights: true,
         realtime_shadows: true,
         unbaked_meshes: true,
+        light_bvh: true,
         bounce: true,
         sun: true,
         sky: true,
@@ -113,13 +117,14 @@ impl ShaderFeatures {
         realtime_lights: false,
         realtime_shadows: false,
         unbaked_meshes: false,
+        light_bvh: false,
         bounce: false,
         sun: false,
         sky: false,
     };
 
     /// The number of features in [`Self::list`].
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
 
     /// `(name, enabled)` of every feature, for messages and the variant module.
     pub fn list(&self) -> [(&'static str, bool); Self::COUNT] {
@@ -129,6 +134,7 @@ impl ShaderFeatures {
             ("realtime_lights", self.realtime_lights),
             ("realtime_shadows", self.realtime_shadows),
             ("unbaked_meshes", self.unbaked_meshes),
+            ("light_bvh", self.light_bvh),
             ("bounce", self.bounce),
             ("sun", self.sun),
             ("sky", self.sky),
@@ -152,6 +158,7 @@ impl ShaderFeatures {
             realtime_lights: f(self.realtime_lights, other.realtime_lights),
             realtime_shadows: f(self.realtime_shadows, other.realtime_shadows),
             unbaked_meshes: f(self.unbaked_meshes, other.unbaked_meshes),
+            light_bvh: f(self.light_bvh, other.light_bvh),
             bounce: f(self.bounce, other.bounce),
             sun: f(self.sun, other.sun),
             sky: f(self.sky, other.sky),
