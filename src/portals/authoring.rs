@@ -1,5 +1,5 @@
-//! What a level author places: [`Room`] cells, [`Portal`] openings between them, and
-//! [`PortalSettings`].
+//! What a level author places: [`Room`] cells, [`Portal`] openings between them,
+//! [`ClosedPortal`] doors, and [`PortalSettings`].
 
 use bevy::prelude::*;
 
@@ -70,6 +70,17 @@ impl Default for Portal {
         Self::new(Vec2::ONE)
     }
 }
+
+/// Marks a [`Portal`] as shut: views don't pass through it. Add it while a door or window is
+/// fully closed and seals the whole opening, and remove it in the frame it starts to open.
+///
+/// Lights are still culled by their whole sphere, so a light whose sphere reaches through a wall
+/// into a view stays. Closing or opening a portal doesn't rebuild the graph, but it can change
+/// whether a view stays within the trace's limits. A system that changes it in `PostUpdate` must
+/// run before [`PortalSystems::Trace`](super::PortalSystems::Trace).
+#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Component, Default, Debug, Clone)]
+pub struct ClosedPortal;
 
 /// How rooms and portals cull.
 #[derive(Resource, Reflect, Clone, Copy, Debug, PartialEq)]

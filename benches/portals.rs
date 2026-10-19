@@ -2,7 +2,8 @@
 //! with three light spheres a room (radius 5.5, 3 and 2.5 m) and a camera in a corner room
 //! looking across the grid, as in `rooms --grid n`. Prints stable `dynlight bench:` lines with
 //! the time to rebuild the graph, to trace the camera's view, and to test every sphere through
-//! the rooms against the frustum alone.
+//! the rooms against the frustum alone, with every door open, about half of them closed, and
+//! all of them closed.
 //!
 //! `cargo bench --bench portals`. Times are medians over many frames on one thread; the trace
 //! is the extra time of an app update with portal culling on over one with it off.
@@ -13,8 +14,8 @@ use bevy::camera::CameraProjection;
 use bevy::camera::primitives::Frustum;
 use bevy::prelude::*;
 use bevy::transform::TransformPlugin;
-use dynlight::portals::{Portal, PortalSettings, PortalStats, PortalsPlugin, Room, RoomGraph};
-use dynlight::portals::{RoomView, sees};
+use dynlight::portals::{ClosedPortal, Portal, PortalSettings, PortalStats, PortalsPlugin};
+use dynlight::portals::{Room, RoomGraph, RoomView, sees};
 
 const ROOM: f32 = 8.0;
 const FRAMES: usize = 2000;
@@ -60,6 +61,31 @@ fn grid(world: &mut World, n: u32) -> Vec<(Vec3, f32)> {
         }
     }
     spheres
+}
+
+/// Which doors are closed: none, about half (by a stable hash of where they are), or all.
+const DOORS: [(&str, Option<bool>); 3] = [
+    ("open", Some(false)),
+    ("mixed", None),
+    ("closed", Some(true)),
+];
+
+fn close_doors(app: &mut App, closed: Option<bool>) {
+    let world = app.world_mut();
+    let doors: Vec<(Entity, Vec3)> = world
+        .query_filtered::<(Entity, &Transform), With<Portal>>()
+        .iter(world)
+        .map(|(door, transform)| (door, transform.translation))
+        .collect();
+    for (door, at) in doors {
+        let key = (at.x * 8.0) as u32 * 31 + (at.z * 8.0) as u32;
+        let mut door = world.entity_mut(door);
+        if closed.unwrap_or(offset(key) > 0.0) {
+            door.insert(ClosedPortal);
+        } else {
+            door.remove::<ClosedPortal>();
+        }
+    }
 }
 
 fn median(mut times: Vec<Duration>) -> Duration {
@@ -115,45 +141,51 @@ fn main() {
             frustum,
         ));
 
-        let off = update_time(&mut app, false);
-        let on = update_time(&mut app, true);
-        let rebuild = rebuild_time(&mut app, on);
-        let world = app.world_mut();
-        let stats = world.resource::<PortalStats>().clone();
-        let mut cameras = world.query::<(&Frustum, &RoomView)>();
-        let world = &*world;
-        let (frustum, view) = cameras.single(world).expect("one camera");
-        let rooms = world.resource::<RoomGraph>();
-        let test = |view: Option<&RoomView>| {
-            let mut kept = 0;
-            let times = (0..SPHERE_RUNS)
-                .map(|_| {
-                    let start = Instant::now();
-                    kept = spheres
-                        .iter()
-                        .filter(|&&(center, radius)| sees(rooms, [(frustum, view)], center, radius))
-                        .count();
-                    start.elapsed()
-                })
-                .collect();
-            (kept, median(times))
-        };
-        let (kept, through) = test(Some(view));
-        let (framed, alone) = test(None);
-        println!(
-            "dynlight bench: portals rooms {}, portals {}, visits {}, portal tests {}, plane tests \
-             {}, rebuild us {}, trace us {:.1}, spheres {}, kept {kept} (frustum {framed}), sees us \
-             {:.1} (frustum only {:.1})",
-            stats.rooms,
-            stats.portals,
-            stats.visits,
-            stats.portal_tests,
-            stats.plane_tests,
-            rebuild.as_micros(),
-            on.saturating_sub(off).as_secs_f64() * 1.0e6,
-            spheres.len(),
-            through.as_secs_f64() * 1.0e6,
-            alone.as_secs_f64() * 1.0e6,
-        );
+        for (doors, closed) in DOORS {
+            close_doors(&mut app, closed);
+            let off = update_time(&mut app, false);
+            let on = update_time(&mut app, true);
+            let rebuild = rebuild_time(&mut app, on);
+            let world = app.world_mut();
+            let stats = world.resource::<PortalStats>().clone();
+            let mut cameras = world.query::<(&Frustum, &RoomView)>();
+            let world = &*world;
+            let (frustum, view) = cameras.single(world).expect("one camera");
+            let rooms = world.resource::<RoomGraph>();
+            let test = |view: Option<&RoomView>| {
+                let mut kept = 0;
+                let times = (0..SPHERE_RUNS)
+                    .map(|_| {
+                        let start = Instant::now();
+                        kept = spheres
+                            .iter()
+                            .filter(|&&(center, radius)| {
+                                sees(rooms, [(frustum, view)], center, radius)
+                            })
+                            .count();
+                        start.elapsed()
+                    })
+                    .collect();
+                (kept, median(times))
+            };
+            let (kept, through) = test(Some(view));
+            let (framed, alone) = test(None);
+            println!(
+                "dynlight bench: portals rooms {}, portals {}, doors {doors}, closed {}, visits {}, \
+                 portal tests {}, plane tests {}, rebuild us {}, trace us {:.1}, spheres {}, kept \
+                 {kept} (frustum {framed}), sees us {:.1} (frustum only {:.1})",
+                stats.rooms,
+                stats.portals,
+                stats.closed_portals,
+                stats.visits,
+                stats.portal_tests,
+                stats.plane_tests,
+                rebuild.as_micros(),
+                on.saturating_sub(off).as_secs_f64() * 1.0e6,
+                spheres.len(),
+                through.as_secs_f64() * 1.0e6,
+                alone.as_secs_f64() * 1.0e6,
+            );
+        }
     }
 }

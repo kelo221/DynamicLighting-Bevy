@@ -96,20 +96,31 @@ impl TracedView {
     }
 }
 
-/// Traces the view from `eye` through `graph` into `view`. `near` is the near plane's corners
-/// ([`near_corners`](super::near::near_corners); empty for a point eye) and `frustum` the
-/// camera's world planes in Bevy's order (four sides, near, far; the far plane is ignored).
-/// Returns `false` when the view is unbounded: deeper than `depth_limit` portals, past the work
-/// limits, or from an eye or frustum that isn't finite.
+/// The camera a view is traced from.
+#[derive(Clone, Copy, Debug)]
+pub struct Viewer<'a> {
+    pub eye: Vec3,
+    /// The near plane's corners ([`near_corners`](super::near::near_corners)); empty for a
+    /// point eye.
+    pub near: &'a [Vec3],
+    /// The camera's world planes in Bevy's order (four sides, near, far; the far plane is
+    /// ignored).
+    pub frustum: &'a [Vec4; 6],
+}
+
+/// Traces the view of `viewer` through `graph` into `view`. A portal whose entry in `closed` is
+/// set lets nothing through; a shorter `closed` leaves the rest open. Returns `false` when the
+/// view is unbounded: deeper than `depth_limit` portals, past the work limits, or from a viewer
+/// that isn't finite.
 pub fn trace(
     graph: &Graph,
-    eye: Vec3,
-    near: &[Vec3],
-    frustum: &[Vec4; 6],
+    viewer: Viewer,
+    closed: &[bool],
     depth_limit: u32,
     view: &mut TracedView,
     counts: &mut TraceCounts,
 ) -> bool {
+    let Viewer { eye, near, frustum } = viewer;
     view.eye = eye;
     view.visits.clear();
     view.planes.clear();
@@ -131,6 +142,7 @@ pub fn trace(
     let mut tracer = Tracer {
         graph,
         eye,
+        closed,
         depth_limit,
         view,
         counts,
@@ -145,6 +157,7 @@ pub fn trace(
 struct Tracer<'a> {
     graph: &'a Graph,
     eye: Vec3,
+    closed: &'a [bool],
     depth_limit: u32,
     view: &'a mut TracedView,
     counts: &'a mut TraceCounts,
@@ -169,7 +182,7 @@ impl Tracer<'_> {
         self.path.push(node);
         let tolerance = self.graph.tolerance;
         for link in self.graph.links(node) {
-            if self.path.contains(&link.to) {
+            if self.path.contains(&link.to) || self.closed.get(link.portal) == Some(&true) {
                 continue;
             }
             self.counts.portal_tests += 1;

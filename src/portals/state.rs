@@ -77,6 +77,8 @@ pub struct PortalStats {
     pub state: PortalState,
     pub rooms: u32,
     pub portals: u32,
+    /// Portals marked [`ClosedPortal`](super::ClosedPortal).
+    pub closed_portals: u32,
     /// Portals with the same nodes on both sides, which join nothing.
     pub ignored_portals: u32,
     /// Cameras traced, and how many of those views were unbounded.

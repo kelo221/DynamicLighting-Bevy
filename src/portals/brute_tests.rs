@@ -14,7 +14,7 @@ use super::fixtures::{TOLERANCE, camera, door, near, planes, row};
 use super::graph::Graph;
 use super::sight::sees;
 use super::state::{PortalState, RoomGraph, RoomView};
-use super::trace::{TraceCounts, TracedView, trace};
+use super::trace::{TraceCounts, TracedView, Viewer, trace};
 
 /// Interior doors at `x = 6, 12` (centered on these `z`), a window at `x = 18`.
 const DOORS: [(f32, f32); 2] = [(6.0, 0.0), (12.0, 1.5)];
@@ -190,20 +190,39 @@ fn look(yaw: f32, pitch: f32) -> Vec3 {
     )
 }
 
-/// What one run saw: spheres in a frustum, in sight, culled, and in sight only because the near
-/// plane clips a wall away.
+/// The holes of the house: the two doors, then the window, in the graph's portal order.
+const HOLES: [(f32, f32); 3] = [DOORS[0], DOORS[1], WINDOW];
+
+/// A door leaf 4 cm thick shutting the hole at `(x, z)` in a wall `2 · half` thick.
+fn leaf((x, z): (f32, f32), half: f32) -> Block {
+    (
+        Vec3::new(x - 0.02, -half, z - 0.5),
+        Vec3::new(x + 0.02, 2.0, z + 0.5),
+    )
+}
+
+/// What one run saw: spheres in a frustum, in sight, culled, in sight only because the near
+/// plane clips a wall away, and culled only because a door is closed.
 #[derive(Default)]
 struct Tally {
     framed: u32,
     visible: u32,
     culled: u32,
     past_walls: u32,
+    culled_by_doors: u32,
 }
 
-/// Checks `cameras` cameras from `place` in a house with walls `2 · half` thick.
-fn check(half: f32, seed: u64, cameras: u32, place: impl Fn(&mut Stream) -> (Vec3, Vec3)) -> Tally {
+/// Checks `cameras` cameras from `place` in a house with walls `2 · half` thick. With `doors`,
+/// each camera sees the house with a random set of its holes shut by door leaves, and whatever
+/// it keeps then must also be kept with them all open.
+fn check(
+    half: f32,
+    seed: u64,
+    cameras: u32,
+    place: impl Fn(&mut Stream) -> (Vec3, Vec3),
+    doors: bool,
+) -> Tally {
     let graph = graph();
-    let walls = walls(half);
     let rooms = RoomGraph {
         generation: 1,
         graph: graph.clone(),
@@ -216,26 +235,45 @@ fn check(half: f32, seed: u64, cameras: u32, place: impl Fn(&mut Stream) -> (Vec
     let mut tally = Tally::default();
     for _ in 0..cameras {
         let (eye, look) = place(&mut random);
+        let closed = if doors {
+            [(); 3].map(|_| random.next() < 0.5)
+        } else {
+            [false; 3]
+        };
+        let mut walls = walls(half);
+        walls.extend(
+            (0..3)
+                .filter(|&hole| closed[hole])
+                .map(|hole| leaf(HOLES[hole], half)),
+        );
         if walls.iter().any(|&block| inside(eye, block)) {
             continue;
         }
         let frustum = camera(eye, eye + look);
-        let mut traced = TracedView::default();
-        let bounded = trace(
-            &graph,
-            eye,
-            &near(eye, eye + look),
-            &planes(&frustum),
-            16,
-            &mut traced,
-            &mut TraceCounts::default(),
-        );
-        assert!(bounded, "eye {eye} looking {look}: unbounded");
-        let view = RoomView {
-            generation: 1,
-            bounded,
-            traced,
+        let (corners, sides) = (near(eye, eye + look), planes(&frustum));
+        let view = |closed: &[bool]| {
+            let viewer = Viewer {
+                eye,
+                near: &corners,
+                frustum: &sides,
+            };
+            let mut traced = TracedView::default();
+            let bounded = trace(
+                &graph,
+                viewer,
+                closed,
+                16,
+                &mut traced,
+                &mut TraceCounts::default(),
+            );
+            assert!(bounded, "eye {eye} looking {look}: unbounded");
+            RoomView {
+                generation: 1,
+                bounded,
+                traced,
+            }
         };
+        let (view, open) = (view(&closed), view(&[]));
         let clip = near_plane(eye, look);
         let in_frustum = |point: Vec3| {
             distance(clip, point) >= 0.0
@@ -251,11 +289,17 @@ fn check(half: f32, seed: u64, cameras: u32, place: impl Fn(&mut Stream) -> (Vec
             );
             let radius = random.range(0.1, 2.0);
             let kept = sees(&rooms, [(&frustum, Some(&view))], center, radius);
+            let kept_open = sees(&rooms, [(&frustum, Some(&open))], center, radius);
+            assert!(
+                kept_open || !kept,
+                "eye {eye}: closing {closed:?} keeps {center}"
+            );
             if !crate::shared::sees_sphere(&frustum, center, radius) {
                 continue;
             }
             tally.framed += 1;
             tally.culled += u32::from(!kept);
+            tally.culled_by_doors += u32::from(kept_open && !kept);
             let sighted = (0..64)
                 .map(|_| center + random.in_ball() * radius)
                 .find(|&point| {
@@ -271,7 +315,8 @@ fn check(half: f32, seed: u64, cameras: u32, place: impl Fn(&mut Stream) -> (Vec
                 tally.past_walls += u32::from(hidden);
                 assert!(
                     kept,
-                    "eye {eye} looking {look}: {point} of the sphere at {center} r {radius} is in sight"
+                    "eye {eye} looking {look}, {closed:?} closed: {point} of the sphere at \
+                     {center} r {radius} is in sight"
                 );
             }
         }
@@ -281,13 +326,14 @@ fn check(half: f32, seed: u64, cameras: u32, place: impl Fn(&mut Stream) -> (Vec
 
 #[test]
 fn every_point_a_camera_can_see_keeps_its_sphere() {
-    let tally = check(0.1, 27, 300, anywhere);
+    let tally = check(0.1, 27, 300, anywhere, false);
     // Neither side is vacuous: many spheres are in sight, and many in the frustum are culled.
     let Tally {
         framed,
         visible,
         culled,
         past_walls,
+        ..
     } = tally;
     let counts = format!("{framed} framed, {visible} in sight, {culled} culled");
     assert!(framed > 2000 && visible > 500, "{counts}");
@@ -298,7 +344,7 @@ fn every_point_a_camera_can_see_keeps_its_sphere() {
 
 #[test]
 fn a_camera_pressed_against_a_thin_wall_keeps_what_it_sees_past_it() {
-    let tally = check(0.02, 41, 300, |random| against_a_wall(random, 0.02));
+    let tally = check(0.02, 41, 300, |random| against_a_wall(random, 0.02), false);
     let Tally {
         framed,
         visible,
@@ -307,4 +353,34 @@ fn a_camera_pressed_against_a_thin_wall_keeps_what_it_sees_past_it() {
     } = tally;
     let counts = format!("{framed} framed, {visible} in sight, {past_walls} past a wall");
     assert!(visible > 500 && past_walls > 400, "{counts}");
+}
+
+#[test]
+fn closed_doors_only_cull_more_and_keep_every_point_in_sight() {
+    let tally = check(0.1, 53, 400, anywhere, true);
+    let Tally {
+        framed,
+        visible,
+        culled_by_doors,
+        ..
+    } = tally;
+    let counts = format!("{framed} framed, {visible} in sight, {culled_by_doors} by doors");
+    assert!(visible > 600 && culled_by_doors > 80, "{counts}");
+}
+
+#[test]
+fn a_camera_pressed_against_a_closed_door_keeps_what_it_sees_past_it() {
+    let tally = check(0.02, 59, 400, |random| against_a_wall(random, 0.02), true);
+    let Tally {
+        visible,
+        past_walls,
+        culled_by_doors,
+        ..
+    } = tally;
+    let counts =
+        format!("{visible} in sight, {past_walls} past a wall, {culled_by_doors} by doors");
+    assert!(
+        visible > 600 && past_walls > 500 && culled_by_doors > 50,
+        "{counts}"
+    );
 }

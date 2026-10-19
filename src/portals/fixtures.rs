@@ -7,7 +7,7 @@ use bevy::transform::components::{GlobalTransform, Transform};
 
 use super::graph::{Graph, PortalInput, RoomInput, SideInput};
 use super::near::near_corners;
-use super::trace::{TraceCounts, TracedView, trace};
+use super::trace::{TraceCounts, TracedView, Viewer, trace};
 
 pub const TOLERANCE: f32 = 0.02;
 
@@ -89,28 +89,48 @@ pub fn view_with(
     target: Vec3,
     depth_limit: u32,
 ) -> (Option<TracedView>, TraceCounts) {
+    view_closed(graph, eye, target, &[], depth_limit)
+}
+
+/// [`view_with`] with the portals set in `closed` shut.
+pub fn view_closed(
+    graph: &Graph,
+    eye: Vec3,
+    target: Vec3,
+    closed: &[bool],
+    depth_limit: u32,
+) -> (Option<TracedView>, TraceCounts) {
     let mut traced = TracedView::default();
     let mut counts = TraceCounts::default();
-    let frustum = camera(eye, target);
-    let bounded = trace(
-        graph,
+    let (near, frustum) = (near(eye, target), planes(&camera(eye, target)));
+    let viewer = Viewer {
         eye,
-        &near(eye, target),
-        &planes(&frustum),
-        depth_limit,
-        &mut traced,
-        &mut counts,
-    );
+        near: &near,
+        frustum: &frustum,
+    };
+    let bounded = trace(graph, viewer, closed, depth_limit, &mut traced, &mut counts);
     (bounded.then_some(traced), counts)
 }
 
 /// Whether `view` (with the frustum from `eye` towards `target`) may see the sphere.
 pub fn sees(graph: &Graph, eye: Vec3, target: Vec3, center: Vec3, radius: f32) -> bool {
+    sees_closed(graph, &[], eye, target, center, radius)
+}
+
+/// [`sees`] with the portals set in `closed` shut.
+pub fn sees_closed(
+    graph: &Graph,
+    closed: &[bool],
+    eye: Vec3,
+    target: Vec3,
+    center: Vec3,
+    radius: f32,
+) -> bool {
     let frustum = camera(eye, target);
     if !crate::shared::sees_sphere(&frustum, center, radius) {
         return false;
     }
-    let Some(view) = view(graph, eye, target) else {
+    let Some(view) = view_closed(graph, eye, target, closed, 16).0 else {
         return true;
     };
     view.sees(

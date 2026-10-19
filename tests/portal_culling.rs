@@ -219,3 +219,43 @@ fn cone_fog_seen_only_past_its_radius_is_kept() {
         assert_eq!(fog_volumes(&app), 1, "{cutoff}°");
     }
 }
+
+/// The portal at `x`.
+fn door_at(app: &mut App, x: f32) -> Entity {
+    let world = app.world_mut();
+    let mut portals = world.query_filtered::<(Entity, &Transform), With<Portal>>();
+    let (door, _) = portals
+        .iter(world)
+        .find(|(_, transform)| transform.translation.x == x)
+        .expect("a door there");
+    door
+}
+
+#[test]
+fn a_closed_door_drops_the_light_behind_it_until_it_opens() {
+    let mut app = app();
+    camera(
+        &mut app,
+        Vec3::new(3.0, 1.5, 0.0),
+        Vec3::new(9.0, 1.5, 0.0),
+        0,
+    );
+    let behind = light(&mut app, shadowed(0.5), Vec3::new(9.0, 1.5, 0.0));
+    // In B too, but its sphere reaches through the wall into A's view.
+    let leaking = light(&mut app, shadowed(1.0), Vec3::new(6.8, 1.5, -1.5));
+    let door = door_at(&mut app, 6.0);
+    app.update();
+    assert!(packed(&app, behind) && has_cube(&app, behind));
+    for closed in [true, false] {
+        let mut entity = app.world_mut().entity_mut(door);
+        if closed {
+            entity.insert(ClosedPortal);
+        } else {
+            entity.remove::<ClosedPortal>();
+        }
+        app.update();
+        assert_eq!(packed(&app, behind), !closed);
+        assert_eq!(has_cube(&app, behind), !closed);
+        assert!(packed(&app, leaking) && has_cube(&app, leaking), "{closed}");
+    }
+}

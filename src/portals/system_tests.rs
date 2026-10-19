@@ -7,8 +7,8 @@ use bevy::transform::TransformPlugin;
 
 use super::fixtures;
 use super::{
-    Portal, PortalSettings, PortalSide, PortalState, PortalStats, PortalSystems, PortalsPlugin,
-    Room, RoomGraph, RoomView, sees,
+    ClosedPortal, Portal, PortalSettings, PortalSide, PortalState, PortalStats, PortalSystems,
+    PortalsPlugin, Room, RoomGraph, RoomView, sees,
 };
 
 const EYE: Vec3 = Vec3::new(3.0, 1.5, 0.0);
@@ -306,4 +306,73 @@ fn a_room_sheared_by_its_parent_still_culls() {
     // The room is closed: a sphere outside it, ahead in the frustum, is culled.
     assert!(!sees_now(&mut app, Vec3::new(10.0, 1.5, 0.0)));
     assert!(sees_now(&mut app, Vec3::new(1.5, 1.5, 0.0)));
+}
+
+/// The door to shut (or open) from `Update`, through `Commands`.
+#[derive(Resource)]
+struct Shut(Entity, bool);
+
+fn shut_door(shut: Res<Shut>, mut commands: Commands) {
+    if shut.1 {
+        commands.entity(shut.0).insert(ClosedPortal);
+    } else {
+        commands.entity(shut.0).remove::<ClosedPortal>();
+    }
+}
+
+#[test]
+fn a_door_shut_in_update_culls_that_frame_without_a_rebuild() {
+    let mut app = app();
+    let [_, _, door] = rooms(app.world_mut());
+    camera(app.world_mut(), EYE, TARGET);
+    app.insert_resource(Shut(door, false))
+        .add_systems(Update, shut_door);
+    app.update();
+    let built = generation(&app);
+    assert!(sees_now(&mut app, THROUGH));
+    for shut in [true, false] {
+        app.world_mut().resource_mut::<Shut>().1 = shut;
+        app.update();
+        assert_eq!(sees_now(&mut app, THROUGH), !shut);
+        assert_eq!(stats(&app).closed_portals, u32::from(shut));
+    }
+    assert_eq!(generation(&app), built);
+}
+
+#[test]
+fn a_door_spawned_shut_is_shut_in_the_rebuilt_graph() {
+    let mut app = app();
+    rooms(app.world_mut());
+    let viewer = camera(app.world_mut(), EYE, TARGET);
+    app.update();
+    let built = generation(&app);
+    // A third room past the second, behind a door spawned shut; the camera moves into the
+    // second room, looking at the door.
+    let world = app.world_mut();
+    world.spawn((
+        Room::new(Vec3::new(6.0, 3.0, 6.0)),
+        Transform::from_xyz(15.0, 1.5, 0.0),
+    ));
+    let door = world
+        .spawn((
+            Portal::new(Vec2::new(1.0, 2.0)),
+            Transform::from_xyz(12.0, 1.0, 0.0).looking_to(Vec3::NEG_X, Vec3::Y),
+            ClosedPortal,
+        ))
+        .id();
+    let (eye, target) = (Vec3::new(8.0, 1.5, 0.0), Vec3::new(15.0, 1.5, 0.0));
+    world.entity_mut(viewer).insert((
+        Transform::from_translation(eye).looking_at(target, Vec3::Y),
+        fixtures::camera(eye, target),
+    ));
+    app.update();
+    let rebuilt = generation(&app);
+    assert!(rebuilt > built);
+    assert_eq!(stats(&app).closed_portals, 1);
+    let past = Vec3::new(16.0, 1.5, 0.5);
+    assert!(!sees_now(&mut app, past));
+    app.world_mut().entity_mut(door).remove::<ClosedPortal>();
+    app.update();
+    assert!(sees_now(&mut app, past));
+    assert_eq!(generation(&app), rebuilt);
 }

@@ -2,7 +2,9 @@
 
 use bevy::prelude::*;
 
-use crate::portals::{Aperture, OUTSIDE, Parallelepiped, Portal, Room, RoomGraph, RoomView};
+use crate::portals::{
+    Aperture, ClosedPortal, OUTSIDE, Parallelepiped, Portal, Room, RoomGraph, RoomView,
+};
 
 /// A room some camera sees into (or every room, when no camera's view is bounded).
 const SEEN: Color = Color::srgb(0.3, 0.9, 0.4);
@@ -12,15 +14,18 @@ const BETWEEN_ROOMS: Color = Color::srgb(1.0, 0.85, 0.2);
 const TO_OUTSIDE: Color = Color::srgb(1.0, 0.5, 0.1);
 /// The rooms and portals that turned portal culling off.
 const BROKEN: Color = Color::srgb(1.0, 0.15, 0.1);
+/// How much darker a [`ClosedPortal`] is drawn.
+const CLOSED_DARKER: f32 = 0.35;
 
 /// Draws every room cell and portal: cells by whether a camera sees into them, portals by what
-/// they join, each with a short arrow out of its front.
+/// they join (darker when closed), each with a short arrow out of its front.
 pub(super) fn draw_room_gizmos(
     mut gizmos: Gizmos,
     graph: Res<RoomGraph>,
     views: Query<(&Camera, &RoomView)>,
     rooms: Query<(Entity, &Room, &GlobalTransform)>,
     portals: Query<(Entity, &Portal, &GlobalTransform)>,
+    closed: Query<(), With<ClosedPortal>>,
 ) {
     let Some(linked) = graph.ready() else {
         let color = |entity| {
@@ -51,13 +56,18 @@ pub(super) fn draw_room_gizmos(
         let seen = traced.is_empty() || traced.iter().any(|view| view.visits(index + 1));
         draw_cell(&mut gizmos, &cell.shape, if seen { SEEN } else { UNSEEN });
     }
-    for portal in &linked.portals {
+    for (portal, &entity) in linked.portals.iter().zip(&graph.portals) {
         let color = if portal.is_ignored() {
             UNSEEN
         } else if portal.sides.iter().flatten().any(|&node| node == OUTSIDE) {
             TO_OUTSIDE
         } else {
             BETWEEN_ROOMS
+        };
+        let color = if closed.contains(entity) {
+            color.darker(CLOSED_DARKER)
+        } else {
+            color
         };
         draw_portal(&mut gizmos, &portal.aperture, color);
     }

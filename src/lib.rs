@@ -44,7 +44,7 @@ pub mod prelude {
         DynamicLight, Illumination, LightBounce, LightType, LightingViewer, ShadowMode, Shimmer,
         Transparency, sun_light,
     };
-    pub use crate::portals::{Portal, PortalSettings, PortalSide, Room};
+    pub use crate::portals::{ClosedPortal, Portal, PortalSettings, PortalSide, Room};
     pub use crate::shared::{
         BakeId, DynamicLightingSettings, FeatureSelection, RuntimeQuality, ShaderFeatures,
         TriangleIdSource,

@@ -7,12 +7,12 @@ use bevy::ecs::entity::EntityHashMap;
 use bevy::ecs::name::NameOrEntity;
 use bevy::prelude::*;
 
-use super::authoring::{Portal, PortalSettings, PortalSide, Room};
+use super::authoring::{ClosedPortal, Portal, PortalSettings, PortalSide, Room};
 use super::graph::{Graph, PortalInput, Problem, RoomInput, SideInput};
 use super::link::{NEAR_MISS, Unresolved};
 use super::near::near_corners;
 use super::state::{PortalState, PortalStats, RoomGraph, RoomView};
-use super::trace::{TraceCounts, trace};
+use super::trace::{TraceCounts, Viewer, trace};
 
 type ChangedRooms = (With<Room>, Or<(Changed<Room>, Changed<GlobalTransform>)>);
 type ChangedPortals = (
@@ -205,14 +205,19 @@ type CameraItem<'a> = (
 );
 
 /// Traces every active perspective camera through the graph into its [`RoomView`] (added the
-/// first time); every other camera gets an unbounded view.
+/// first time), past the portals that aren't [`ClosedPortal`]; every other camera gets an
+/// unbounded view.
 pub(super) fn trace_views(
     mut commands: Commands,
     graph: Res<RoomGraph>,
     settings: Res<PortalSettings>,
+    shut: Query<(), With<ClosedPortal>>,
     mut cameras: Query<CameraItem>,
     mut stats: ResMut<PortalStats>,
+    mut closed: Local<Vec<bool>>,
 ) {
+    closed.clear();
+    closed.extend(graph.portals.iter().map(|&portal| shut.contains(portal)));
     let mut counts = TraceCounts::default();
     let (mut views, mut unbounded) = (0, 0);
     for (entity, camera, transform, frustum, projection, view) in &mut cameras {
@@ -233,11 +238,15 @@ pub(super) fn trace_views(
                     None => perspective.get_clip_from_view(),
                 };
                 let near = near_corners(clip_from_view, transform.affine());
+                let viewer = Viewer {
+                    eye,
+                    near: near.as_ref().map_or(&[], |near| near.as_slice()),
+                    frustum: &planes,
+                };
                 let bounded = trace(
                     rooms,
-                    eye,
-                    near.as_ref().map_or(&[], |near| near.as_slice()),
-                    &planes,
+                    viewer,
+                    &closed,
                     settings.depth_limit,
                     &mut view.traced,
                     &mut counts,
@@ -255,6 +264,7 @@ pub(super) fn trace_views(
         state: graph.state().clone(),
         rooms: graph.rooms.len() as u32,
         portals: graph.portals.len() as u32,
+        closed_portals: closed.iter().filter(|&&closed| closed).count() as u32,
         ignored_portals: graph.ready().map_or(0, |rooms| {
             rooms
                 .portals

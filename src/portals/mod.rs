@@ -1,5 +1,6 @@
-//! Rooms and portals: convex [`Room`] cells joined by [`Portal`] openings. Every frame each
-//! camera's view is traced through the portals into its [`RoomView`], and the slices that pick
+//! Rooms and portals: convex [`Room`] cells joined by [`Portal`] openings, which a
+//! [`ClosedPortal`] shuts. Every frame each camera's view is traced through the open portals
+//! into its [`RoomView`], and the slices that pick
 //! realtime lights, shadow cubemaps and fog volumes ask [`sees`] whether a sphere can reach
 //! anything a camera sees.
 //!
@@ -23,6 +24,8 @@ mod trace;
 #[cfg(test)]
 mod brute_tests;
 #[cfg(test)]
+mod door_tests;
+#[cfg(test)]
 mod fixtures;
 #[cfg(test)]
 mod link_tests;
@@ -37,7 +40,7 @@ use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-pub use authoring::{Portal, PortalSettings, PortalSide, Room};
+pub use authoring::{ClosedPortal, Portal, PortalSettings, PortalSide, Room};
 pub use cell::{Aperture, Cell, Parallelepiped};
 pub use graph::{Graph, OUTSIDE, PortalNode};
 pub use sight::sees;
@@ -60,6 +63,7 @@ impl Plugin for PortalsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<Room>()
             .register_type::<Portal>()
+            .register_type::<ClosedPortal>()
             .register_type::<PortalSettings>()
             .register_type::<PortalStats>()
             .init_resource::<PortalSettings>()

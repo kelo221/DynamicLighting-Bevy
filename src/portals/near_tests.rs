@@ -5,7 +5,7 @@ use bevy::math::Vec3;
 use super::fixtures::{TOLERANCE, camera, near, planes, room, row_graph, sees};
 use super::graph::{Graph, OUTSIDE};
 use super::near::starts;
-use super::trace::{TraceCounts, TracedView, trace};
+use super::trace::{TraceCounts, TracedView, Viewer, trace};
 
 fn starts_of(graph: &Graph, eye: Vec3, target: Vec3) -> Vec<usize> {
     let mut out = Vec::new();
@@ -50,11 +50,15 @@ fn a_camera_facing_a_thin_wall_starts_behind_it_too() {
     assert!(sees(&graph, eye, target, center, radius));
     let mut traced = TracedView::default();
     let frustum = planes(&camera(eye, target));
+    let viewer = Viewer {
+        eye,
+        near: &[],
+        frustum: &frustum,
+    };
     let point_eye = trace(
         &graph,
-        eye,
+        viewer,
         &[],
-        &frustum,
         16,
         &mut traced,
         &mut TraceCounts::default(),

@@ -231,7 +231,7 @@ fn with_no_rooms_everything_is_outside_and_seen() {
 #[test]
 fn an_eye_near_plane_or_frustum_that_is_not_finite_culls_nothing() {
     use super::fixtures::{camera, planes};
-    use super::trace::{TraceCounts, TracedView, trace};
+    use super::trace::{TraceCounts, TracedView, Viewer, trace};
     let graph = row_graph(2, &[0.0]);
     let frustum = planes(&camera(at(2.0, 0.0), at(8.0, 0.0)));
     let mut broken = frustum;
@@ -244,14 +244,11 @@ fn an_eye_near_plane_or_frustum_that_is_not_finite_culls_nothing() {
     ] {
         let mut traced = TracedView::default();
         let mut counts = TraceCounts::default();
-        assert!(!trace(
-            &graph,
+        let viewer = Viewer {
             eye,
             near,
-            &frustum,
-            16,
-            &mut traced,
-            &mut counts
-        ));
+            frustum: &frustum,
+        };
+        assert!(!trace(&graph, viewer, &[], 16, &mut traced, &mut counts));
     }
 }
