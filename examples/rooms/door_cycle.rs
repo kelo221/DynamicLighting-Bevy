@@ -4,9 +4,9 @@
 //! the corridor is seen only through the doors.
 //!
 //! Each phase (open, shut, open again) waits until no pipeline is compiling and no shadow face
-//! has rendered for a while, and two screenshots in a row match, saves `open.png`, `closed.png` or `reopened.png` in DIR, and
-//! moves on. The `rooms door cycle:` line gives the mean luminance of the floor just inside the
-//! door in each phase, how many pixels differ between the open and reopened frames, the shadow
+//! has rendered for a while, and two screenshots in a row match, saves `open.png`, `closed.png`
+//! or `reopened.png` in DIR, and moves on. The `rooms door cycle:` line gives the mean luminance
+//! of the floor just inside the door in each phase, how many pixels differ between the open and reopened frames, the shadow
 //! faces rendered after each change, and whether the probe and the lamp across the corridor
 //! were packed and had a shadow cubemap in each phase.
 
