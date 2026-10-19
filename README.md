@@ -17,6 +17,7 @@ The crate is its own lighting system. It never uses Bevy's lights (`PointLight`,
 - **Materials:** `DynLitMaterial` covers Henry's Diffuse, Metallic (GGX) and Unlit shaders, with normal, occlusion and metallic-roughness maps. glTF `StandardMaterial`s, light extras and room and portal helpers are converted on load.
 - **Volumetric fog:** sphere, box, cone and square-shaft (`Frustum`) fog volumes per light, as a post-process pass. The shaft starts at an area light's size, for fluorescent fixtures.
 - **Rooms and portals:** optional `Room` cells and `Portal` openings stop each camera's view at the walls, so realtime lights, shadow cubemaps and fog volumes that no camera can see through a door or window are left out. Walls are never assumed to stop light: only lights whose whole sphere is out of sight are dropped, so while every light fits the budgets the image doesn't change, and when they don't the budget goes to lights a camera can see.
+- **Low-overhead scheduling:** the opt-in `SingleThreadedSchedulesPlugin` runs the frame's schedules on Bevy's single-threaded executor, which saves about 1 ms a frame in the benchmark scenes.
 - **Debug views:** `DynamicLightingSettings::debug_view` shows lighting on white surfaces, or a heat map of how many lights reach each fragment.
 
 ## Compared with Henry's original
@@ -194,6 +195,18 @@ glTF node extras (Blender custom properties, exported with Include → Custom Pr
 
 These keys take only `True`/`False` or `1`/`0`. A helper's own mesh is removed when the scene spawns, so it never renders, casts shadows or bakes, and its light, fog and `dynlight_static` keys are ignored; child objects are kept. Mistakes are logged as `dynlight gltf:` warnings naming the node, and each one leaves culling keeping more, never less: a room that is also a portal makes neither, an unreadable room key makes no room, and an unreadable portal or closed key makes an open portal. A mesh helper whose geometry isn't the unit shape is reported too. A node becomes a light only with one of the light keys listed in `gltf_import::extras`; an unknown `dynlight_` key is reported and no longer makes a default point light. Room bounds aren't computed from the meshes; place the boxes yourself. [`tests/fixtures/rooms_gltf.py`](tests/fixtures/rooms_gltf.py) builds a small scene this way.
 
+### Scheduling
+
+In a scene like the benchmark hall below, most of a frame's CPU time goes to Bevy's multi-threaded executor rather than to the systems it runs. A frame runs several hundred systems, most of them for a few microseconds, and the executor hands each one to a worker thread and waits for it to come back. `SingleThreadedSchedulesPlugin` runs the per-frame schedules of the main app and of the render world on Bevy's single-threaded executor instead:
+
+```rust,ignore
+app.add_plugins((DefaultPlugins, DynamicLightingPlugin, SingleThreadedSchedulesPlugin::default()));
+```
+
+The render world still runs on its own thread beside the main world, systems that split their own work across the task pool (`par_iter`, as transform propagation and visibility do) still do, and commands are applied at the same points. What changes is that systems Bevy may run in either order now run in one fixed order. dynlight renders the same images either way (the visual baselines are checked with the plugin), and Bevy's ambiguity detection finds no pair involving dynlight systems whose result depends on that order. On macOS and iOS the `Render` schedule keeps its executor, because window surfaces have to be created on the main thread there. `main: false` or `render: false` leaves one side alone. The examples take `--single-threaded`.
+
+`DynamicLightingPlugin` doesn't add it, because the executor is a choice for the whole app: an app whose own systems are long and independent can be faster on the multi-threaded executor, so measure both. In the benchmark scenes it saves about 1 ms a frame, for dynlight and for Bevy's own lights alike (see Performance).
+
 ### Platforms
 
 - **Primitive indices:** baked shadows are looked up by triangle. On GPUs with wgpu's `PRIMITIVE_INDEX` feature (desktop Vulkan, DX12, Metal) this is free. Elsewhere, baked meshes are de-indexed when they load and carry a triangle-ID vertex attribute instead. `DynamicLightingSettings::triangle_ids` forces either path.
@@ -236,11 +249,29 @@ The GPU columns don't measure the same thing. dynlight's and Bevy's are the main
 
 Bevy doesn't sort opaque draws front to back, and its draw order changes from build to build, so the same scene can shade up to 30% more fragments in another build of either engine. The lit-pass numbers carry that uncertainty. The build measured here draws the 1000-pillar hall in a good order: it shades 3.0 M fragments, about as many as Bevy's 2.9 M, where the previous measurement's build shaded 3.8 M. That is why its 1000-light rows read lower than then (0.88 and 1.89 ms). A `DepthPrepass` on the camera makes each pixel shade once, whatever the order; with one, this build's baked pass takes 0.64 ms and its 1000 realtime lights 1.35 ms, as the previous build's 0.62 and 1.37 ms.
 
-- **Frame time** in dynlight and Bevy is mostly engine overhead: 2.1–2.4 ms for dynlight and 2.3–2.5 ms for Bevy's own lights. dynlight saves a little by not running Bevy's GPU light clustering, which it doesn't need. Unity's player needs about 0.4 ms.
+- **Frame time** in dynlight and Bevy is mostly engine overhead: 2.1–2.4 ms for dynlight and 2.3–2.5 ms for Bevy's own lights, about half of it Bevy's multi-threaded executor (see below). dynlight saves a little by not running Bevy's GPU light clustering, which it doesn't need. Unity's player needs about 0.4 ms.
 - **Baked lights** shade faster than Bevy's lights without shadows, and their shadows cost nothing at runtime. Like Henry's package, dynlight compiles its lit shader for the quality tier and the material's shading model. Switching off the lighting paths this scene doesn't use (`shader_features`, or `FeatureSelection::Automatic`, which picks the same paths here; see Usage) brings the pass to 0.50 ms, close to Henry's 0.46 ms for the whole frame.
 - **Realtime lights** are sorted into the cells of a view-space grid, as Bevy does, so a pixel only visits the lights that reach it. Henry's shader visits every realtime light at every pixel, so his 1000-light frame takes four times our lit pass. The table uses the default shader, which compiles every lighting path; with `FeatureSelection::Automatic` the lit pass takes 0.25 ms for 100 realtime lights and 0.75 ms for 1000, against Bevy's 0.27 and 1.32 ms.
 - **Realtime shadows** are cached in dynlight: a cubemap face only redraws where something changed, so a still scene renders none. Bevy's and Henry's still scenes cost as much as their moving ones. When everything moves, all three redraw 90 faces per frame. Unity does that in about 7 ms, and Bevy, which pays a per-view cost for every face, in 26 ms. dynlight draws every shadow view from one driver in 8.0 ms, 1.9 ms of it GPU time for the faces.
 - **The images match.** Rendered without tonemapping from the same camera, dynlight's and Henry's frames of the stress, light-type and shadow scenes differ on average by 0.01–0.14 of one 8-bit step. At most 0.2% of pixels differ by more than 16 steps, all along pillar edges.
+
+### With `SingleThreadedSchedulesPlugin`
+
+Frame times with and without the plugin (see Usage), for dynlight and for Bevy's own lights with the plugin added to the same harness. The setup is the one above, measured in a later session on 2026-10-20; each figure is the median of 10 runs, with every configuration alternating in one session.
+
+| Scene | dynlight | dynlight, plugin | Bevy | Bevy, plugin |
+|---|---|---|---|---|
+| 1000 still lights | 2.49 ms | 1.33 ms | 2.64 ms | 1.63 ms |
+| 100 moving realtime lights | 2.54 ms | 1.39 ms | 2.64 ms | 1.51 ms |
+| 1000 moving realtime lights | 2.51 ms | 2.01 ms | 2.74 ms | 1.64 ms |
+| 15 of 100 lights with realtime shadows, scene still | 2.55 ms | 1.37 ms | 23.3 ms | 11.7 ms |
+| 15 of 100 lights with realtime shadows, scene moving | 7.39 ms | 6.16 ms | 23.4 ms | 11.7 ms |
+
+- **The plugin saves 1.0–1.2 ms a frame** in every scene, for both engines, and half of Bevy's shadowed frame, which pays a per-view cost for each of its 90 shadow views. Without it, this session's frames read about 0.4 ms higher than the table above for both engines.
+- **The render thread sets the frame** in every scene: it is busy for all but 0.1–0.3 ms of it. With the plugin, dynlight's render thread is busy for 1.2–1.3 ms of the 1.3–1.4 ms frames of the lighter scenes, and its main thread for 0.4–0.6 ms in every scene. So caching dynlight's per-frame light packing on the main thread wouldn't shorten the frame, and uploading the light buffer only when it changes saved nothing measurable.
+- **1000 realtime lights become GPU-bound:** the lit pass takes 1.79 ms with every lighting path compiled. With `FeatureSelection::Automatic` it takes 0.88 ms, and the frame 1.36 ms.
+- **GPU times aren't comparable across executors.** In the light scenes the lit pass reads lower with the plugin for both engines (100 moving lights: dynlight 0.42 → 0.22 ms, Bevy 0.31 → 0.17 ms) with the same shaders, most likely because the GPU clocks higher when frames come faster. Compare GPU times under one executor.
+- Limiting Bevy's compute task pool (`TaskPoolPlugin`) to 4 threads moved the frame by −0.2 to +0.1 ms in the light scenes, with no consistent direction, in a shorter screen of 4 runs; it isn't in the table.
 
 Baking the 1000-light scene (1047 meshes, 6.3 M texels, 18 M rays) takes 1.3 s on a 32-thread desktop CPU; Henry's baker takes 22.2–22.6 s for the same scene in the Unity editor (direct light only for both, 16 texels per metre). `cargo bench --bench bake` measures the baker on its own (about 27 M shadow rays per second), and `cargo bench --bench clusters` the per-frame light grid (0.27 ms for 1000 lights).
 
