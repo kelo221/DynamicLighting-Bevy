@@ -1,13 +1,17 @@
-//! glTF scenes: lights and static flags from node extras (see [`extras`] for the keys), and
-//! `StandardMaterial`s converted to [`DynLitMaterial`](crate::surface::DynLitMaterial).
+//! glTF scenes: lights, static flags and room and portal helpers from node extras (see
+//! [`extras`] for the keys), and `StandardMaterial`s converted to
+//! [`DynLitMaterial`](crate::surface::DynLitMaterial).
 //!
 //! Load glTF files with `GltfLoaderSettings { load_lights: false, .. }` so Bevy never creates
 //! its own light components from `KHR_lights_punctual`.
 
 mod convert;
 pub mod extras;
+mod helpers;
 mod nodes;
 
+#[cfg(test)]
+mod extras_tests;
 #[cfg(test)]
 mod node_tests;
 

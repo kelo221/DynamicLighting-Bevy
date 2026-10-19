@@ -1,6 +1,7 @@
 //! Reads DynLight settings from glTF node extras (Blender custom properties).
 //!
-//! Keys, all optional except that at least one `dynlight_` light key makes a light:
+//! All keys are optional. A node is a light when it has at least one of the light keys (the
+//! rows from `dynlight_type` to `dynlight_fog`) and isn't a room or portal helper.
 //!
 //! | Key | Value |
 //! |---|---|
@@ -15,13 +16,41 @@
 //! | `dynlight_effect` | an effect name such as `candle` or `fluorescent_starter` |
 //! | `dynlight_fog` | `sphere`, `box`, `cone_z`, `cone_y`, `frustum` |
 //! | `dynlight_static` | bool, on mesh nodes: bake shadows onto and from this mesh |
+//! | `dynlight_room` | `true`/`false`/`1`/`0`: the node's local ±1 cube is a [`Room`](crate::portals::Room) |
+//! | `dynlight_portal` | `true`/`false`/`1`/`0`: the ±1 square in the node's local XY plane is a [`Portal`](crate::portals::Portal) |
+//! | `dynlight_portal_closed` | `true`/`false`/`1`/`0`, with `dynlight_portal`: the portal starts [closed](crate::portals::ClosedPortal) |
+//!
+//! A room or portal helper is never a light and never baked, and its own meshes are removed.
+//! Conflicting or unreadable keys, and unknown `dynlight_` keys, are reported in
+//! [`NodeExtras::warnings`].
 
 use bevy::prelude::*;
 use serde_json::{Map, Value};
 
+pub use super::helpers::Helper;
+use super::helpers::{CLOSED, PORTAL, ROOM, intent};
 use crate::effects::{LightEffect, LightEffectKind};
 use crate::fog::{VolumetricLight, VolumetricShape};
 use crate::light::{DynamicLight, LightType, Shimmer};
+
+const STATIC: &str = "dynlight_static";
+
+/// The keys that make a node a light.
+pub const LIGHT_KEYS: [&str; 13] = [
+    "dynlight_type",
+    "dynlight_color",
+    "dynlight_size",
+    "dynlight_intensity",
+    "dynlight_radius",
+    "dynlight_falloff",
+    "dynlight_inner_cutoff",
+    "dynlight_outer_cutoff",
+    "dynlight_angular_diameter",
+    "dynlight_realtime",
+    "dynlight_shimmer",
+    "dynlight_effect",
+    "dynlight_fog",
+];
 
 /// What a node's extras ask for.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -30,21 +59,47 @@ pub struct NodeExtras {
     pub effect: Option<LightEffect>,
     pub fog: Option<VolumetricLight>,
     pub bake_static: bool,
+    pub helper: Option<Helper>,
+    /// Mistakes in the extras, each with what was made instead.
+    pub warnings: Vec<String>,
 }
 
-/// Parses a node's extras JSON. Unknown keys and malformed values are ignored.
+/// Parses a node's extras JSON. Keys without the `dynlight_` prefix are ignored; malformed
+/// light values keep their defaults.
 pub fn parse(json: &str) -> NodeExtras {
     let Ok(Value::Object(map)) = serde_json::from_str::<Value>(json) else {
         return NodeExtras::default();
     };
-    let mut extras = NodeExtras {
-        bake_static: boolean(&map, "dynlight_static").unwrap_or(false),
-        ..default()
-    };
-    let is_light = map
-        .keys()
-        .any(|key| key.starts_with("dynlight_") && key != "dynlight_static");
-    if !is_light {
+    let mut extras = NodeExtras::default();
+    let known =
+        |key: &str| LIGHT_KEYS.contains(&key) || [STATIC, ROOM, PORTAL, CLOSED].contains(&key);
+    for key in map.keys() {
+        if key.starts_with("dynlight_") && !known(key) {
+            extras.warnings.push(format!("unknown key {key} ignored"));
+        }
+    }
+    let intent = intent(&map, &mut extras.warnings);
+    let light_keys: Vec<&str> = LIGHT_KEYS
+        .into_iter()
+        .filter(|key| map.contains_key(*key))
+        .collect();
+    if intent.intended {
+        extras.helper = intent.helper;
+        if !light_keys.is_empty() {
+            let keys = light_keys.join(", ");
+            extras.warnings.push(format!(
+                "a room or portal is never a light, so {keys} were ignored"
+            ));
+        }
+        if boolean(&map, STATIC) == Some(true) {
+            extras.warnings.push(format!(
+                "a room or portal is never baked, so {STATIC} was ignored"
+            ));
+        }
+        return extras;
+    }
+    extras.bake_static = boolean(&map, STATIC).unwrap_or(false);
+    if light_keys.is_empty() {
         return extras;
     }
     let mut light = DynamicLight::default();
@@ -143,67 +198,4 @@ fn normalize(name: &str) -> String {
         .filter(|c| *c != '_' && *c != ' ' && *c != '-')
         .flat_map(char::to_lowercase)
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn spot_light_with_effect_and_fog() {
-        let extras = parse(
-            r#"{"dynlight_type": "spot", "dynlight_radius": 6, "dynlight_color": [1, 0.5, 0],
-                "dynlight_effect": "fluorescent_starter", "dynlight_fog": "cone_z",
-                "dynlight_realtime": true, "other": 3}"#,
-        );
-        let light = extras.light.unwrap();
-        assert_eq!(light.light_type, LightType::Spot);
-        assert_eq!(light.radius, 6.0);
-        assert!(light.realtime);
-        assert_eq!(light.color, Color::srgb(1.0, 0.5, 0.0));
-        assert_eq!(
-            extras.effect.unwrap().kind,
-            LightEffectKind::FluorescentStarter
-        );
-        assert_eq!(extras.fog.unwrap().shape, VolumetricShape::ConeZ);
-    }
-
-    #[test]
-    fn area_lights_take_a_size() {
-        let panel = parse(r#"{"dynlight_type": "rectangle", "dynlight_size": [1.2, 0.6]}"#);
-        let panel = panel.light.unwrap();
-        assert_eq!(panel.light_type, LightType::Rectangle);
-        assert_eq!(panel.size, Vec2::new(1.2, 0.6));
-        let tube = parse(r#"{"dynlight_type": "tube", "dynlight_size": [2]}"#);
-        assert_eq!(tube.light.unwrap().size, Vec2::new(2.0, 0.0));
-        let shaft = parse(r#"{"dynlight_type": "rectangle", "dynlight_fog": "frustum"}"#);
-        assert_eq!(shaft.fog.unwrap().shape, VolumetricShape::Frustum);
-    }
-
-    #[test]
-    fn suns_take_an_angular_diameter() {
-        let sun = parse(r#"{"dynlight_type": "sun", "dynlight_angular_diameter": 2.5}"#);
-        let sun = sun.light.unwrap();
-        assert_eq!(
-            (sun.light_type, sun.angular_diameter),
-            (LightType::Sun, 2.5)
-        );
-        let default = parse(r#"{"dynlight_type": "Sun"}"#).light.unwrap();
-        assert_eq!(default.angular_diameter, DynamicLight::SUN_ANGULAR_DIAMETER);
-    }
-
-    #[test]
-    fn static_meshes_are_not_lights() {
-        let extras = parse(r#"{"dynlight_static": 1}"#);
-        assert!(extras.bake_static);
-        assert!(extras.light.is_none());
-    }
-
-    #[test]
-    fn unrelated_and_malformed_extras_are_ignored() {
-        assert_eq!(parse(r#"{"foo": 1}"#), NodeExtras::default());
-        assert_eq!(parse("not json"), NodeExtras::default());
-        let extras = parse(r#"{"dynlight_type": "laser"}"#);
-        assert_eq!(extras.light.unwrap().light_type, LightType::Point);
-    }
 }

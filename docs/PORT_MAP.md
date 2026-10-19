@@ -327,9 +327,11 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `src/gltf_import/mod.rs` | none | none | New; wiring: the glTF plugin and its settings |
 | `src/gltf_import/convert.rs` | none | none (bevyout's `viewer/material_shading.rs` is not used) | New; `StandardMaterial` → `DynLitMaterial`, Metallic shading where needed |
-| `src/gltf_import/nodes.rs` | none | none | New (M28); applies node extras in `SpawnScene` after the scene spawner, `BakeStatic` on the node's own mesh primitives |
-| `src/gltf_import/node_tests.rs` | none | none | New (M28); node extras in an app: read before `PostUpdate`, static tags on own primitives only |
-| `src/gltf_import/extras.rs` | field names and defaults of `C/Lighting/DynamicLight.cs:30-370` | none | New; `dynlight_*` node extras (Blender custom properties); area-light `dynlight_type`/`dynlight_size` and `fog: "frustum"` are New |
+| `src/gltf_import/nodes.rs` | none | none | New (M28); applies node extras in `SpawnScene` after the scene spawner, `BakeStatic` on the node's own mesh primitives, room and portal helpers (their own meshes removed, a warning when a helper mesh isn't the unit shape) |
+| `src/gltf_import/node_tests.rs` | none | none | New (M28); node extras in an app: read before `PostUpdate`, static tags on own primitives only, helpers drop their own primitives and keep child nodes |
+| `src/gltf_import/extras.rs` | field names and defaults of `C/Lighting/DynamicLight.cs:30-370` | none | New; `dynlight_*` node extras (Blender custom properties); area-light `dynlight_type`/`dynlight_size` and `fog: "frustum"` are New; the explicit light-key list and the warnings are New (M28) |
+| `src/gltf_import/helpers.rs` | none | none | New (M28); `dynlight_room`, `dynlight_portal` and `dynlight_portal_closed`: strict flags, the conflict rules, the unit-shape check for helper meshes |
+| `src/gltf_import/extras_tests.rs` | none | none | New (M28, the light tests moved from `extras.rs`); every light key, unknown keys, strict flags and each row of the conflict table |
 
 ### `debug/`
 
@@ -378,6 +380,8 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | `tests/gpu_baselines.rs` | none | none | New; visual baselines: still frames of the examples compared with `tests/baselines/` by FLIP (the comparison lives in `tests/common/flip.rs`) |
 | `tests/common/mod.rs` | none | none | New; helpers shared by the GPU test files |
 | `tests/common/flip.rs` | none | none | New (M28, split from `tests/gpu_baselines.rs`); a captured frame against its baseline by FLIP, blessing |
+| `tests/gltf_rooms.rs` | none | none | New (M28); rooms and portals from a Blender-exported glTF through Bevy's loader: helpers in place on the first frame under a turned parent, their meshes gone, a child mesh node kept, the static floor's primitives tagged, one light, and the graph linking door and window |
+| `tests/fixtures/rooms_gltf.py` | none | none | New (M28); the Blender script (run once in the background) that writes `tests/fixtures/rooms.gltf` and `rooms.bin` |
 | `tests/headless_app.rs` | none | none | New |
 | `tests/portal_culling.rs` | none | none | New (M27); the whole plugin headless: a light reaching the seen room through a wall stays packed at any cube budget, a light only a second camera sees keeps its cube and fog, cone fog seen past its radius stays, a closed door drops the light behind it and its cube until it opens (M28) |
 | `tests/repo_hygiene.rs` | none | none | New; enforces the `AGENTS.md` rules |

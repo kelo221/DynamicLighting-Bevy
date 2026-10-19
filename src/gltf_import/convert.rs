@@ -13,7 +13,8 @@ pub struct GltfImportSettings {
     /// equivalent `DynLitMaterial`. Without Bevy lights, a `StandardMaterial` only shows
     /// ambient light.
     pub convert_standard_materials: bool,
-    /// Create `DynamicLight`s and `BakeStatic` from `dynlight_*` node extras.
+    /// Create `DynamicLight`s, `BakeStatic`, `Room`s and `Portal`s from `dynlight_*` node
+    /// extras.
     pub read_node_extras: bool,
 }
 
