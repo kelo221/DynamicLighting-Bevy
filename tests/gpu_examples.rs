@@ -96,6 +96,19 @@ fn gpu_sun_and_sky_shadows_match_the_cpu_mirror_at_every_quality() {
     }
 }
 
+/// Integrated-graphics quality has no realtime sun shadows.
+#[test]
+#[ignore = "needs a GPU"]
+fn gpu_sun_cascades_match_the_cpu_mirror_at_every_quality_with_cascades() {
+    for quality in ["low", "medium", "high"] {
+        let log = run_example("gpu_check_cascades", &["--quality", quality]);
+        assert!(
+            log.contains("GPU sun cascades match the CPU mirror"),
+            "{log}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "needs a GPU"]
 fn gpu_sky_light_matches_the_cpu_mirror() {
