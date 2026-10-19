@@ -4,8 +4,12 @@
 use bevy::prelude::*;
 use dynlight::prelude::*;
 
+use crate::doors::Leaf;
+
 pub const HEIGHT: f32 = 3.0;
 const WALL: f32 = 0.2;
+/// Door leaves are this thick, in the middle of the wall.
+const LEAF: f32 = 0.04;
 pub const DOOR: Vec2 = Vec2::new(1.2, 2.2);
 /// Rooms are this wide along the corridor, and the grid's rooms this wide both ways.
 pub const ROOM: f32 = 8.0;
@@ -167,12 +171,21 @@ pub fn room(commands: &mut Commands, name: String, center: Vec3, size: Vec3) {
     ));
 }
 
-/// A door portal in a wall facing `facing` (±X or ±Z).
-pub fn door(commands: &mut Commands, name: String, at: Vec3, size: Vec2, facing: Vec3) {
+/// A door portal in a wall facing `facing` (±X or ±Z), with a leaf that shows while it is shut.
+pub fn door(commands: &mut Commands, kit: &Kit, name: String, at: Vec3, size: Vec2, facing: Vec3) {
+    let transform = Transform::from_translation(at).looking_to(-facing, Vec3::Y);
+    let portal = commands
+        .spawn((Name::new(name.clone()), Portal::new(size), transform))
+        .id();
+    // A centimeter into the wall all round, so a shut door seals the opening.
+    let leaf = (size + Vec2::splat(0.02)).extend(LEAF);
     commands.spawn((
-        Name::new(name),
-        Portal::new(size),
-        Transform::from_translation(at).looking_to(-facing, Vec3::Y),
+        Name::new(format!("{name} leaf")),
+        Leaf(portal),
+        Mesh3d(kit.cube.clone()),
+        MeshMaterial3d(kit.wood.clone()),
+        transform.with_scale(leaf),
+        Visibility::Hidden,
     ));
 }
 
@@ -300,6 +313,7 @@ pub fn corridor(commands: &mut Commands, kit: &Kit) {
             );
             door(
                 commands,
+                kit,
                 format!("{name} door"),
                 Vec3::new(door_x, DOOR.y / 2.0, edge * side),
                 DOOR,
@@ -319,6 +333,7 @@ pub fn corridor(commands: &mut Commands, kit: &Kit) {
     let (from, to, bottom, top) = window;
     door(
         commands,
+        kit,
         "Yard window".into(),
         Vec3::new((from + to) / 2.0, (bottom + top) / 2.0, far),
         Vec2::new(to - from, top - bottom),

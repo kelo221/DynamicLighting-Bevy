@@ -5,6 +5,10 @@
 
 use std::process::Command;
 
+// FLIP compiles C++, which the browser builds leave out.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod flip;
+
 /// Runs `cargo run --example <name> -- <args>` with this test's features and asserts it exits
 /// cleanly without logging render errors.
 pub fn run_example(name: &str, args: &[&str]) -> String {

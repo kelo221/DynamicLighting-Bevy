@@ -4,12 +4,12 @@
 //! them are left out. Walls are never taken to stop light: a light is only left out when its
 //! whole sphere misses everything the camera sees.
 //!
-//! P switches portal culling (`--no-portals` starts without it) and G the room and light
-//! gizmos (`--gizmos`). The title bar shows what is in view and what is drawn, and once a
-//! second the log says what portal culling did:
-//! `dynlight portals: rooms N, visits N, unbounded N, realtime lights N, cubes N, cubes
-//! assigned N, faces N, cluster entries N, fog N` (cubes assigned and faces over that second,
-//! the rest this frame).
+//! P switches portal culling (`--no-portals` starts without it), C shuts or opens every door
+//! (`--closed-doors` starts with them shut) and G the room and light gizmos (`--gizmos`). The
+//! title bar shows what is in view and what is drawn, and once a second the log says what
+//! portal culling did: `dynlight portals: rooms N, closed doors N, visits N, unbounded N,
+//! realtime lights N, cubes N, cubes assigned N, faces N, cluster entries N, fog N` (cubes
+//! assigned and faces over that second, the rest this frame).
 //!
 //! - `--path` flies through the rooms; with `--frames` it moves a fixed step per frame, so
 //!   every run sees the same frames.
@@ -19,9 +19,13 @@
 //! - `--frames N` exits after measuring N frames at 1920×1080 and logs the frame times, the GPU
 //!   time of each pass and the stats; `--screenshot path.png` also saves an image. `--capture path.png` saves a still frame for
 //!   the visual baselines, `--camera x,y,z,tx,ty,tz` holds the camera somewhere else.
+//! - `--door-cycle DIR` shuts and reopens a door in front of a still camera and logs what
+//!   changed (see `door_cycle.rs`).
 
 #[path = "../support/capture.rs"]
 mod capture;
+mod door_cycle;
+mod doors;
 mod grid;
 mod layout;
 mod measure;
@@ -77,7 +81,7 @@ fn main() -> AppExit {
         primary_window: Some(window),
         ..default()
     }))
-    .add_plugins((DynamicLightingPlugin, capture::plugin))
+    .add_plugins((DynamicLightingPlugin, capture::plugin, door_cycle::plugin))
     .insert_resource(settings)
     .insert_resource(PortalSettings {
         enabled: !flag("--no-portals"),
@@ -88,10 +92,16 @@ fn main() -> AppExit {
     })
     .insert_resource(ClearColor(Color::srgb(0.03, 0.04, 0.07)))
     .add_systems(Startup, spawn)
-    .add_systems(Update, toggle)
+    .add_systems(
+        Update,
+        (toggle, (doors::toggle, doors::show_leaves).chain()),
+    )
     .add_systems(Last, report);
     if !flag("--still") {
         app.add_systems(Update, path::bob);
+    }
+    if flag("--closed-doors") {
+        app.add_systems(Startup, doors::shut_at_start.after(spawn));
     }
     if options.frames.is_some() {
         // A window without focus would otherwise update only 60 times a second.
@@ -179,9 +189,10 @@ fn report(
         state.last_log = now;
         let (assigned, faces) = std::mem::take(&mut state.since_log);
         info!(
-            "dynlight portals: rooms {}, visits {}, unbounded {}, realtime lights {}, cubes {}, \
-             cubes assigned {assigned}, faces {faces}, cluster entries {}, fog {}",
+            "dynlight portals: rooms {}, closed doors {}, visits {}, unbounded {}, realtime lights \
+             {}, cubes {}, cubes assigned {assigned}, faces {faces}, cluster entries {}, fog {}",
             portals.rooms,
+            portals.closed_portals,
             frame.visits,
             portals.unbounded_views,
             frame.lights,
@@ -211,8 +222,9 @@ fn report(
             (true, None) => "portals on (P), not culling".to_string(),
         };
         let title = format!(
-            "DynLight rooms · {culling} · {} of {lights} lights · {} of {cubes} shadow cubes · {} fog volumes",
-            frame.lights, frame.cubes, frame.fog
+            "DynLight rooms · {culling} · {} of {} doors shut (C) · {} of {lights} lights · {} of \
+             {cubes} shadow cubes · {} fog volumes",
+            portals.closed_portals, portals.portals, frame.lights, frame.cubes, frame.fog
         );
         support::status(&title);
         if let Ok(mut window) = windows.single_mut() {

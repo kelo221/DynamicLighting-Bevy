@@ -172,6 +172,64 @@ fn rooms_out_of_sight_are_left_out() {
     }
 }
 
+/// In the corridor every room's lamp reaches the corridor, so shut doors drop no cube there; in
+/// the grid the lamps two rooms away can't reach the camera's room.
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms_behind_shut_doors_are_left_out() {
+    let open = ["--grid", "6", "--budgets", "--still", "--frames", "120"];
+    let shut = [&open[..], &["--closed-doors"]].concat();
+    let (open, shut) = (run_example("rooms", &open), run_example("rooms", &shut));
+    assert_eq!(rooms_stat(&shut, "visits"), 1.0, "{shut}");
+    for stat in ["realtime lights", "cubes"] {
+        let (open, shut) = (rooms_stat(&open, stat), rooms_stat(&shut, stat));
+        assert!(
+            shut < open,
+            "{stat}: {shut} with the doors shut, {open} open"
+        );
+    }
+}
+
+/// `rooms --door-cycle` shuts a door and opens it again in front of a still camera, each phase
+/// once the shadow faces have settled. Shut, the door blocks a shadowed light that stays packed
+/// because its sphere reaches the camera's room, and drops the lamp seen only through it with
+/// its cube; opened, the lamp gets its cube back and the frame is the same as before.
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms_door_cycle_blocks_light_and_restores_the_frame() {
+    let dir = scratch("door_cycle");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir_arg = dir.to_string_lossy().into_owned();
+    let camera = "15.6,1.6,3.6,10.5,0.4,-1.5";
+    let args = ["--still", "--camera", camera, "--door-cycle", &dir_arg];
+    let log = run_example("rooms", &args);
+    let line = log
+        .lines()
+        .find(|line| line.contains("rooms door cycle:"))
+        .unwrap_or_else(|| panic!("no door cycle report:\n{log}"));
+    let field = |name: &str| {
+        line.split(&format!("{name} "))
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .unwrap_or_else(|| panic!("no {name} in {line}"))
+    };
+    let floor: Vec<f32> = field("floor by the door")
+        .split('/')
+        .map(|value| value.parse().expect("a luminance"))
+        .collect();
+    assert!(floor[1] < floor[0] * 0.75, "{line}");
+    assert_eq!(floor[2], floor[0], "{line}");
+    assert_eq!(field("pixels changed on reopening"), "0", "{line}");
+    for faces in ["faces after closing", "faces after reopening"] {
+        assert!(field(faces).parse::<u32>().unwrap() > 0, "{line}");
+    }
+    assert_eq!(field("probe packed"), "1/1/1", "{line}");
+    assert_eq!(field("probe cube"), "1/1/1", "{line}");
+    assert_eq!(field("lamp across packed"), "1/0/1", "{line}");
+    assert_eq!(field("lamp across cube"), "1/0/1", "{line}");
+    std::fs::remove_dir_all(dir.parent().unwrap()).ok();
+}
+
 #[test]
 #[ignore = "needs a GPU"]
 fn lighting_test_renders_a_lit_scene() {

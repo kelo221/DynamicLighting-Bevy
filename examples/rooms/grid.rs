@@ -48,6 +48,7 @@ pub fn spawn(commands: &mut Commands, kit: &Kit, n: u32) {
             let east = Vec3::new(at, DOOR.y / 2.0, middle + grid_door(line, k, true));
             door(
                 commands,
+                kit,
                 format!("Door {line},{k} east"),
                 east,
                 DOOR,
@@ -56,6 +57,7 @@ pub fn spawn(commands: &mut Commands, kit: &Kit, n: u32) {
             let north = Vec3::new(middle + grid_door(k, line, false), DOOR.y / 2.0, at);
             door(
                 commands,
+                kit,
                 format!("Door {k},{line} north"),
                 north,
                 DOOR,

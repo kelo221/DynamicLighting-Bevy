@@ -44,7 +44,7 @@ pub fn plugin(app: &mut App) {
     let Some(path) = support::argument("--capture") else {
         return;
     };
-    let waiting = WaitingPipelines(Arc::new(AtomicUsize::new(usize::MAX)));
+    track_pipelines(app);
     app.insert_resource(WinitSettings::continuous())
         .insert_resource(CaptureState {
             path,
@@ -55,9 +55,28 @@ pub fn plugin(app: &mut App) {
             captured: None,
             previous: None,
         })
-        .insert_resource(waiting.clone())
         .add_systems(Startup, (freeze_time, size_window))
         .add_systems(Last, (note_finished_bakes, step).chain());
+}
+
+/// Render pipelines still compiling, written by the render world and read by the main world.
+#[derive(Resource, Clone)]
+pub struct WaitingPipelines(Arc<AtomicUsize>);
+
+impl WaitingPipelines {
+    /// Whether any render pipeline is compiling, or the render world hasn't said yet.
+    pub fn compiling(&self) -> bool {
+        self.0.load(Ordering::Relaxed) != 0
+    }
+}
+
+/// Adds [`WaitingPipelines`], once.
+pub fn track_pipelines(app: &mut App) {
+    if app.world().contains_resource::<WaitingPipelines>() {
+        return;
+    }
+    let waiting = WaitingPipelines(Arc::new(AtomicUsize::new(usize::MAX)));
+    app.insert_resource(waiting.clone());
     if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
         render_app.insert_resource(waiting).add_systems(
             Render,
@@ -65,10 +84,6 @@ pub fn plugin(app: &mut App) {
         );
     }
 }
-
-/// Render pipelines still compiling, written by the render world and read by the main world.
-#[derive(Resource, Clone)]
-struct WaitingPipelines(Arc<AtomicUsize>);
 
 #[derive(Resource)]
 struct CaptureState {
@@ -136,7 +151,7 @@ fn step(
     }
     let now = time.elapsed_secs();
     let sky_building = sky.is_some_and(|sky| sky.building);
-    if state.bake_pending || sky_building || waiting.0.load(Ordering::Relaxed) != 0 {
+    if state.bake_pending || sky_building || waiting.compiling() {
         state.idle_since = None;
         state.previous = None;
         return;

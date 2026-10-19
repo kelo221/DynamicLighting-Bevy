@@ -304,18 +304,21 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
 | `src/portals/mod.rs` | none | none | New; wiring: `PortalsPlugin`, `PortalSystems::{Link, Trace}` after transform propagation and frustum updates, re-exports |
-| `src/portals/authoring.rs` | none | none | New; `Room`, `Portal`, `PortalSide`, `PortalSettings` |
+| `src/portals/authoring.rs` | none | none | New; `Room`, `Portal`, `PortalSide`, `ClosedPortal` (M28), `PortalSettings` |
 | `src/portals/cell.rs` | none | none | New; cells as six planes and eight corners of a box under an affine transform, portal apertures, overlap by separating axes, corner-ray spans |
 | `src/portals/graph.rs` | none | none | New; validates the rooms and portals, links them into nodes (0 is Outside), finds the cells holding a point and the cells a sphere reaches |
+| `src/portals/near.rs` | none | none | New (M28); the near plane's corners from the projection, and the nodes a view starts in: every cell the near pyramid touches, and the outside unless the pyramid lies inside them (exact vertex test with a work cap) |
 | `src/portals/link.rs` | none | none | New; resolves an `Auto` portal side: one touching cell that covers the aperture, the outside past 1 m, anything else unresolved |
 | `src/portals/sight.rs` | none | none | New; `sees`: a sphere against every camera's frustum and traced view, with its reach computed once |
 | `src/portals/state.rs` | none | none | New; `RoomGraph` (generation, state, culprits), `RoomView`, `PortalState`, `PortalStats` |
 | `src/portals/systems.rs` | none | none | New; rebuilds the graph on change and warns about broken rooms by name, traces every camera's view |
-| `src/portals/trace.rs` | none | none | New; the depth-first trace relative to the eye, plane narrowing per portal, depth and work limits |
-| `src/portals/brute_tests.rs` | none | none | New; seeded cameras and spheres among walls with door holes: any sphere in sight is kept, and enough are culled |
+| `src/portals/trace.rs` | none | none | New; the depth-first trace relative to the eye, plane narrowing per portal, depth and work limits; closed portals skipped through a per-frame mask (M28) |
+| `src/portals/brute_tests.rs` | none | none | New; seeded cameras and spheres among walls with door holes: any sphere in sight past the near plane is kept, and enough are culled; cameras pressed against thin walls and random closed door leaves (M28) |
+| `src/portals/door_tests.rs` | none | none | New (M28); closed portals in the trace: the next room hidden, a light through the wall kept, reopening, windows, an eye at a door, two doorways, bounded views |
 | `src/portals/fixtures.rs` | none | none | New (test-only); room and portal layouts for the tests |
+| `src/portals/near_tests.rs` | none | none | New (M28); near corners, start nodes in one cell, across a doorway, through thin and outer walls, at a corner, far from the origin |
 | `src/portals/link_tests.rs` | none | none | New; cells under shear, overlaps, every linking case, spawn order, homes and reach |
-| `src/portals/system_tests.rs` | none | none | New; the systems in an app: first frame, rebuilds, parents, cameras, toggling, stale generations, culprits |
+| `src/portals/system_tests.rs` | none | none | New; the systems in an app: first frame, rebuilds, parents, cameras, toggling, stale generations, culprits, doors shut from `Update` and spawned shut (M28) |
 | `src/portals/trace_tests.rs` | none | none | New; doors in and out of view, doorways, coplanar and edge-on portals, limits, the plane invariant, far coordinates, non-finite input |
 
 ### `gltf_import/`
@@ -332,7 +335,7 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `src/debug/mod.rs` | none | none | New; wiring: `DebugPlugin`, `LightGizmos` toggle (the debug views are `shared::DebugView`, drawn by the surface shaders) |
 | `src/debug/gizmos.rs` | `C/Lighting/DynamicLight.cs:502-672` (gizmo ideas) | none | New; Bevy gizmos, including area-light shapes |
-| `src/debug/room_gizmos.rs` | none | none | New (M27); room cells drawn inside their walls, green when a camera sees into them, and portals coloured by what they link |
+| `src/debug/room_gizmos.rs` | none | none | New (M27); room cells drawn inside their walls, green when a camera sees into them, and portals coloured by what they link, darker when closed |
 
 ### Examples and tests
 
@@ -359,19 +362,22 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | `examples/support/lightmap_uvs.rs` | none | none | New; UV1 sets for Bevy's primitive meshes (a per-face atlas for boxes, moved from `lighting_test`) |
 | `examples/outdoor/main.rs`, `scene.rs` | none | none | New; a courtyard under a baked soft sun and a baked sky with a porch, a lamp, two Metallic balls, and moving objects shadowed by the sun map and the sky probes that cast realtime sun shadows (M22); `--camera` |
 | `examples/outdoor/sky.rs` | none | none | New; a procedural sky image matched to the sun, or an HDRI from `--hdri`, scaled and turned to the sun |
-| `examples/rooms/main.rs` | none | none | New (M27); the rooms example: options, P and G keys, the once-a-second `dynlight portals:` log |
+| `examples/rooms/main.rs` | none | none | New (M27); the rooms example: options, P, C and G keys, the once-a-second `dynlight portals:` log |
+| `examples/rooms/doors.rs` | none | none | New (M28); door leaves shown while their portal is `ClosedPortal`, the C key, `--closed-doors` |
+| `examples/rooms/door_cycle.rs` | none | none | New (M28); `--door-cycle DIR`: shuts and reopens a door in front of a still camera once the shadow faces settle, logs the floor's light, pixel changes, faces and which lights kept their cubes |
 | `examples/rooms/measure.rs` | none | none | New (M27); the `--frames` summary: mean, median and p95 frame times, each render pass's GPU time (every batch of timings counted once), the stats per frame |
-| `examples/rooms/layout.rs` | none | none | New (M27); walls with doors and windows, the corridor with six rooms and a yard, the rooms' lights |
+| `examples/rooms/layout.rs` | none | none | New (M27); walls with doors and windows (each with a hidden leaf, M28), the corridor with six rooms and a yard, the rooms' lights |
 | `examples/rooms/grid.rs` | none | none | New (M27); `--grid N`: N × N rooms joined by offset doors |
 | `examples/rooms/path.rs` | none | none | New (M27); the `--path` flythroughs on virtual time (a fixed step while `--frames` measures), bobbing lamps |
 | `tests/area_light_bake.rs` | none | none | New; panels bake soft shadows close to a brute-force trace, tubes soften only along their length, point lights keep one bit |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
-| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular`, `gpu_check_area`, `gpu_check_sun` and `gpu_check_sky` examples, check `lighting_test` screenshots, and check what `rooms` culls |
-| `tests/gpu_baselines.rs` | none | none | New; visual baselines: still frames of the examples compared with `tests/baselines/` by FLIP |
+| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular`, `gpu_check_area`, `gpu_check_sun` and `gpu_check_sky` examples, check `lighting_test` screenshots, and check what `rooms` culls, behind shut doors too, and its `--door-cycle` (M28) |
+| `tests/gpu_baselines.rs` | none | none | New; visual baselines: still frames of the examples compared with `tests/baselines/` by FLIP (the comparison lives in `tests/common/flip.rs`) |
 | `tests/common/mod.rs` | none | none | New; helpers shared by the GPU test files |
+| `tests/common/flip.rs` | none | none | New (M28, split from `tests/gpu_baselines.rs`); a captured frame against its baseline by FLIP, blessing |
 | `tests/headless_app.rs` | none | none | New |
-| `tests/portal_culling.rs` | none | none | New (M27); the whole plugin headless: a light reaching the seen room through a wall stays packed at any cube budget, a light only a second camera sees keeps its cube and fog, cone fog seen past its radius stays |
+| `tests/portal_culling.rs` | none | none | New (M27); the whole plugin headless: a light reaching the seen room through a wall stays packed at any cube budget, a light only a second camera sees keeps its cube and fog, cone fog seen past its radius stays, a closed door drops the light behind it and its cube until it opens (M28) |
 | `tests/repo_hygiene.rs` | none | none | New; enforces the `AGENTS.md` rules |
 
 ### `benches/`
@@ -380,4 +386,4 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `benches/bake.rs` | none | none | New; synthetic bake benchmark (`harness = false`): without bounce, with bounce, 4× lights |
 | `benches/clusters.rs` | none | none | New; light grid build time for 100, 1000 and 10 000 scattered point lights (`harness = false`) |
-| `benches/portals.rs` | none | none | New (M27); graph rebuild, view trace and `portals::sees` for every light sphere in 6 × 6 and 16 × 16 room grids (`harness = false`) |
+| `benches/portals.rs` | none | none | New (M27); graph rebuild, view trace and `portals::sees` for every light sphere in 6 × 6 and 16 × 16 room grids with every door open, about half closed and all closed (`harness = false`) |
