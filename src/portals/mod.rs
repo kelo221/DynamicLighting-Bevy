@@ -14,6 +14,7 @@ mod authoring;
 mod cell;
 mod graph;
 mod link;
+mod near;
 mod sight;
 mod state;
 mod systems;
@@ -25,6 +26,8 @@ mod brute_tests;
 mod fixtures;
 #[cfg(test)]
 mod link_tests;
+#[cfg(test)]
+mod near_tests;
 #[cfg(test)]
 mod system_tests;
 #[cfg(test)]

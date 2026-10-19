@@ -1,6 +1,7 @@
 //! The portal systems: rebuild the [`RoomGraph`] when rooms or portals change, then trace every
 //! camera's [`RoomView`] through it.
 
+use bevy::camera::CameraProjection;
 use bevy::camera::primitives::Frustum;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::ecs::name::NameOrEntity;
@@ -9,6 +10,7 @@ use bevy::prelude::*;
 use super::authoring::{Portal, PortalSettings, PortalSide, Room};
 use super::graph::{Graph, PortalInput, Problem, RoomInput, SideInput};
 use super::link::{NEAR_MISS, Unresolved};
+use super::near::near_corners;
 use super::state::{PortalState, PortalStats, RoomGraph, RoomView};
 use super::trace::{TraceCounts, trace};
 
@@ -222,13 +224,19 @@ pub(super) fn trace_views(
         };
         view.generation = graph.generation();
         view.bounded = match (graph.ready(), camera.is_active, projection) {
-            (Some(rooms), true, Projection::Perspective(_)) => {
+            (Some(rooms), true, Projection::Perspective(perspective)) => {
                 views += 1;
                 let planes = frustum.half_spaces.map(|half_space| half_space.normal_d());
                 let eye = transform.translation();
+                let clip_from_view = match &camera.sub_camera_view {
+                    Some(sub) => perspective.get_clip_from_view_for_sub(sub),
+                    None => perspective.get_clip_from_view(),
+                };
+                let near = near_corners(clip_from_view, transform.affine());
                 let bounded = trace(
                     rooms,
                     eye,
+                    near.as_ref().map_or(&[], |near| near.as_slice()),
                     &planes,
                     settings.depth_limit,
                     &mut view.traced,

@@ -229,16 +229,29 @@ fn with_no_rooms_everything_is_outside_and_seen() {
 }
 
 #[test]
-fn an_eye_or_frustum_that_is_not_finite_culls_nothing() {
+fn an_eye_near_plane_or_frustum_that_is_not_finite_culls_nothing() {
     use super::fixtures::{camera, planes};
     use super::trace::{TraceCounts, TracedView, trace};
     let graph = row_graph(2, &[0.0]);
     let frustum = planes(&camera(at(2.0, 0.0), at(8.0, 0.0)));
     let mut broken = frustum;
     broken[2].x = f32::NAN;
-    for (eye, frustum) in [(Vec3::NAN, frustum), (at(2.0, 0.0), broken)] {
+    let near = [Vec3::NAN; 4];
+    for (eye, near, frustum) in [
+        (Vec3::NAN, &[][..], frustum),
+        (at(2.0, 0.0), &[], broken),
+        (at(2.0, 0.0), &near, frustum),
+    ] {
         let mut traced = TracedView::default();
         let mut counts = TraceCounts::default();
-        assert!(!trace(&graph, eye, &frustum, 16, &mut traced, &mut counts));
+        assert!(!trace(
+            &graph,
+            eye,
+            near,
+            &frustum,
+            16,
+            &mut traced,
+            &mut counts
+        ));
     }
 }

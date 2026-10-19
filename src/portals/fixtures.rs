@@ -6,6 +6,7 @@ use bevy::math::{Affine3A, Quat, Vec2, Vec3, Vec4};
 use bevy::transform::components::{GlobalTransform, Transform};
 
 use super::graph::{Graph, PortalInput, RoomInput, SideInput};
+use super::near::near_corners;
 use super::trace::{TraceCounts, TracedView, trace};
 
 pub const TOLERANCE: f32 = 0.02;
@@ -58,10 +59,18 @@ pub fn row_graph(count: usize, doors: &[f32]) -> Graph {
     Graph::build(&rooms, &portals, TOLERANCE).expect("the row is valid")
 }
 
-/// A camera's world planes at `eye` looking at `target` (45° field of view, square).
+/// A camera's world planes at `eye` looking at `target` (45° field of view, square, near plane
+/// 0.1 m away).
 pub fn camera(eye: Vec3, target: Vec3) -> Frustum {
     let transform = Transform::from_translation(eye).looking_at(target, Vec3::Y);
     PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(transform))
+}
+
+/// The near plane's corners of [`camera`].
+pub fn near(eye: Vec3, target: Vec3) -> [Vec3; 4] {
+    let transform = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+    let clip_from_view = PerspectiveProjection::default().get_clip_from_view();
+    near_corners(clip_from_view, transform.compute_affine()).expect("the camera is valid")
 }
 
 pub fn planes(frustum: &Frustum) -> [Vec4; 6] {
@@ -86,6 +95,7 @@ pub fn view_with(
     let bounded = trace(
         graph,
         eye,
+        &near(eye, target),
         &planes(&frustum),
         depth_limit,
         &mut traced,

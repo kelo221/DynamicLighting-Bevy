@@ -1,8 +1,8 @@
-//! A camera's view through the portals. Starting in the nodes the eye is in, with the camera's
-//! side planes and its near plane moved back to the eye, every portal the view reaches narrows
-//! it to the planes through the eye and the portal's edges, plus the portal's own plane. Each
-//! path to a node is one visit with its own planes, so two doorways into one room stay two
-//! views of it.
+//! A camera's view through the portals. Starting in the nodes the eye and its near plane reach
+//! ([`starts`]), with the camera's side planes and its near plane moved back to the eye, every
+//! portal the view reaches narrows it to the planes through the eye and the portal's edges,
+//! plus the portal's own plane. Each path to a node is one visit with its own planes, so two
+//! doorways into one room stay two views of it.
 //!
 //! Every plane a visit keeps bounds every ray the eye can see along that path, so a sphere
 //! outside one of them is out of sight there. A parent plane that holds the whole portal is
@@ -15,6 +15,7 @@ use bevy::math::{Vec3, Vec4, Vec4Swizzles};
 
 use super::cell::distance;
 use super::graph::Graph;
+use super::near::starts;
 
 /// Visits past this many make a view unbounded.
 pub const VISIT_LIMIT: u32 = 4096;
@@ -95,13 +96,15 @@ impl TracedView {
     }
 }
 
-/// Traces the view from `eye` through `graph` into `view`. `frustum` is the camera's world
-/// planes in Bevy's order (four sides, near, far; the far plane is ignored). Returns `false`
-/// when the view is unbounded: deeper than `depth_limit` portals, past the work limits, or from
-/// an eye or frustum that isn't finite.
+/// Traces the view from `eye` through `graph` into `view`. `near` is the near plane's corners
+/// ([`near_corners`](super::near::near_corners); empty for a point eye) and `frustum` the
+/// camera's world planes in Bevy's order (four sides, near, far; the far plane is ignored).
+/// Returns `false` when the view is unbounded: deeper than `depth_limit` portals, past the work
+/// limits, or from an eye or frustum that isn't finite.
 pub fn trace(
     graph: &Graph,
     eye: Vec3,
+    near: &[Vec3],
     frustum: &[Vec4; 6],
     depth_limit: u32,
     view: &mut TracedView,
@@ -110,7 +113,10 @@ pub fn trace(
     view.eye = eye;
     view.visits.clear();
     view.planes.clear();
-    if !eye.is_finite() || !frustum.iter().all(|plane| plane.is_finite()) {
+    if !eye.is_finite()
+        || !near.iter().all(|corner| corner.is_finite())
+        || !frustum.iter().all(|plane| plane.is_finite())
+    {
         return false;
     }
     // Relative to the eye; the side planes widened by the tolerance against cancellation, the
@@ -121,7 +127,7 @@ pub fn trace(
         .collect();
     start.push(frustum[4].xyz().extend(0.0));
     let mut homes = Vec::new();
-    graph.homes(eye, &mut homes);
+    starts(graph, eye, near, &mut homes);
     let mut tracer = Tracer {
         graph,
         eye,

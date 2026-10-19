@@ -11,7 +11,7 @@ use super::link::{Unresolved, resolve};
 pub const OUTSIDE: usize = 0;
 
 /// Points closer than this to a cell count as inside it, and outside of every cell only past it.
-const CONTAIN_EPSILON: f32 = 1.0e-4;
+pub(super) const CONTAIN_EPSILON: f32 = 1.0e-4;
 
 /// One room cell to build: the box `[-half, half]` under `affine`.
 #[derive(Clone, Copy, Debug)]

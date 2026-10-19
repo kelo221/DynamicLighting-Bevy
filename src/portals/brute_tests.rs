@@ -1,18 +1,21 @@
 //! The portal math against brute force: in a house of three rooms with real walls (boxes with
 //! door and window holes), any point of a sphere that a camera can see along a straight,
-//! unblocked line inside its frustum must make [`sees`] say yes. This checks the geometry only;
-//! the renderer's own reasons to keep lights (shadows that let light through) are tested where
-//! lights are picked.
+//! unblocked line inside its frustum must make [`sees`] say yes. As in the renderer, nothing
+//! nearer than the near plane blocks the line, so a camera pressed against a thin wall sees past
+//! it. This checks the geometry only; the renderer's own reasons to keep lights (shadows that let
+//! light through) are tested where lights are picked.
 
-use bevy::math::{Vec3, Vec4Swizzles};
+use bevy::camera::PerspectiveProjection;
+use bevy::math::{Vec3, Vec4};
 
-use super::fixtures::{TOLERANCE, camera, door, planes, row};
+use super::cell::distance;
+
+use super::fixtures::{TOLERANCE, camera, door, near, planes, row};
 use super::graph::Graph;
 use super::sight::sees;
 use super::state::{PortalState, RoomGraph, RoomView};
 use super::trace::{TraceCounts, TracedView, trace};
 
-const WALL: f32 = 0.1;
 /// Interior doors at `x = 6, 12` (centered on these `z`), a window at `x = 18`.
 const DOORS: [(f32, f32); 2] = [(6.0, 0.0), (12.0, 1.5)];
 const WINDOW: (f32, f32) = (18.0, -1.0);
@@ -50,11 +53,11 @@ impl Stream {
 /// An axis-aligned box of wall, as (min, max).
 type Block = (Vec3, Vec3);
 
-/// A wall across X at `x` with a 1 m × 2 m hole centered on `hole` (none if `None`).
-fn wall_across_x(x: f32, hole: Option<f32>, blocks: &mut Vec<Block>) {
+/// A wall `2 · half` thick across X at `x` with a 1 m × 2 m hole centered on `hole`.
+fn wall_across_x(x: f32, half: f32, hole: Option<f32>, blocks: &mut Vec<Block>) {
     let (low, high) = (
-        Vec3::new(x - WALL, -WALL, -3.0 - WALL),
-        Vec3::new(x + WALL, 3.0 + WALL, 3.0 + WALL),
+        Vec3::new(x - half, -half, -3.0 - half),
+        Vec3::new(x + half, 3.0 + half, 3.0 + half),
     );
     let Some(z) = hole else {
         blocks.push((low, high));
@@ -68,25 +71,26 @@ fn wall_across_x(x: f32, hole: Option<f32>, blocks: &mut Vec<Block>) {
     ));
 }
 
-/// The house's walls: the outer shell, the two inner walls with doors, a window at the end.
-fn walls() -> Vec<Block> {
+/// The house's walls, `2 · half` thick: the outer shell, the two inner walls with doors, a
+/// window at the end.
+fn walls(half: f32) -> Vec<Block> {
     let mut blocks = Vec::new();
-    wall_across_x(0.0, None, &mut blocks);
+    wall_across_x(0.0, half, None, &mut blocks);
     for (x, z) in DOORS {
-        wall_across_x(x, Some(z), &mut blocks);
+        wall_across_x(x, half, Some(z), &mut blocks);
     }
-    wall_across_x(WINDOW.0, Some(WINDOW.1), &mut blocks);
+    wall_across_x(WINDOW.0, half, Some(WINDOW.1), &mut blocks);
     let span = (
-        Vec3::new(-WALL, -WALL, -WALL),
-        Vec3::new(18.0 + WALL, 3.0 + WALL, WALL),
+        Vec3::new(-half, -half, -half),
+        Vec3::new(18.0 + half, 3.0 + half, half),
     );
     for z in [-3.0, 3.0] {
         let shift = Vec3::new(0.0, 0.0, z);
         blocks.push((span.0 + shift, span.1 + shift));
     }
     for y in [0.0, 3.0] {
-        let low = Vec3::new(-WALL, y - WALL, -3.0 - WALL);
-        blocks.push((low, Vec3::new(18.0 + WALL, y + WALL, 3.0 + WALL)));
+        let low = Vec3::new(-half, y - half, -3.0 - half);
+        blocks.push((low, Vec3::new(18.0 + half, y + half, 3.0 + half)));
     }
     blocks
 }
@@ -123,10 +127,83 @@ fn blocked(a: Vec3, b: Vec3, (low, high): Block) -> bool {
     true
 }
 
-#[test]
-fn every_point_a_camera_can_see_keeps_its_sphere() {
+/// The plane the renderer clips at, in front of the eye. Bevy's frustum puts its near half-space
+/// as far behind the eye, so it can't stand in for this one.
+fn near_plane(eye: Vec3, look: Vec3) -> Vec4 {
+    let normal = look.normalize();
+    normal.extend(-normal.dot(eye) - PerspectiveProjection::default().near)
+}
+
+/// Where the line from `eye` to `point` (past the near plane) crosses the near plane.
+fn on_near_plane(plane: Vec4, eye: Vec3, point: Vec3) -> Vec3 {
+    let (from, to) = (distance(plane, eye), distance(plane, point));
+    eye + (point - eye) * (-from / (to - from))
+}
+
+/// A camera looking anywhere from anywhere: a fifth of them outside the house.
+fn anywhere(random: &mut Stream) -> (Vec3, Vec3) {
+    let eye = if random.next() < 0.2 {
+        Vec3::new(
+            random.range(19.0, 24.0),
+            random.range(0.5, 2.5),
+            random.range(-4.0, 4.0),
+        )
+    } else {
+        Vec3::new(
+            random.range(0.3, 17.7),
+            random.range(0.3, 2.7),
+            random.range(-2.7, 2.7),
+        )
+    };
+    let yaw = random.range(0.0, core::f32::consts::TAU);
+    (eye, look(yaw, random.range(-0.3, 0.3)))
+}
+
+/// A camera up to 9 cm from a wall's face (on either side of it), looking towards the wall.
+fn against_a_wall(random: &mut Stream, half: f32) -> (Vec3, Vec3) {
+    let side = if random.next() < 0.5 { -1.0 } else { 1.0 };
+    let gap = half + random.range(0.005, 0.09);
+    let (y, z) = (random.range(0.3, 2.7), random.range(-2.7, 2.7));
+    let turn = random.range(-1.0, 1.0);
+    let pitch = random.range(-0.3, 0.3);
+    if random.next() < 0.7 {
+        let x = [0.0, 6.0, 12.0, 18.0][(random.next() * 4.0) as usize % 4];
+        let yaw = if side > 0.0 {
+            core::f32::consts::PI
+        } else {
+            0.0
+        };
+        (Vec3::new(x + side * gap, y, z), look(yaw + turn, pitch))
+    } else {
+        let wall = if random.next() < 0.5 { -3.0 } else { 3.0 };
+        let yaw = -side * core::f32::consts::FRAC_PI_2;
+        let x = random.range(0.3, 17.7);
+        (Vec3::new(x, y, wall + side * gap), look(yaw + turn, pitch))
+    }
+}
+
+fn look(yaw: f32, pitch: f32) -> Vec3 {
+    Vec3::new(
+        yaw.cos() * pitch.cos(),
+        pitch.sin(),
+        yaw.sin() * pitch.cos(),
+    )
+}
+
+/// What one run saw: spheres in a frustum, in sight, culled, and in sight only because the near
+/// plane clips a wall away.
+#[derive(Default)]
+struct Tally {
+    framed: u32,
+    visible: u32,
+    culled: u32,
+    past_walls: u32,
+}
+
+/// Checks `cameras` cameras from `place` in a house with walls `2 · half` thick.
+fn check(half: f32, seed: u64, cameras: u32, place: impl Fn(&mut Stream) -> (Vec3, Vec3)) -> Tally {
     let graph = graph();
-    let walls = walls();
+    let walls = walls(half);
     let rooms = RoomGraph {
         generation: 1,
         graph: graph.clone(),
@@ -135,52 +212,36 @@ fn every_point_a_camera_can_see_keeps_its_sphere() {
         rooms: Vec::new(),
         portals: Vec::new(),
     };
-    let mut random = Stream(27);
-    let (mut framed, mut visible, mut culled, mut unbounded) = (0, 0, 0, 0);
-    for _ in 0..300 {
-        let eye = if random.next() < 0.2 {
-            Vec3::new(
-                random.range(19.0, 24.0),
-                random.range(0.5, 2.5),
-                random.range(-4.0, 4.0),
-            )
-        } else {
-            Vec3::new(
-                random.range(0.3, 17.7),
-                random.range(0.3, 2.7),
-                random.range(-2.7, 2.7),
-            )
-        };
+    let mut random = Stream(seed);
+    let mut tally = Tally::default();
+    for _ in 0..cameras {
+        let (eye, look) = place(&mut random);
         if walls.iter().any(|&block| inside(eye, block)) {
             continue;
         }
-        let yaw = random.range(0.0, core::f32::consts::TAU);
-        let pitch = random.range(-0.3, 0.3);
-        let look = Vec3::new(
-            yaw.cos() * pitch.cos(),
-            pitch.sin(),
-            yaw.sin() * pitch.cos(),
-        );
         let frustum = camera(eye, eye + look);
         let mut traced = TracedView::default();
         let bounded = trace(
             &graph,
             eye,
+            &near(eye, eye + look),
             &planes(&frustum),
             16,
             &mut traced,
             &mut TraceCounts::default(),
         );
-        unbounded += u32::from(!bounded);
+        assert!(bounded, "eye {eye} looking {look}: unbounded");
         let view = RoomView {
             generation: 1,
             bounded,
             traced,
         };
+        let clip = near_plane(eye, look);
         let in_frustum = |point: Vec3| {
-            frustum.half_spaces[..5]
-                .iter()
-                .all(|half| half.normal_d().xyz().dot(point) + half.d() >= 0.0)
+            distance(clip, point) >= 0.0
+                && frustum.half_spaces[..4]
+                    .iter()
+                    .all(|half| distance(half.normal_d(), point) >= 0.0)
         };
         for _ in 0..40 {
             let center = Vec3::new(
@@ -193,18 +254,21 @@ fn every_point_a_camera_can_see_keeps_its_sphere() {
             if !crate::shared::sees_sphere(&frustum, center, radius) {
                 continue;
             }
-            framed += 1;
-            culled += u32::from(!kept);
+            tally.framed += 1;
+            tally.culled += u32::from(!kept);
             let sighted = (0..64)
                 .map(|_| center + random.in_ball() * radius)
                 .find(|&point| {
+                    let from = on_near_plane(clip, eye, point);
                     in_frustum(point)
                         && !walls
                             .iter()
-                            .any(|&block| inside(point, block) || blocked(eye, point, block))
+                            .any(|&block| inside(point, block) || blocked(from, point, block))
                 });
             if let Some(point) = sighted {
-                visible += 1;
+                tally.visible += 1;
+                let hidden = walls.iter().any(|&block| blocked(eye, point, block));
+                tally.past_walls += u32::from(hidden);
                 assert!(
                     kept,
                     "eye {eye} looking {look}: {point} of the sphere at {center} r {radius} is in sight"
@@ -212,9 +276,35 @@ fn every_point_a_camera_can_see_keeps_its_sphere() {
             }
         }
     }
-    assert_eq!(unbounded, 0);
+    tally
+}
+
+#[test]
+fn every_point_a_camera_can_see_keeps_its_sphere() {
+    let tally = check(0.1, 27, 300, anywhere);
     // Neither side is vacuous: many spheres are in sight, and many in the frustum are culled.
+    let Tally {
+        framed,
+        visible,
+        culled,
+        past_walls,
+    } = tally;
     let counts = format!("{framed} framed, {visible} in sight, {culled} culled");
     assert!(framed > 2000 && visible > 500, "{counts}");
     assert!(culled * 4 > framed, "{counts}");
+    // 20 cm walls are thicker than the 10 cm to the near plane.
+    assert_eq!(past_walls, 0);
+}
+
+#[test]
+fn a_camera_pressed_against_a_thin_wall_keeps_what_it_sees_past_it() {
+    let tally = check(0.02, 41, 300, |random| against_a_wall(random, 0.02));
+    let Tally {
+        framed,
+        visible,
+        past_walls,
+        ..
+    } = tally;
+    let counts = format!("{framed} framed, {visible} in sight, {past_walls} past a wall");
+    assert!(visible > 500 && past_walls > 400, "{counts}");
 }
