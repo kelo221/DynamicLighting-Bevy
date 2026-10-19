@@ -1,13 +1,13 @@
 use std::thread::ThreadId;
 
-use bevy::app::SubApp;
+use bevy::app::{FixedUpdate, MainScheduleOrder, SubApp};
 use bevy::core_pipeline::Core3d;
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
-use bevy::render::{ExtractSchedule, Render, RenderScheduleOrder};
+use bevy::render::{ExtractSchedule, Render, RenderApp, RenderScheduleOrder};
 
 use super::SingleThreadedSchedulesPlugin;
-use super::executors::{single_threaded, switch_render};
+use super::executors::{single_threaded, switch_main, switch_render};
 
 #[derive(Component)]
 struct Spawned;
@@ -30,6 +30,11 @@ fn note_thread(mut threads: ResMut<Threads>) {
 
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 struct Test;
+
+/// Bevy picks the single-threaded executor for every schedule on the web.
+const MULTI_THREADED: bool = !cfg!(target_arch = "wasm32");
+/// Where `Render` keeps its executor.
+const RENDER_SWITCHES: bool = !cfg!(any(target_os = "macos", target_os = "ios"));
 
 #[test]
 fn switched_schedules_apply_commands_at_their_end_only_where_they_did() {
@@ -67,32 +72,54 @@ fn main_schedules_run_on_the_thread_that_updates_the_app() {
     let threads = update_threads(Some(SingleThreadedSchedulesPlugin::default()));
     assert_eq!(threads, vec![here; 3]);
     // The multi-threaded executor runs them on its workers, so the check above means something.
-    let threads = update_threads(None);
-    assert_eq!(threads.len(), 3);
-    assert!(threads.iter().all(|&thread| thread != here));
-    let main_off = SingleThreadedSchedulesPlugin {
-        main: false,
-        ..default()
-    };
-    assert!(
-        update_threads(Some(main_off))
-            .iter()
-            .all(|&thread| thread != here)
-    );
+    if MULTI_THREADED {
+        let threads = update_threads(None);
+        assert_eq!(threads.len(), 3);
+        assert!(threads.iter().all(|&thread| thread != here));
+        let main_off = SingleThreadedSchedulesPlugin {
+            main: false,
+            ..default()
+        };
+        assert!(
+            update_threads(Some(main_off))
+                .iter()
+                .all(|&thread| thread != here)
+        );
+    }
+}
+
+/// A schedule an app adds to the main schedule order keeps its executor and its settings,
+/// here not applying its commands at its end; Bevy's fixed-timestep schedules switch.
+#[test]
+fn only_bevys_own_main_schedules_switch() {
+    let mut app = SubApp::new();
+    app.init_resource::<MainScheduleOrder>();
+    let mut own = Schedule::new(Test);
+    own.add_systems(spawn).set_apply_final_deferred(false);
+    app.add_schedule(own);
+    app.world_mut()
+        .resource_mut::<MainScheduleOrder>()
+        .insert_after(Update, Test);
+    app.add_systems(FixedUpdate, spawn);
+    // Every sub-app has a `First`.
+    assert_eq!(switch_main(&mut app), 2, "First and FixedUpdate");
+
+    let world = app.world_mut();
+    world.run_schedule(Test);
+    assert_eq!(spawned(world), 0, "left for the app to apply");
+    world.run_schedule(FixedUpdate);
+    assert_eq!(spawned(world), 1);
 }
 
 #[test]
 fn extraction_still_leaves_its_commands_to_the_render_world() {
     let mut render_app = SubApp::new();
     render_app.init_resource::<RenderScheduleOrder>();
-    render_app.init_resource::<Threads>();
     let mut extract = Schedule::new(ExtractSchedule);
     extract.add_systems(spawn).set_apply_final_deferred(false);
     render_app.add_schedule(extract);
-    render_app.add_systems(Render, note_thread);
-    let render_switched = !cfg!(any(target_os = "macos", target_os = "ios"));
-    // Every sub-app has a `First`.
-    let expected = 2 + usize::from(render_switched);
+    render_app.add_systems(Render, || {});
+    let expected = 2 + usize::from(RENDER_SWITCHES);
     assert_eq!(
         switch_render(&mut render_app),
         expected,
@@ -113,12 +140,29 @@ fn extraction_still_leaves_its_commands_to_the_render_world() {
             .apply_deferred(world);
     });
     assert_eq!(spawned(world), 1);
-
-    world.run_schedule(Render);
-    let ran_here = world.resource::<Threads>().0 == vec![std::thread::current().id()];
-    assert_eq!(ran_here, render_switched);
     assert!(
         render_app.get_schedule(Core3d).is_none(),
         "a schedule the app doesn't have isn't created"
     );
+}
+
+/// `Render` runs on the thread that runs the render world once switched, and `render: false`
+/// leaves it on the multi-threaded executor's workers.
+#[test]
+fn render_switches_only_when_asked() {
+    for render in [true, false] {
+        let mut render_app = SubApp::new();
+        render_app.init_resource::<RenderScheduleOrder>();
+        render_app.init_resource::<Threads>();
+        render_app.add_systems(Render, note_thread);
+        let mut app = App::new();
+        app.insert_sub_app(RenderApp, render_app);
+        app.add_plugins(SingleThreadedSchedulesPlugin { main: true, render });
+        app.finish();
+
+        let world = app.sub_app_mut(RenderApp).world_mut();
+        world.run_schedule(Render);
+        let ran_here = world.resource::<Threads>().0 == vec![std::thread::current().id()];
+        assert_eq!(ran_here, !MULTI_THREADED || (render && RENDER_SWITCHES));
+    }
 }

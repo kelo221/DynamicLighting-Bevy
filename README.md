@@ -197,13 +197,15 @@ These keys take only `True`/`False` or `1`/`0`. A helper's own mesh is removed w
 
 ### Scheduling
 
-In a scene like the benchmark hall below, most of a frame's CPU time goes to Bevy's multi-threaded executor rather than to the systems it runs. A frame runs several hundred systems, most of them for a few microseconds, and the executor hands each one to a worker thread and waits for it to come back. `SingleThreadedSchedulesPlugin` runs the per-frame schedules of the main app and of the render world on Bevy's single-threaded executor instead:
+In a scene like the benchmark hall below, most of a frame's CPU time goes to Bevy's multi-threaded executor rather than to the systems it runs. A frame runs several hundred systems, most of them for a few microseconds, and the executor hands them to worker threads and waits for them to come back. `SingleThreadedSchedulesPlugin` runs Bevy's per-frame schedules of the main app and of the render world on Bevy's single-threaded executor instead:
 
 ```rust,ignore
 app.add_plugins((DefaultPlugins, DynamicLightingPlugin, SingleThreadedSchedulesPlugin::default()));
 ```
 
-The render world still runs on its own thread beside the main world, systems that split their own work across the task pool (`par_iter`, as transform propagation and visibility do) still do, and commands are applied at the same points. What changes is that systems Bevy may run in either order now run in one fixed order. dynlight renders the same images either way (the visual baselines are checked with the plugin), and Bevy's ambiguity detection finds no pair involving dynlight systems whose result depends on that order. On macOS and iOS the `Render` schedule keeps its executor, because window surfaces have to be created on the main thread there. `main: false` or `render: false` leaves one side alone. The examples take `--single-threaded`.
+The render world still runs on its own thread beside the main world, systems that split their own work across the task pool (`par_iter`, as transform propagation and visibility do) still do, and commands are applied at the same points. The one exception is an exclusive system with commands of its own, such as one piped into a system with `Commands`: they are applied at the next sync point instead of when it returns. What changes is that systems Bevy may run in either order now run in one order, fixed when the schedule is built, and each schedule runs all its systems on its own thread. dynlight renders the same images either way (the visual baselines are checked with the plugin), and Bevy's ambiguity detection finds no pair involving dynlight systems whose result depends on that order.
+
+Schedules your app adds, and schedules created after the plugin's `finish`, keep their executor and settings. A render-world system of your own that needs the main thread (`NonSend` data created there) loses it. Bevy's own window surfaces need it on macOS and iOS, so there the `Render` schedule keeps its executor. `main: false` or `render: false` leaves one side alone. The examples take `--single-threaded`.
 
 `DynamicLightingPlugin` doesn't add it, because the executor is a choice for the whole app: an app whose own systems are long and independent can be faster on the multi-threaded executor, so measure both. In the benchmark scenes it saves about 1 ms a frame, for dynlight and for Bevy's own lights alike (see Performance).
 
@@ -267,7 +269,7 @@ Frame times with and without the plugin (see Usage), for dynlight and for Bevy's
 | 15 of 100 lights with realtime shadows, scene still | 2.55 ms | 1.37 ms | 23.3 ms | 11.7 ms |
 | 15 of 100 lights with realtime shadows, scene moving | 7.39 ms | 6.16 ms | 23.4 ms | 11.7 ms |
 
-- **The plugin saves 1.0–1.2 ms a frame** in every scene, for both engines, and half of Bevy's shadowed frame, which pays a per-view cost for each of its 90 shadow views. Without it, this session's frames read about 0.4 ms higher than the table above for both engines.
+- **The plugin saves 1.0–1.2 ms a frame** for both engines, and half of Bevy's shadowed frame, which pays a per-view cost for each of its 90 shadow views. dynlight's 1000 realtime lights save only 0.5 ms, because that frame becomes GPU-bound (see below). Without it, this session's frames read about 0.4 ms higher than the table above for both engines.
 - **The render thread sets the frame** in every scene: it is busy for all but 0.1–0.3 ms of it. With the plugin, dynlight's render thread is busy for 1.2–1.3 ms of the 1.3–1.4 ms frames of the lighter scenes, and its main thread for 0.4–0.6 ms in every scene. So caching dynlight's per-frame light packing on the main thread wouldn't shorten the frame, and uploading the light buffer only when it changes saved nothing measurable.
 - **1000 realtime lights become GPU-bound:** the lit pass takes 1.79 ms with every lighting path compiled. With `FeatureSelection::Automatic` it takes 0.88 ms, and the frame 1.36 ms.
 - **GPU times aren't comparable across executors.** In the light scenes the lit pass reads lower with the plugin for both engines (100 moving lights: dynlight 0.42 → 0.22 ms, Bevy 0.31 → 0.17 ms) with the same shaders, most likely because the GPU clocks higher when frames come faster. Compare GPU times under one executor.

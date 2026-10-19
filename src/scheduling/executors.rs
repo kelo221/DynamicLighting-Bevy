@@ -1,11 +1,15 @@
 //! Which schedules switch to the single-threaded executor, and switching them.
 
-use bevy::app::{FixedMainScheduleOrder, MainScheduleOrder, SubApp};
+use bevy::app::{
+    FixedFirst, FixedLast, FixedPostUpdate, FixedPreUpdate, FixedUpdate, RunFixedMainLoop,
+    SpawnScene, SubApp,
+};
 use bevy::core_pipeline::{Core2d, Core3d};
 use bevy::ecs::schedule::{InternedScheduleLabel, ScheduleLabel, SingleThreadedExecutor};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderGraph;
-use bevy::render::{ExtractSchedule, RenderScheduleOrder};
+use bevy::render::{ExtractSchedule, Render};
+use bevy::state::state::StateTransition;
 
 /// Puts `schedule` on the single-threaded executor. The new executor brings its own settings,
 /// so whether the schedule applies its systems' commands when it ends is set again here.
@@ -15,32 +19,38 @@ pub(super) fn single_threaded(schedule: &mut Schedule, apply_final_deferred: boo
         .set_apply_final_deferred(apply_final_deferred);
 }
 
-/// The main app's per-frame schedules, in the order it runs them.
-fn main_schedules(world: &World) -> Vec<InternedScheduleLabel> {
-    let main = world.get_resource::<MainScheduleOrder>();
-    let fixed = world.get_resource::<FixedMainScheduleOrder>();
-    main.into_iter()
-        .flat_map(|order| order.labels.iter())
-        .chain(fixed.into_iter().flat_map(|order| order.labels.iter()))
-        .copied()
-        .collect()
+/// Bevy's own per-frame schedules of the main app, all of which apply their commands when they
+/// end. Only these switch: a schedule can't be asked whether it applies its commands, and an
+/// app's own schedules may have been built not to.
+fn main_schedules() -> [InternedScheduleLabel; 13] {
+    [
+        First.intern(),
+        PreUpdate.intern(),
+        StateTransition.intern(),
+        RunFixedMainLoop.intern(),
+        Update.intern(),
+        SpawnScene.intern(),
+        PostUpdate.intern(),
+        Last.intern(),
+        FixedFirst.intern(),
+        FixedPreUpdate.intern(),
+        FixedUpdate.intern(),
+        FixedPostUpdate.intern(),
+        FixedLast.intern(),
+    ]
 }
 
-/// The render world's schedules that apply their commands when they end: the render schedule
-/// order, the render app's update schedule that runs it, the render graph and the camera
-/// schedules.
+/// Bevy's own render-world schedules that apply their commands when they end: the render
+/// schedule order's `First` and `Render`, the render app's update schedule that runs them, the
+/// render graph and the camera schedules.
 fn render_schedules(render_app: &SubApp) -> Vec<InternedScheduleLabel> {
-    let mut labels: Vec<InternedScheduleLabel> = render_app
-        .world()
-        .get_resource::<RenderScheduleOrder>()
-        .map(|order| order.labels.clone())
-        .unwrap_or_default();
+    let mut labels = vec![First.intern(), Render.intern()];
     labels.extend(render_app.update_schedule);
     labels.extend([RenderGraph.intern(), Core3d.intern(), Core2d.intern()]);
     // `create_surfaces` must run on the main thread there, which only the multi-threaded
     // executor arranges.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    labels.retain(|&label| label != bevy::render::Render.intern());
+    labels.retain(|&label| label != Render.intern());
     labels
 }
 
@@ -61,8 +71,7 @@ fn switch(app: &mut SubApp, labels: &[InternedScheduleLabel], apply_final_deferr
 }
 
 pub(super) fn switch_main(app: &mut SubApp) -> usize {
-    let labels = main_schedules(app.world());
-    switch(app, &labels, true)
+    switch(app, &main_schedules(), true)
 }
 
 pub(super) fn switch_render(render_app: &mut SubApp) -> usize {

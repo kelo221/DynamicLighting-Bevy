@@ -1,18 +1,25 @@
 //! Opt-in low-overhead scheduling: the app's per-frame schedules on Bevy's single-threaded
 //! executor.
 //!
-//! Bevy's multi-threaded executor hands every system to a worker thread and waits for it to
-//! come back. A frame runs several hundred systems, most of them for a few microseconds, so in
-//! a scene like dynlight's stress hall those round trips cost more than the systems themselves,
+//! Bevy's multi-threaded executor hands systems to worker threads and waits for them to come
+//! back. A frame runs several hundred systems, most of them for a few microseconds, so in a
+//! scene like dynlight's stress hall those round trips cost more than the systems themselves,
 //! about 1 ms a frame with dynlight and with Bevy's own lights alike (see the README's
 //! benchmarks). [`SingleThreadedSchedulesPlugin`] runs those schedules on the thread that runs
 //! them instead.
 //!
 //! What stays the same: systems that split their own queries across threads (`par_iter`, such as
 //! transform propagation and visibility) still do, the render world still runs beside the main
-//! world, and commands apply at the same points. What changes: systems that may run in either
-//! order now run in one fixed order, and in the render world every system runs on the render
-//! thread.
+//! world, and commands are applied at the same points. One exception: an exclusive system with
+//! commands of its own, such as an exclusive system piped into one with `Commands`, has them
+//! applied at the next sync point rather than when it returns.
+//!
+//! What changes: systems that may run in either order now run in one order, fixed when the
+//! schedule is built, and each switched schedule runs all its systems on the thread that runs
+//! it. For the render world that is the render thread with pipelined rendering, except for
+//! extraction, which runs on the main thread. A render system that needs the main thread (for
+//! `NonSend` data created there) loses it; Bevy's `create_surfaces` on macOS and iOS is why
+//! `Render` keeps its executor there.
 //!
 //! Executors are an app-wide choice, so
 //! [`DynamicLightingPlugin`](crate::DynamicLightingPlugin) doesn't add this plugin. An app with
@@ -25,14 +32,18 @@ mod tests;
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 
-/// Runs the app's per-frame schedules on Bevy's single-threaded executor. Add it with the other
-/// plugins; it switches the schedules once every plugin has added its own.
+/// Runs Bevy's per-frame schedules on Bevy's single-threaded executor. Add it with the other
+/// plugins; it switches the schedules once, in its `finish`, after every plugin's `build`.
 ///
-/// - `main`: the schedules of the main schedule order (`First` to `Last`) and of the fixed
-///   timestep (`FixedFirst` to `FixedLast`). Startup schedules keep their executor.
-/// - `render`: the render world's extraction, `First`, `Render`, the render graph and the
-///   `Core3d` and `Core2d` camera schedules. On macOS and iOS `Render` keeps its executor,
-///   because window surfaces have to be created on the main thread there.
+/// - `main`: Bevy's main schedules from `First` to `Last` (with `StateTransition` and
+///   `SpawnScene`) and its fixed-timestep schedules from `FixedFirst` to `FixedLast`. Startup
+///   schedules keep their executor.
+/// - `render`: the render world's extraction, `First`, `Render`, the schedule that runs them,
+///   the render graph and the `Core3d` and `Core2d` camera schedules. On macOS and iOS `Render`
+///   keeps its executor, because window surfaces have to be created on the main thread there.
+///
+/// Schedules an app adds keep their executor and their settings, and so do schedules created
+/// after this plugin's `finish` (in another plugin's `finish` or `cleanup`, or at runtime).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SingleThreadedSchedulesPlugin {
     pub main: bool,
