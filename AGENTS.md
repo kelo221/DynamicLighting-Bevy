@@ -57,8 +57,10 @@ src/
   cookies/               cookie texture array
   environment/           sky light from an equirect image: CPU prefilter (SH9 + GGX cube), sky background pass
   fog/                   volumetric fog pass
-  gltf_import/           glTF extras -> DynamicLight, StandardMaterial -> DynLitMaterial
+  portals/               rooms, portals and doors: the room graph and per-camera portal culling
+  gltf_import/           glTF extras -> DynamicLight, rooms and portals; StandardMaterial -> DynLitMaterial
   debug/                 gizmos, debug views, diagnostics
+  scheduling/            opt-in SingleThreadedSchedulesPlugin (not added by DynamicLightingPlugin)
 examples/  tests/  benches/  assets/  LICENSES/  docs/
 ```
 

@@ -14,6 +14,7 @@
 //! - `--frames N` exits after N frames, and `--screenshot path.png` saves the last ones.
 //! - `--camera x,y,z,target_x,target_y,target_z` holds the camera still there.
 //! - `--capture path.png` saves a still frame for the visual baselines.
+//! - `--single-threaded` adds `SingleThreadedSchedulesPlugin`.
 //!
 //! Drag to orbit, scroll to zoom.
 
@@ -49,7 +50,7 @@ fn main() -> AppExit {
         primary_window: Some(support::window("DynLight outdoors")),
         ..default()
     }))
-    .add_plugins(DynamicLightingPlugin)
+    .add_plugins((DynamicLightingPlugin, support::scheduling()))
     .add_plugins((baking::plugin, capture::plugin, orbit::plugin))
     .insert_resource(BakeSettings {
         pixel_density: 20.0,

@@ -8,6 +8,7 @@
 //! exits after 60 frames, saves the last ones as an image and logs the mean frame time (VSync
 //! off) and cube faces rendered per frame. `--still` stops everything, so no face needs
 //! rendering. `--capture path.png` saves a still frame for the visual baselines.
+//! `--single-threaded` adds `SingleThreadedSchedulesPlugin`.
 
 #[path = "support/capture.rs"]
 mod capture;
@@ -69,7 +70,11 @@ fn main() -> AppExit {
         primary_window: Some(window),
         ..default()
     }))
-    .add_plugins((DynamicLightingPlugin, capture::plugin))
+    .add_plugins((
+        DynamicLightingPlugin,
+        support::scheduling(),
+        capture::plugin,
+    ))
     .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
     .insert_resource(options)
     .add_systems(Startup, spawn_scene)

@@ -21,6 +21,7 @@
 //!   the visual baselines, `--camera x,y,z,tx,ty,tz` holds the camera somewhere else.
 //! - `--door-cycle DIR` shuts and reopens a door in front of a still camera and logs what
 //!   changed (see `door_cycle.rs`).
+//! - `--single-threaded` adds `SingleThreadedSchedulesPlugin`.
 
 #[path = "../support/capture.rs"]
 mod capture;
@@ -81,7 +82,12 @@ fn main() -> AppExit {
         primary_window: Some(window),
         ..default()
     }))
-    .add_plugins((DynamicLightingPlugin, capture::plugin, door_cycle::plugin))
+    .add_plugins((
+        DynamicLightingPlugin,
+        support::scheduling(),
+        capture::plugin,
+        door_cycle::plugin,
+    ))
     .insert_resource(settings)
     .insert_resource(PortalSettings {
         enabled: !flag("--no-portals"),

@@ -57,6 +57,16 @@ pub fn flag(name: &str) -> bool {
     args().any(|arg| arg == name)
 }
 
+/// `--single-threaded` runs the app's per-frame schedules on Bevy's single-threaded executor;
+/// without it the plugin changes nothing.
+pub fn scheduling() -> dynlight::scheduling::SingleThreadedSchedulesPlugin {
+    let on = flag("--single-threaded");
+    dynlight::scheduling::SingleThreadedSchedulesPlugin {
+        main: on,
+        render: on,
+    }
+}
+
 /// The camera from `--camera x,y,z,target_x,target_y,target_z`.
 pub fn fixed_camera() -> Option<Transform> {
     let numbers: Vec<f32> = argument("--camera")?

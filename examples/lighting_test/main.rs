@@ -11,7 +11,8 @@
 //! add `--screenshot screenshots/lighting_test.png` to save the last frames as an image,
 //! `--camera x,y,z,target_x,target_y,target_z` to hold the camera still, and `--gizmos` to
 //! outline every light's radius. `--capture path.png` saves a still frame for the visual
-//! baselines (see `support/capture.rs`).
+//! baselines (see `support/capture.rs`). `--single-threaded` adds
+//! `SingleThreadedSchedulesPlugin`.
 
 mod bake;
 #[path = "../support/baking.rs"]
@@ -63,7 +64,7 @@ fn main() -> AppExit {
         primary_window: Some(support::window("DynLight lighting test")),
         ..default()
     }))
-    .add_plugins(DynamicLightingPlugin)
+    .add_plugins((DynamicLightingPlugin, support::scheduling()))
     .insert_resource(LightGizmos {
         enabled: support::args().any(|arg| arg == "--gizmos"),
     })

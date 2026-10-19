@@ -274,3 +274,36 @@ fn rooms_near_clip_without_portals_match() {
         ],
     );
 }
+
+/// `SingleThreadedSchedulesPlugin` changes how systems are run, not what they do: the same frames
+/// with the bake, effects, fog and cookies, the shadow driver, the sun's cascades and the sky,
+/// and portal culling.
+#[test]
+#[ignore = "needs a GPU"]
+fn single_threaded_schedules_match() {
+    let cases: [(&str, &str, &[&str]); 5] = [
+        (
+            "lighting_test_overview",
+            "lighting_test",
+            &["--bake", "--camera", OVERVIEW],
+        ),
+        ("realtime_shadows", "realtime_shadows", &[]),
+        (
+            "stress_lights_baked",
+            "stress_lights",
+            &["--lights", "100", "--bake"],
+        ),
+        ("outdoor", "outdoor", &["--bake"]),
+        ("rooms", "rooms", &["--camera", ROOMS_DOOR]),
+    ];
+    for (baseline, example, args) in cases {
+        let mut args = args.to_vec();
+        args.push("--single-threaded");
+        check_against(
+            &format!("{baseline}_single_threaded"),
+            baseline,
+            example,
+            &args,
+        );
+    }
+}

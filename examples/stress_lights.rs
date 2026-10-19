@@ -15,6 +15,7 @@
 //! - `--frames N` exits after measuring N frames and prints the mean frame time;
 //!   `--screenshot path.png` also saves the last frame. The camera holds still while measuring.
 //! - `--capture path.png` saves a still frame for the visual baselines.
+//! - `--single-threaded` adds `SingleThreadedSchedulesPlugin`, which cuts the frame time.
 //!
 //! Drag to orbit and scroll to zoom. VSync is off so the frame time is the real cost; browsers
 //! cap the frame rate at the display's refresh rate.
@@ -97,7 +98,11 @@ fn main() -> AppExit {
         }),
         ..default()
     }))
-    .add_plugins((DynamicLightingPlugin, FrameTimeDiagnosticsPlugin::default()))
+    .add_plugins((
+        DynamicLightingPlugin,
+        support::scheduling(),
+        FrameTimeDiagnosticsPlugin::default(),
+    ))
     .add_plugins((baking::plugin, capture::plugin, orbit::plugin))
     .insert_resource(ClearColor(Color::srgb(0.01, 0.01, 0.015)))
     .insert_resource(BakeSettings {
