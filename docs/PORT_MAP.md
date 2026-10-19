@@ -327,6 +327,8 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `src/gltf_import/mod.rs` | none | none | New; wiring: the glTF plugin and its settings |
 | `src/gltf_import/convert.rs` | none | none (bevyout's `viewer/material_shading.rs` is not used) | New; `StandardMaterial` → `DynLitMaterial`, Metallic shading where needed |
+| `src/gltf_import/nodes.rs` | none | none | New (M28); applies node extras in `SpawnScene` after the scene spawner, `BakeStatic` on the node's own mesh primitives |
+| `src/gltf_import/node_tests.rs` | none | none | New (M28); node extras in an app: read before `PostUpdate`, static tags on own primitives only |
 | `src/gltf_import/extras.rs` | field names and defaults of `C/Lighting/DynamicLight.cs:30-370` | none | New; `dynlight_*` node extras (Blender custom properties); area-light `dynlight_type`/`dynlight_size` and `fog: "frustum"` are New |
 
 ### `debug/`

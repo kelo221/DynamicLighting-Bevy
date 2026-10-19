@@ -1,11 +1,8 @@
-//! Converts glTF scene content: `StandardMaterial` → `DynLitMaterial`, node extras → lights.
+//! Converts `StandardMaterial`s to `DynLitMaterial`s.
 
-use bevy::gltf::GltfExtras;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::extras;
-use crate::bake::BakeStatic;
 use crate::surface::{DynLitMaterial, ShadingModel};
 
 /// Settings for glTF conversion.
@@ -107,32 +104,6 @@ pub(super) fn convert_materials(
             .insert(MeshMaterial3d(lit));
     }
     conversions.pending = waiting;
-}
-
-pub(super) fn read_node_extras(
-    mut commands: Commands,
-    settings: Res<GltfImportSettings>,
-    nodes: Query<(Entity, &GltfExtras), Added<GltfExtras>>,
-) {
-    if !settings.read_node_extras {
-        return;
-    }
-    for (entity, node) in &nodes {
-        let parsed = extras::parse(&node.value);
-        let mut entity = commands.entity(entity);
-        if parsed.bake_static {
-            entity.insert(BakeStatic);
-        }
-        if let Some(light) = parsed.light {
-            entity.insert(light);
-        }
-        if let Some(effect) = parsed.effect {
-            entity.insert(effect);
-        }
-        if let Some(fog) = parsed.fog {
-            entity.insert(fog);
-        }
-    }
 }
 
 #[cfg(test)]

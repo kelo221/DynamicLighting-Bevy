@@ -6,7 +6,12 @@
 
 mod convert;
 pub mod extras;
+mod nodes;
 
+#[cfg(test)]
+mod node_tests;
+
+use bevy::app::{SceneSpawnerSystems, SpawnScene};
 use bevy::prelude::*;
 
 pub use convert::{GltfImportSettings, dynlit_from_standard};
@@ -20,7 +25,12 @@ impl Plugin for GltfImportPlugin {
         app.register_type::<GltfImportSettings>()
             .init_resource::<GltfImportSettings>()
             .init_resource::<convert::Conversions>()
-            .add_systems(PreUpdate, convert::read_node_extras);
+            .add_systems(
+                SpawnScene,
+                nodes::read_node_extras
+                    .after(SceneSpawnerSystems::WorldInstanceSpawn)
+                    .after(SceneSpawnerSystems::SceneSpawn),
+            );
     }
 
     fn finish(&self, app: &mut App) {
