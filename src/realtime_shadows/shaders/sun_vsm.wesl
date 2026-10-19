@@ -52,6 +52,44 @@ fn cascade_shadow(cascade: SunCascade, index: u32, at: CascadePoint) -> f32 {
     return sun_visibility(moments, at.depth, cascade.depth_bias);
 }
 
+// What one cascade makes of a receiver: whether the cascade holds it, and the sun's share there.
+struct CascadeHit {
+    hit: bool,
+    visibility: f32,
+}
+
+// Cascade `index`'s share of the sun at `world`, fading at its rim into `next`, layer
+// `index + 1`, when `has_next`. Past the last cascade the sun is unshadowed; a point the next
+// cascade misses keeps this one's shadow.
+fn cascade_visibility(
+    cascade: SunCascade,
+    index: u32,
+    next: SunCascade,
+    has_next: bool,
+    world: vec3<f32>,
+    normal: vec3<f32>,
+) -> CascadeHit {
+    let inner = 1.0 - SUN_CASCADE_MARGIN;
+    let at = cascade_point(cascade, world, normal);
+    if at.rim >= inner {
+        return CascadeHit(false, 1.0);
+    }
+    let lit = cascade_shadow(cascade, index, at);
+    let blend = linstep(inner - SUN_CASCADE_BLEND, inner, at.rim);
+    if blend <= 0.0 {
+        return CascadeHit(true, lit);
+    }
+    var after = 1.0;
+    if has_next {
+        let there = cascade_point(next, world, normal);
+        after = lit;
+        if there.rim < inner {
+            after = cascade_shadow(next, index + 1u, there);
+        }
+    }
+    return CascadeHit(true, mix(lit, after, blend));
+}
+
 // How much of the sun reaches a surface at `world` with unit `normal`, whose cosine with the
 // direction to the sun is `cosine`: 1 without cascades and outside them. The nearest cascade
 // holding the point decides, fading into the next one at its rim.
@@ -70,31 +108,25 @@ fn sun_shadow(shadow: SunShadow, world: vec3<f32>, normal: vec3<f32>, cosine: f3
             return 0.0;
         }
     }
+    // Constant indices only: DXC keeps a dynamically indexed copy of the cascades in a local
+    // array.
     let count = min(shadow.count, 3u);
-    let inner = 1.0 - SUN_CASCADE_MARGIN;
-    for (var index = 0u; index < count; index++) {
-        let cascade = shadow.cascades[index];
-        let at = cascade_point(cascade, world, normal);
-        if at.rim >= inner {
-            continue;
+    let first = cascade_visibility(shadow.cascades[0], 0u, shadow.cascades[1], count > 1u, world, normal);
+    if first.hit {
+        return fade * first.visibility;
+    }
+    if count > 1u {
+        let second = cascade_visibility(shadow.cascades[1], 1u, shadow.cascades[2], count > 2u, world, normal);
+        if second.hit {
+            return fade * second.visibility;
         }
-        let lit = cascade_shadow(cascade, index, at);
-        let blend = linstep(inner - SUN_CASCADE_BLEND, inner, at.rim);
-        if blend <= 0.0 {
-            return fade * lit;
+    }
+    if count > 2u {
+        // The last cascade has no next one; it stands in for it.
+        let third = cascade_visibility(shadow.cascades[2], 2u, shadow.cascades[2], false, world, normal);
+        if third.hit {
+            return fade * third.visibility;
         }
-        // Past the last cascade the sun is unshadowed; a point the next cascade misses keeps
-        // this one's shadow.
-        var next = 1.0;
-        if index + 1u < count {
-            let after = shadow.cascades[index + 1u];
-            let there = cascade_point(after, world, normal);
-            next = lit;
-            if there.rim < inner {
-                next = cascade_shadow(after, index + 1u, there);
-            }
-        }
-        return fade * mix(lit, next, blend);
     }
     return fade;
 }
