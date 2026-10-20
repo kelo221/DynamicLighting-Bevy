@@ -17,7 +17,7 @@ The crate is its own lighting system. It never uses Bevy's lights (`PointLight`,
 - **Materials:** `DynLitMaterial` covers Henry's Diffuse, Metallic (GGX) and Unlit shaders, with normal, occlusion and metallic-roughness maps. glTF `StandardMaterial`s, light extras and room and portal helpers are converted on load.
 - **Volumetric fog:** sphere, box, cone and square-shaft (`Frustum`) fog volumes per light, as a post-process pass. The shaft starts at an area light's size, for fluorescent fixtures.
 - **Rooms and portals:** optional `Room` cells and `Portal` openings stop each camera's view at the walls, so realtime lights, shadow cubemaps and fog volumes that no camera can see through a door or window are left out. Walls are never assumed to stop light: only lights whose whole sphere is out of sight are dropped, so while every light fits the budgets the image doesn't change, and when they don't the budget goes to lights a camera can see.
-- **Low-overhead scheduling:** the opt-in `SingleThreadedSchedulesPlugin` runs Bevy's engine and render-world schedules on Bevy's single-threaded executor, which saved about 1 ms a frame in the benchmark scenes. A game's own `Update` and fixed-timestep systems keep the multi-threaded executor unless you ask otherwise.
+- **Low-overhead scheduling:** the opt-in `SingleThreadedSchedulesPlugin` runs Bevy's engine and render-world schedules on Bevy's single-threaded executor, which saved about 1 ms a frame in the benchmark scenes and 1.0–2.3 ms in a game-like one. A game's own `Update` and fixed-timestep systems keep the multi-threaded executor unless you ask otherwise.
 - **Debug views:** `DynamicLightingSettings::debug_view` shows lighting on white surfaces, or a heat map of how many lights reach each fragment.
 
 ## Compared with Henry's original
@@ -208,16 +208,16 @@ This doesn't make rendering single-threaded. Bevy's per-mesh work (extracting an
 So `main` chooses how much of the main app switches:
 
 - `MainSchedules::Engine` (the default) switches `First`, `PreUpdate`, `StateTransition`, `RunFixedMainLoop`, `SpawnScene`, `PostUpdate` and `Last`. `Update` and the fixed-timestep schedules keep the multi-threaded executor.
-- `MainSchedules::All` also switches `Update` and `FixedFirst` to `FixedLast`, for apps whose own systems are light. The measurements below use this setting, as the examples' `--single-threaded` does.
+- `MainSchedules::All` also switches `Update` and `FixedFirst` to `FixedLast`, for apps whose own systems are light. The examples' `--single-threaded` uses it.
 - `MainSchedules::Off` leaves the main app alone. Use it when a plugin of yours runs heavy systems in `PreUpdate` or `PostUpdate`; some physics plugins step there.
 
-Most of the saving is in the render world: in the first benchmark screen, switching only the render world saved about 0.9 ms, and switching only the main app about 0.2 ms. `render: false` leaves the render world alone.
+Most of the saving is in the render world: in a game-like scene, switching only the render world saved 0.8–1.1 ms of the default's 1.0–1.4 ms. `render: false` leaves the render world alone.
 
 The render world still runs on its own thread beside the main world, systems that split their own work across the task pool (`par_iter`, as transform propagation and visibility do) still do, and commands are applied at the same points. The one exception is an exclusive system with commands of its own, such as one piped into a system with `Commands`: they are applied at the next sync point instead of when it returns. What changes is that systems Bevy may run in either order now run in one order, fixed when the schedule is built, and each schedule runs all its systems on its own thread. dynlight renders the same images either way (the visual baselines are checked with the plugin), and Bevy's ambiguity detection finds no pair involving dynlight systems whose result depends on that order.
 
 Schedules your app adds, and schedules created after the plugin's `finish`, keep their executor and settings. A render-world system of your own that needs the main thread (`NonSend` data created there) loses it. Bevy's own window surfaces need it on macOS and iOS, so there the `Render` schedule keeps its executor. The examples take `--single-threaded`.
 
-`DynamicLightingPlugin` doesn't add it, because the executor is a choice for the whole app. The benchmark scenes are close to the plugin's best case: one material, one camera and almost no game logic. There it saved about 1 ms a frame with every schedule switched, for dynlight and for Bevy's own lights alike (see Performance). Scenes with many materials and cameras, and games with heavy systems, haven't been measured yet, so measure your own app with and without it.
+`DynamicLightingPlugin` doesn't add it, because the executor is a choice for the whole app. It saved 0.9–1.0 ms a frame in dynlight's benchmark scenes and 1.0–2.3 ms in a game-like scene with many materials, two cameras, moving meshes and 2 ms of game logic, for dynlight and for Bevy's own lights alike (see Performance). There `All` put the game logic on the main thread; with 4 ms of it, that thread set the frame and `All` was 0.25 ms slower than the default. Measure your own app with and without it.
 
 ### Platforms
 
@@ -269,21 +269,39 @@ Bevy doesn't sort opaque draws front to back, and its draw order changes from bu
 
 ### With `SingleThreadedSchedulesPlugin`
 
-Frame times with and without the plugin (see Usage), for dynlight and for Bevy's own lights with the plugin added to the same harness. The plugin ran with `main: MainSchedules::All`, every schedule switched; the default, which leaves `Update` and the fixed-timestep schedules alone, hasn't been measured yet. The setup is the one above, measured in a later session on 2026-10-20; each figure is the median of 10 runs, with every configuration alternating in one session.
+Frame times without the plugin, with its default (`MainSchedules::Engine`: `Update` and the fixed-timestep schedules stay multi-threaded) and with `MainSchedules::All`, for dynlight and for Bevy's own lights with the plugin added to the same harness. The setup is the one above, measured in a later session on 2026-10-20; each figure is the median of 10 runs, with every configuration alternating in one session.
 
-| Scene | dynlight | dynlight, plugin | Bevy | Bevy, plugin |
-|---|---|---|---|---|
-| 1000 still lights | 2.49 ms | 1.33 ms | 2.64 ms | 1.63 ms |
-| 100 moving realtime lights | 2.54 ms | 1.39 ms | 2.64 ms | 1.51 ms |
-| 1000 moving realtime lights | 2.51 ms | 2.01 ms | 2.74 ms | 1.64 ms |
-| 15 of 100 lights with realtime shadows, scene still | 2.55 ms | 1.37 ms | 23.3 ms | 11.7 ms |
-| 15 of 100 lights with realtime shadows, scene moving | 7.39 ms | 6.16 ms | 23.4 ms | 11.7 ms |
+| Scene | dynlight | default | `All` | Bevy | default | `All` |
+|---|---|---|---|---|---|---|
+| 1000 still lights | 1.99 ms | 1.12 ms | 1.12 ms | 2.12 ms | 1.67 ms | 1.69 ms |
+| 100 moving realtime lights | 2.02 ms | 1.15 ms | 1.12 ms | 2.16 ms | 1.19 ms | 1.27 ms |
+| 1000 moving realtime lights | 1.99 ms | 1.84 ms | 1.82 ms | 2.28 ms | 1.70 ms | 1.66 ms |
+| 15 of 100 lights with realtime shadows, scene still | 2.01 ms | 1.13 ms | 1.10 ms | 23.0 ms | 14.5 ms | 14.6 ms |
+| 15 of 100 lights with realtime shadows, scene moving | 7.77 ms | 6.73 ms | 6.84 ms | 23.0 ms | 14.3 ms | 14.5 ms |
 
-- **The plugin saves 1.0–1.2 ms a frame** for both engines, and half of Bevy's shadowed frame, which pays a per-view cost for each of its 90 shadow views. dynlight's 1000 realtime lights save only 0.5 ms, because that frame becomes GPU-bound (see below). Without it, this session's frames read about 0.4 ms higher than the table above for both engines.
-- **The render thread sets the frame** in every scene: it is busy for all but 0.1–0.3 ms of it. With the plugin, dynlight's render thread is busy for 1.2–1.3 ms of the 1.3–1.4 ms frames of the lighter scenes, and its main thread for 0.4–0.6 ms in every scene. So caching dynlight's per-frame light packing on the main thread wouldn't shorten the frame, and uploading the light buffer only when it changes saved nothing measurable.
-- **1000 realtime lights become GPU-bound:** the lit pass takes 1.79 ms with every lighting path compiled. With `FeatureSelection::Automatic` it takes 0.88 ms, and the frame 1.36 ms.
-- **GPU times aren't comparable across executors.** In the light scenes the lit pass reads lower with the plugin for both engines (100 moving lights: dynlight 0.42 → 0.22 ms, Bevy 0.31 → 0.17 ms) with the same shaders, most likely because the GPU clocks higher when frames come faster. Compare GPU times under one executor.
+- **The plugin saves 0.9–1.0 ms a frame** in dynlight's light scenes, 0.5–1.0 ms in Bevy's, and over a third of Bevy's shadowed frame, which pays a per-view cost for each of its 90 shadow views. dynlight's 1000 realtime lights save only 0.15 ms, because that frame is GPU-bound: its lit pass takes 1.53 ms with every lighting path compiled. (In the previous session, `FeatureSelection::Automatic` brought that pass to 0.88 ms and the frame to 1.36 ms.)
+- **The default and `All` are within about 0.1 ms of each other** in every scene: these scenes run almost nothing in `Update`.
+- **Launches spread widely in this session**, up to 30–50% above the median in a few rounds, for every configuration alike. Without the plugin, its frames read 0.1–0.4 ms lower than the table above.
+- **The render thread sets the frame** in every scene: it is busy for all but 0.1–0.3 ms of it. With the plugin, dynlight's render thread is busy for about 1.0 ms of the 1.1 ms frames of the lighter scenes, and its main thread for 0.3–0.7 ms. So caching dynlight's per-frame light packing on the main thread wouldn't shorten the frame, and uploading the light buffer only when it changes saved nothing measurable.
+- **GPU times aren't comparable across executors.** In the light scenes the lit pass reads lower with the plugin for both engines (100 moving lights: dynlight 0.37 → 0.21 ms, Bevy 0.28 → 0.17 ms) with the same shaders, most likely because the GPU clocks higher when frames come faster. Compare GPU times under one executor.
 - Limiting Bevy's compute task pool (`TaskPoolPlugin`) to 4 threads moved the frame by −0.2 to +0.1 ms in the light scenes, with no consistent direction, in a shorter screen of 4 runs; it isn't in the table.
+
+#### In a scene more like a game
+
+The benchmark hall is the plugin's best case: one material, one camera and almost no game logic. The harness's `--game` option adds to it what a game has more of. The pillars get 32 materials instead of one. 200 cubes without bake data move above the floor, with 8 materials of their own, or one each in the 232-material rows. A second camera draws a 640 × 360 picture-in-picture view. Eight independent `Update` systems each work for 250 µs a frame (500 µs in the last row), 2 ms of game logic that the multi-threaded executor can spread over its threads. "Render only" is `main: MainSchedules::Off`. Same session and method as above.
+
+| Scene | No plugin | Render only | Default | `All` |
+|---|---|---|---|---|
+| dynlight, 100 moving realtime lights, 40 materials | 4.32 ms | 3.39 ms | 3.33 ms | 3.25 ms |
+| Bevy, 100 moving lights, 40 materials | 4.64 ms | 3.57 ms | 3.29 ms | 3.27 ms |
+| dynlight, 1000 baked lights, 40 materials | 4.31 ms | 3.40 ms | 3.30 ms | 3.25 ms |
+| dynlight, 100 moving realtime lights, 232 materials | 9.55 ms | – | 7.30 ms | 6.99 ms |
+| Bevy, 100 moving lights, 232 materials | 8.75 ms | – | 7.67 ms | 7.85 ms |
+| dynlight, 100 moving realtime lights, 40 materials, 4 ms of game logic | 6.00 ms | 5.21 ms | 4.71 ms | 4.96 ms |
+
+- **The plugin still saves 1.0–2.3 ms a frame** in a game-like scene, for dynlight and Bevy alike, and more where the render world has more to do. Most of it comes from the render world.
+- **`All` moves the game logic onto the main thread.** With 2 ms of it, the main thread is busy for 2.4–2.6 ms a frame under `All` against 0.7–0.9 ms with the default, about as long as the render thread, so the frame doesn't get longer yet. With 4 ms of game logic it is busy for 4.6 ms and sets the frame, and `All` is 0.25 ms slower than the default.
+- **Many materials cost the render world in both engines.** Giving each of the 200 moving cubes its own material adds about 2.4 ms to the render thread with one camera, and the second camera about doubles it. That is Bevy's per-material and per-view work, and dynlight and Bevy pay it alike.
 
 Baking the 1000-light scene (1047 meshes, 6.3 M texels, 18 M rays) takes 1.3 s on a 32-thread desktop CPU; Henry's baker takes 22.2–22.6 s for the same scene in the Unity editor (direct light only for both, 16 texels per metre). `cargo bench --bench bake` measures the baker on its own (about 27 M shadow rays per second), and `cargo bench --bench clusters` the per-frame light grid (0.27 ms for 1000 lights).
 
