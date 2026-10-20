@@ -31,6 +31,7 @@ DynLight ports Henry de Jongh's Unity package "Dynamic Lighting" to a standalone
    - Delete its Bevy-light code: `shadow_proxy.rs` and the patched-`bevy_pbr` forward hook.
 5. **Max 400 lines per file** (see "File length").
 6. **Vertical Slice Architecture** (see next section).
+7. Use Codegraph and FFF
 
 ## Architecture: Vertical Slice Architecture
 
@@ -199,3 +200,14 @@ cargo run --example lighting_test -- --frames 240 --screenshot screenshots/light
 - **Staging:** stage files explicitly by path; never `git add -A` or `git add .`.
 - **Never commit:** reference checkouts, Unity-generated data, or large baked outputs. Small synthetic `.dynlight` fixtures under `tests/fixtures/` are fine.
 - **Dependencies:** permissive licences only (MIT, Apache-2.0, Zlib, BSD), enforced by `cargo-deny` in CI.
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+
+- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+
+If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+<!-- CODEGRAPH_END -->

@@ -10,7 +10,9 @@
 
 mod common;
 
-use common::flip::{check, check_against, check_with_env};
+#[cfg(windows)]
+use common::flip::check_with_env;
+use common::flip::{check, check_against};
 
 const OVERVIEW: &str = "0,6,14,0,0.6,0";
 /// In the corridor of `rooms`, facing the door of the middle north room.

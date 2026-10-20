@@ -14,3 +14,4 @@
 
 # Agent worktrees and scratch.
 /.claude/worktrees/
+/.zcode
