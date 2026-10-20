@@ -1,7 +1,7 @@
 //! GPU readback check: renders a floor lit by realtime point, spot, wave, interference,
 //! rectangle and tube lights into a float image, reads it back and compares sampled pixels with
 //! the CPU mirror of the light shaders (`dynlight::light::mirror`) evaluated on the same packed
-//! light records.
+//! light records. One half of the floor is mirrored (negative scale) and must shade the same.
 //!
 //! `cargo run --example gpu_check` prints the largest difference and exits with an error code
 //! when any sample is off by more than 1% (plus 0.01 absolute). The window shows the same view.
@@ -183,9 +183,21 @@ fn setup(
     let target = readback_target(&mut images);
     commands.insert_resource(FloorView::Top);
 
+    // The +X half is mirrored: its negative scale reverses its winding, and it must still be lit
+    // from above. It is double-sided, as Bevy would cull a mirrored single-sided mesh.
+    let half = meshes.add(Plane3d::default().mesh().size(EXTENT / 2.0, EXTENT));
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(EXTENT, EXTENT))),
+        Mesh3d(half.clone()),
         MeshMaterial3d(materials.add(Color::WHITE)),
+        Transform::from_xyz(-EXTENT / 4.0, 0.0, 0.0),
+    ));
+    commands.spawn((
+        Mesh3d(half),
+        MeshMaterial3d(materials.add(DynLitMaterial {
+            cull_mode: None,
+            ..Color::WHITE.into()
+        })),
+        Transform::from_xyz(EXTENT / 4.0, 0.0, 0.0).with_scale(Vec3::new(-1.0, 1.0, 1.0)),
     ));
     let realtime = |light: DynamicLight| DynamicLight {
         realtime: true,

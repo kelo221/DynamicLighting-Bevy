@@ -9,6 +9,8 @@
 import bevy_pbr::render::forward_io::VertexOutput;
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_functions::get_tag;
+import bevy_pbr::render::mesh_bindings::mesh;
+import bevy_pbr::render::mesh_types::MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
 import dynlight::surface::shaders::bindings::{
     material, dynamic_lights, base_color_texture, base_color_sampler, emissive_texture,
     emissive_sampler, FLAG_ALPHA_MASK, FLAG_UNLIT, FLAG_BASE_COLOR_TEXTURE, FLAG_EMISSIVE_TEXTURE,
@@ -67,7 +69,9 @@ fn fragment(
 }
         var input: SurfaceInput;
         input.world = in.world_position.xyz;
-        input.normal = select(-normal, normal, is_front);
+        // A mirrored mesh (negative scale) has its winding reversed, so `is_front` is too.
+        let unmirrored = (mesh[in.instance_index].flags & MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT) != 0u;
+        input.normal = select(-normal, normal, is_front == unmirrored);
         input.lightmap_uv = vec2(0.0);
         input.tag = 0u;
         input.primitive = 0u;
