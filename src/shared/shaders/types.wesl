@@ -84,12 +84,35 @@ struct SunShadow {
 // The cascades hold only meshes without bake data, so baked receivers aren't in them.
 const SUN_SHADOW_MOVING_ONLY: u32 = 1u;
 
-// The whole light buffer: the header, the sky, the sun's cascades, then the baked slots and the
-// realtime lights.
+// A reflection probe: a world point `p` lies in its box when each of `dot(row, vec4(p, 1.0))`
+// for the rows `x`, `y` and `z` is within ±1. Mirrors `dynlight::shared::GpuReflectionProbe`
+// (208 bytes).
+struct ReflectionProbe {
+    x: vec4<f32>,
+    y: vec4<f32>,
+    z: vec4<f32>,
+    // Where its cube was captured, in world space.
+    capture: vec3<f32>,
+    // Its cube in the reflection cube array.
+    layer: u32,
+    // Irradiance over π at the capture point, in world space.
+    irradiance: SkyIrradiance,
+}
+
+// The reflection probes, smallest box first. Mirrors `dynlight::shared::GpuReflectionProbes`.
+struct ReflectionProbes {
+    count: u32,
+    _padding: array<u32, 3>,
+    probes: array<ReflectionProbe, 16>,
+}
+
+// The whole light buffer: the header, the sky, the sun's cascades, the reflection probes, then
+// the baked slots and the realtime lights.
 struct DynamicLights {
     globals: LightGlobals,
     sky: SkyIrradiance,
     sun_shadow: SunShadow,
+    probes: ReflectionProbes,
     lights: array<GpuLight>,
 }
 

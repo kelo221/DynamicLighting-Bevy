@@ -22,6 +22,7 @@
 //! - `--door-cycle DIR` shuts and reopens a door in front of a still camera and logs what
 //!   changed (see `door_cycle.rs`).
 //! - `--single-threaded` adds `SingleThreadedSchedulesPlugin`.
+//! - `--probes` adds a reflection probe and two metal objects to every room (see `probes.rs`).
 
 #[path = "../support/capture.rs"]
 mod capture;
@@ -31,6 +32,7 @@ mod grid;
 mod layout;
 mod measure;
 mod path;
+mod probes;
 #[path = "../support/mod.rs"]
 mod support;
 
@@ -87,6 +89,7 @@ fn main() -> AppExit {
         support::scheduling(),
         capture::plugin,
         door_cycle::plugin,
+        probes::plugin,
     ))
     .insert_resource(settings)
     .insert_resource(PortalSettings {

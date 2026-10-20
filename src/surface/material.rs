@@ -77,7 +77,7 @@ pub struct DynLitMaterial {
     /// How much of the occlusion texture applies, 0 to 1.
     pub occlusion_strength: f32,
     /// What metallic surfaces reflect: the sky by default.
-    #[texture(30, dimension = "cube")]
+    #[texture(30, dimension = "cube_array")]
     #[sampler(31)]
     pub reflection: Reflection,
     /// `Mask(cutoff)` discards fragments below the cutoff; `Blend` is Henry's transparent mode.

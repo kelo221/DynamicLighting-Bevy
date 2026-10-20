@@ -27,7 +27,7 @@ mod tests {
 
     use super::*;
     use crate::shared::wesl_check::{compile_shared_types, struct_layout};
-    use crate::shared::{GPU_LIGHT_GLOBALS_SIZE, GPU_SUN_SHADOW_SIZE};
+    use crate::shared::{GPU_LIGHT_GLOBALS_SIZE, GPU_REFLECTION_PROBES_SIZE, GPU_SUN_SHADOW_SIZE};
 
     #[test]
     fn sky_layout_matches_wesl() {
@@ -39,7 +39,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sky_the_sun_shadow_and_the_lights_follow_the_globals() {
+    fn the_sky_the_sun_shadow_the_probes_and_the_lights_follow_the_globals() {
         let module = compile_shared_types();
         let buffer = struct_layout(&module, "DynamicLights");
         let sky = GPU_LIGHT_GLOBALS_SIZE as u32;
@@ -50,8 +50,12 @@ mod tests {
                 ("sky".to_string(), sky),
                 ("sun_shadow".to_string(), sky + GPU_SKY_SIZE as u32),
                 (
-                    "lights".to_string(),
+                    "probes".to_string(),
                     sky + (GPU_SKY_SIZE + GPU_SUN_SHADOW_SIZE) as u32
+                ),
+                (
+                    "lights".to_string(),
+                    sky + (GPU_SKY_SIZE + GPU_SUN_SHADOW_SIZE + GPU_REFLECTION_PROBES_SIZE) as u32
                 ),
             ]
         );

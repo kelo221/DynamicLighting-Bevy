@@ -8,13 +8,13 @@ use bevy::render::storage::ShaderBuffer;
 
 use super::shape::LightShape;
 use crate::shared::{
-    BakeId, GpuLight, GpuLightGlobals, GpuSkyIrradiance, GpuSunShadow, frame_shader_buffer,
-    write_shader_buffer,
+    BakeId, GpuLight, GpuLightGlobals, GpuReflectionProbes, GpuSkyIrradiance, GpuSunShadow,
+    frame_shader_buffer, write_shader_buffer,
 };
 
 /// The light buffer every `DynLitMaterial` binds. Its layout is the WESL `DynamicLights`: the
-/// [`GpuLightGlobals`] header, the sky's [`GpuSkyIrradiance`], the sun's [`GpuSunShadow`], then
-/// the baked slots and the realtime lights.
+/// [`GpuLightGlobals`] header, the sky's [`GpuSkyIrradiance`], the sun's [`GpuSunShadow`], the
+/// [`GpuReflectionProbes`], then the baked slots and the realtime lights.
 pub const LIGHT_BUFFER: Handle<ShaderBuffer> = uuid_handle!("5c3a3f0e-4d8b-4f6e-9a51-7d2c0b6e1f42");
 
 /// Baked lights in bake order, provided by the baked-lighting slice when a bake loads. Slot `i`
@@ -80,6 +80,8 @@ pub struct PackedLights {
     pub sky: GpuSkyIrradiance,
     /// The cascades of the sun with realtime shadows, empty without one.
     pub sun_shadow: GpuSunShadow,
+    /// The reflection probes, none without any.
+    pub probes: GpuReflectionProbes,
     /// Baked slots followed by realtime lights.
     pub lights: Vec<GpuLight>,
     /// The entity in each baked slot; `None` for disabled slots.
@@ -104,9 +106,9 @@ impl PackedLights {
         self.parts().concat()
     }
 
-    /// The buffer contents in four parts: the globals, the sky, the sun's cascades, then the
-    /// lights.
-    pub fn parts(&self) -> [&[u8]; 4] {
+    /// The buffer contents in five parts: the globals, the sky, the sun's cascades, the probes,
+    /// then the lights.
+    pub fn parts(&self) -> [&[u8]; 5] {
         let lights = if self.lights.is_empty() {
             bytemuck::bytes_of(&GpuLight::DISABLED)
         } else {
@@ -116,6 +118,7 @@ impl PackedLights {
             bytemuck::bytes_of(&self.globals),
             bytemuck::bytes_of(&self.sky),
             bytemuck::bytes_of(&self.sun_shadow),
+            bytemuck::bytes_of(&self.probes),
             lights,
         ]
     }
@@ -150,11 +153,13 @@ pub(super) fn upload_lights(
 mod tests {
     use super::*;
     use crate::shared::{
-        GPU_LIGHT_GLOBALS_SIZE, GPU_LIGHT_SIZE, GPU_SKY_SIZE, GPU_SUN_SHADOW_SIZE,
+        GPU_LIGHT_GLOBALS_SIZE, GPU_LIGHT_SIZE, GPU_REFLECTION_PROBES_SIZE, GPU_SKY_SIZE,
+        GPU_SUN_SHADOW_SIZE,
     };
 
     const SKY_END: usize = GPU_LIGHT_GLOBALS_SIZE + GPU_SKY_SIZE;
-    const HEADER: usize = SKY_END + GPU_SUN_SHADOW_SIZE;
+    const SUN_END: usize = SKY_END + GPU_SUN_SHADOW_SIZE;
+    const HEADER: usize = SUN_END + GPU_REFLECTION_PROBES_SIZE;
 
     #[test]
     fn empty_buffer_still_holds_one_disabled_light() {
@@ -176,6 +181,10 @@ mod tests {
                 count: 3,
                 ..default()
             },
+            probes: GpuReflectionProbes {
+                count: 2,
+                ..default()
+            },
             lights: vec![GpuLight::default(); 2],
             ..default()
         };
@@ -187,7 +196,9 @@ mod tests {
         let sky: GpuSkyIrradiance =
             bytemuck::pod_read_unaligned(&bytes[GPU_LIGHT_GLOBALS_SIZE..SKY_END]);
         assert_eq!(sky, packed.sky);
-        let sun_shadow: GpuSunShadow = bytemuck::pod_read_unaligned(&bytes[SKY_END..HEADER]);
+        let sun_shadow: GpuSunShadow = bytemuck::pod_read_unaligned(&bytes[SKY_END..SUN_END]);
         assert_eq!(sun_shadow.count, 3);
+        let probes: GpuReflectionProbes = bytemuck::pod_read_unaligned(&bytes[SUN_END..HEADER]);
+        assert_eq!(probes.count, 2);
     }
 }

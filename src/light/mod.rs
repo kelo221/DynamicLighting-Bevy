@@ -59,7 +59,7 @@ pub use presets::sun_light;
 pub use shape::{LightShape, SunDisk};
 pub use spatial::{cookie_projection_scale, type_parameters};
 pub use systems::quality_level;
-pub use viewer::{LightingViewer, viewer_rank};
+pub use viewer::{CaptureViewpoint, LightingViewer, viewer_rank};
 
 use crate::effects::EffectsSystems;
 use crate::portals::PortalSystems;
@@ -87,6 +87,7 @@ impl Plugin for LightPlugin {
             .init_resource::<BakedLightSlots>()
             .init_resource::<LightAttachments>()
             .init_resource::<LightChoices>()
+            .init_resource::<CaptureViewpoint>()
             .init_resource::<PackedLights>()
             .init_resource::<placement::LightPlacement>()
             .configure_sets(

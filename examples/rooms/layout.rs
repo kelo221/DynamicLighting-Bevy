@@ -7,7 +7,7 @@ use dynlight::prelude::*;
 use crate::doors::Leaf;
 
 pub const HEIGHT: f32 = 3.0;
-const WALL: f32 = 0.2;
+pub const WALL: f32 = 0.2;
 /// Door leaves are this thick, in the middle of the wall.
 const LEAF: f32 = 0.04;
 pub const DOOR: Vec2 = Vec2::new(1.2, 2.2);

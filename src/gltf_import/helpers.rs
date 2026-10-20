@@ -1,5 +1,5 @@
-//! The room and portal keys of glTF node extras: which culling helper a node stands for, the
-//! mistakes that leave one out, and whether a helper mesh has the shape the keys assume.
+//! The room, portal and reflection probe keys of glTF node extras: which helper a node stands
+//! for, the mistakes that leave one out, and whether a helper mesh has the shape the keys assume.
 
 use bevy::math::Vec3;
 use serde_json::{Map, Value};
@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 pub(super) const ROOM: &str = "dynlight_room";
 pub(super) const PORTAL: &str = "dynlight_portal";
 pub(super) const CLOSED: &str = "dynlight_portal_closed";
+pub(super) const PROBE: &str = "dynlight_reflection_probe";
 
 /// A culling helper a node stands for: a [`Room`](crate::portals::Room) filling the node's
 /// local ±1 cube, or a [`Portal`](crate::portals::Portal) filling the ±1 square in its local XY
@@ -17,12 +18,14 @@ pub enum Helper {
     Portal { closed: bool },
 }
 
-/// What a node's room and portal keys ask for.
+/// What a node's room, portal and probe keys ask for.
 pub(super) struct Intent {
-    /// A room or portal key is on, so the node is meant as a helper and its light and static
-    /// keys are dropped, even when a mistake leaves the helper out.
+    /// A room, portal or probe key is on, so the node is meant as a helper and its light and
+    /// static keys are dropped, even when a mistake leaves the helper out.
     pub intended: bool,
     pub helper: Option<Helper>,
+    /// The node's local ±1 cube is a reflection probe's box; a room may share it.
+    pub probe: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -94,9 +97,26 @@ pub(super) fn intent(map: &Map<String, Value>, warnings: &mut Vec<String>) -> In
         (false, true) => Some(Helper::Portal { closed }),
         (false, false) => None,
     };
+    let probe = match flag(map, PROBE) {
+        Flag::On if portal => {
+            warnings.push(format!(
+                "a portal is not a box, so {PROBE} was ignored; put the probe on its own node"
+            ));
+            false
+        }
+        Flag::On => true,
+        Flag::Invalid => {
+            warnings.push(format!(
+                "{PROBE} must be true, false, 1 or 0, so no reflection probe was made"
+            ));
+            false
+        }
+        Flag::Absent | Flag::Off => false,
+    };
     Intent {
-        intended: room || portal,
+        intended: room || portal || probe,
         helper,
+        probe,
     }
 }
 

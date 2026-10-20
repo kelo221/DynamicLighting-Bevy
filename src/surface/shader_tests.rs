@@ -6,6 +6,7 @@ use crate::environment::shader_tests::SKY;
 use crate::light::shader_tests::{AREA, LIGHT_TYPES, LTC, SUN};
 use crate::light_clusters::shader_tests::CLUSTERS;
 use crate::realtime_shadows::shader_tests::{SUN_VSM, VSM};
+use crate::reflection_probes::shader_tests::PROBES;
 use crate::shared::wesl_check::{
     MATERIAL_CONSTANTS as CONSTANTS, SHARED_TYPES, compile, shared_variant,
 };
@@ -55,6 +56,7 @@ pub(crate) fn surface_modules() -> Vec<(&'static str, &'static str)> {
         SUN_VSM,
         CLUSTERS,
         SKY,
+        PROBES,
         BINDINGS,
         BRDF,
         LIGHT_PROCESSOR,

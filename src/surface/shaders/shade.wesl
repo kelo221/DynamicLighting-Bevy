@@ -1,6 +1,6 @@
 // How a `DynLitMaterial` turns gathered light into color: material textures, normal mapping,
-// Diffuse or Metallic shading and the ambient term (Henry's Diffuse and Metallic fragment
-// bodies, without Unity's lightmaps and reflection probes).
+// Diffuse or Metallic shading, the ambient term and our own reflection probes (Henry's Diffuse
+// and Metallic fragment bodies, without Unity's lightmaps and reflection probes).
 
 import dynlight::surface::shaders::bindings::{
     material, dynamic_lights, metallic_roughness_texture, metallic_roughness_sampler,
@@ -12,6 +12,10 @@ import dynlight::surface::shaders::brdf::fresnel_schlick_roughness;
 import dynlight::surface::shaders::light_processor::Shading;
 import dynlight::surface::shaders::lighting::{SurfaceInput, surface_light};
 import dynlight::shared::shaders::types::GLOBALS_FLAG_DEBUG_LIGHT_COUNT;
+import dynlight::shared::shaders::variant::FEATURE_REFLECTION_PROBES;
+import dynlight::baked_lighting::shaders::baked_data::receiver;
+import dynlight::environment::shaders::sky::sky_irradiance;
+import dynlight::reflection_probes::shaders::probes::{NO_PROBE, probe_box_projected, probe_holds};
 
 // Roughness below this makes the GGX highlight a sub-pixel spike.
 const MIN_ROUGHNESS: f32 = 0.045;
@@ -34,6 +38,22 @@ fn light_count_color(count: u32) -> vec3<f32> {
     let stops = array(vec3(0.0, 0.2, 1.0), vec3(0.0, 0.9, 0.2), vec3(1.0, 0.9, 0.0), vec3(1.0, 0.0, 0.0));
     let i = min(u32(t), 2u);
     return mix(stops[i], stops[i + 1u], t - f32(i));
+}
+
+// The smallest reflection probe holding `world`, or `NO_PROBE`. A material with its own
+// reflection cube uses none.
+fn probe_at(world: vec3<f32>) -> u32 {
+    if !FEATURE_REFLECTION_PROBES || (material.flags & FLAG_REFLECTION) != 0u {
+        return NO_PROBE;
+    }
+    let count = min(dynamic_lights.probes.count, 16u);
+    for (var i = 0u; i < count; i += 1u) {
+        let probe = &dynamic_lights.probes.probes[i];
+        if probe_holds((*probe).x, (*probe).y, (*probe).z, world) {
+            return i;
+        }
+    }
+    return NO_PROBE;
 }
 
 // A tangent-space normal map applied in the mikktspace frame (bitangent = w · normal × tangent).
@@ -65,11 +85,17 @@ fn shade(base: vec3<f32>, input: SurfaceInput, uv: vec2<f32>, camera: vec3<f32>)
     roughness = clamp(roughness, MIN_ROUGHNESS, 1.0);
     let view = normalize(camera - input.world);
     let f0 = mix(vec3(0.04), base, metallic);
-    let lights = surface_light(input, Shading(view, f0, roughness, metallic, SPECULAR));
+    let probe = probe_at(input.world);
+    let lights = surface_light(input, Shading(view, f0, roughness, metallic, SPECULAR, probe == NO_PROBE));
     if (dynamic_lights.globals.flags & GLOBALS_FLAG_DEBUG_LIGHT_COUNT) != 0u {
         return light_count_color(lights.lights);
     }
-    let ambient = dynamic_lights.globals.ambient;
+    // Meshes without bake data in a probe are lit by its irradiance instead of the ambient
+    // color; baked ones have their bounce light.
+    var ambient = dynamic_lights.globals.ambient;
+    if probe != NO_PROBE && receiver(input.tag).resolution == 0u {
+        ambient = sky_irradiance(dynamic_lights.probes.probes[probe].irradiance, input.normal);
+    }
     if !SPECULAR {
         return base * (ambient + lights.diffuse) * occlusion;
     }
@@ -77,10 +103,14 @@ fn shade(base: vec3<f32>, input: SurfaceInput, uv: vec2<f32>, camera: vec3<f32>)
     let fresnel = fresnel_schlick_roughness(max(dot(input.normal, view), 0.0), f0, roughness);
     let diffuse_weight = (1.0 - fresnel) * (1.0 - metallic);
     var environment = ambient;
+    let lod = roughness * f32(textureNumLevels(reflection_texture) - 1u);
+    let direction = reflect(-view, input.normal);
     if (material.flags & FLAG_REFLECTION) != 0u {
-        let direction = reflect(-view, input.normal);
-        let lod = roughness * f32(textureNumLevels(reflection_texture) - 1u);
-        environment = textureSampleLevel(reflection_texture, reflection_sampler, direction, lod).rgb;
+        environment = textureSampleLevel(reflection_texture, reflection_sampler, direction, 0u, lod).rgb;
+    } else if probe != NO_PROBE {
+        let record = &dynamic_lights.probes.probes[probe];
+        let toward = probe_box_projected((*record).x, (*record).y, (*record).z, (*record).capture, input.world, direction);
+        environment = textureSampleLevel(reflection_texture, reflection_sampler, toward, (*record).layer, lod).rgb;
     }
     let lit = base * (diffuse_weight * ambient + lights.diffuse) + lights.specular;
     return lit * occlusion + environment * fresnel + lights.reflection;

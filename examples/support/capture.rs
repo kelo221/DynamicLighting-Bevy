@@ -3,24 +3,21 @@
 //!
 //! The window is 1280×720 at a scale factor of 1, and virtual time stops at [`CAPTURE_SECONDS`],
 //! so light effects, shimmer, the shader clock and anything animated hold still. The frame is
-//! saved once a `--bake` has finished, the sky is built, no render pipeline has been compiling for
+//! saved once a `--bake` has finished, the sky is built, the reflection probes are captured, no render pipeline has been compiling for
 //! a while, and two screenshots in a row are identical.
 
 // Each example uses a different subset.
 #![allow(dead_code)]
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bevy::prelude::*;
-use bevy::render::render_resource::PipelineCache;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
-use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::window::{PresentMode, PrimaryWindow, WindowResolution};
 use bevy::winit::WinitSettings;
 use dynlight::bake::BakeFinished;
 use dynlight::environment::SkyStatus;
+use dynlight::reflection_probes::ReflectionProbeStatus;
 
 use crate::support;
 
@@ -59,30 +56,11 @@ pub fn plugin(app: &mut App) {
         .add_systems(Last, (note_finished_bakes, step).chain());
 }
 
-/// Render pipelines still compiling, written by the render world and read by the main world.
-#[derive(Resource, Clone)]
-pub struct WaitingPipelines(Arc<AtomicUsize>);
-
-impl WaitingPipelines {
-    /// Whether any render pipeline is compiling, or the render world hasn't said yet.
-    pub fn compiling(&self) -> bool {
-        self.0.load(Ordering::Relaxed) != 0
-    }
-}
+pub use dynlight::reflection_probes::WaitingPipelines;
 
 /// Adds [`WaitingPipelines`], once.
 pub fn track_pipelines(app: &mut App) {
-    if app.world().contains_resource::<WaitingPipelines>() {
-        return;
-    }
-    let waiting = WaitingPipelines(Arc::new(AtomicUsize::new(usize::MAX)));
-    app.insert_resource(waiting.clone());
-    if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-        render_app.insert_resource(waiting).add_systems(
-            Render,
-            count_waiting_pipelines.in_set(RenderSystems::Cleanup),
-        );
-    }
+    WaitingPipelines::track(app);
 }
 
 #[derive(Resource)]
@@ -108,12 +86,6 @@ fn size_window(mut window: Single<&mut Window, With<PrimaryWindow>>) {
     window.present_mode = PresentMode::AutoNoVsync;
 }
 
-fn count_waiting_pipelines(cache: Res<PipelineCache>, waiting: Res<WaitingPipelines>) {
-    waiting
-        .0
-        .store(cache.waiting_pipelines().count(), Ordering::Relaxed);
-}
-
 fn note_finished_bakes(
     mut finished: MessageReader<BakeFinished>,
     mut state: ResMut<CaptureState>,
@@ -132,7 +104,7 @@ fn step(
     mut commands: Commands,
     mut state: ResMut<CaptureState>,
     waiting: Res<WaitingPipelines>,
-    sky: Option<Res<SkyStatus>>,
+    (sky, probes): (Option<Res<SkyStatus>>, Option<Res<ReflectionProbeStatus>>),
     time: Res<Time<Real>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -151,7 +123,8 @@ fn step(
     }
     let now = time.elapsed_secs();
     let sky_building = sky.is_some_and(|sky| sky.building);
-    if state.bake_pending || sky_building || waiting.compiling() {
+    let probes_pending = probes.is_some_and(|probes| probes.pending > 0);
+    if state.bake_pending || sky_building || probes_pending || waiting.compiling() {
         state.idle_since = None;
         state.previous = None;
         return;

@@ -97,6 +97,9 @@ pub struct ShaderFeatures {
     pub sun: bool,
     /// Sky lights (`LightType::Sky`). Off: they add no light.
     pub sky: bool,
+    /// Reflection probes. Off: surfaces reflect the sky, and unbaked meshes get the ambient
+    /// color, inside probes too.
+    pub reflection_probes: bool,
 }
 
 impl ShaderFeatures {
@@ -110,6 +113,7 @@ impl ShaderFeatures {
         bounce: true,
         sun: true,
         sky: true,
+        reflection_probes: true,
     };
     pub const NONE: Self = Self {
         light_patterns: false,
@@ -121,10 +125,11 @@ impl ShaderFeatures {
         bounce: false,
         sun: false,
         sky: false,
+        reflection_probes: false,
     };
 
     /// The number of features in [`Self::list`].
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 10;
 
     /// `(name, enabled)` of every feature, for messages and the variant module.
     pub fn list(&self) -> [(&'static str, bool); Self::COUNT] {
@@ -138,6 +143,7 @@ impl ShaderFeatures {
             ("bounce", self.bounce),
             ("sun", self.sun),
             ("sky", self.sky),
+            ("reflection_probes", self.reflection_probes),
         ]
     }
 
@@ -162,6 +168,7 @@ impl ShaderFeatures {
             bounce: f(self.bounce, other.bounce),
             sun: f(self.sun, other.sun),
             sky: f(self.sky, other.sky),
+            reflection_probes: f(self.reflection_probes, other.reflection_probes),
         }
     }
 }

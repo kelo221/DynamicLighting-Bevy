@@ -39,10 +39,10 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 |---|---|---|---|
 | `src/shared/mod.rs` | none | none | New; wiring: `SharedPlugin` (settings resource, loads `types.wesl`), `shaders_available`, re-exports |
 | `src/shared/bake_id.rs` | (Unity InstanceID ordering) | none | Replaced; FNV-1a over the length-prefixed `Name` path; `ResolvedBakeId` for runtime matching |
-| `src/shared/cube.rs` | `S/Internal/Common.cginc:43-94`; `C/Utilities/PhotonCube.cs:213-275`; `C/Core/DynamicLightManager.DistanceCubes.cs:37-81` | none | Replaced; face order and (face, uv) ↔ direction re-derived from the Vulkan/WebGPU cube face selection table, not copied |
+| `src/shared/cube.rs` | `S/Internal/Common.cginc:43-94`; `C/Utilities/PhotonCube.cs:213-275`; `C/Core/DynamicLightManager.DistanceCubes.cs:37-81` | none | Replaced; face order and (face, uv) ↔ direction re-derived from the Vulkan/WebGPU cube face selection table, not copied; `face_orientation`, the cube cameras' forward and up per face, moved here from `realtime_shadows/faces.rs` once the reflection probes needed it (M30) |
 | `src/shared/globals.rs` | `S/DynamicLighting.cginc:343-356`; `C/Core/DynamicLightManager.Shaders.cs:227-268` | none | New; 48-byte header at the start of the light buffer (counts, ambient, our own clock instead of `_Time`, quality, flags, and the distant-light counts of M19); the `FLAG_DEBUG_*` bits for the debug views are New |
 | `src/shared/feature_choice.rs` | keyword selection at scene load, `C/Core/DynamicLightManager.cs` (`UpdateShaderKeywords`) | none | New; chooses the `ShaderFeatures` of `FeatureSelection::Automatic` once the scene stops loading (PLAN §7.3) |
-| `src/shared/feature_use.rs` | none | none | New; the features the scene uses, the ones the lit shader gets, and the warning for a feature in use while switched off |
+| `src/shared/feature_use.rs` | none | none | New; the features the scene uses, the ones the lit shader gets, and the warning for a feature in use while switched off; the `ChooseFeatures` set (M30) |
 | `src/shared/gpu_light.rs` | `C/Core/ShaderDynamicLight.cs:1-89`; channel bits `C/Core/DynamicLightManager.cs:1283-1313` | `BO/render/gpu.rs:30-220` | Lifted; flags renamed, `bounce_color` before `falloff` (112 bytes), layout test checks the WESL struct through naga; channel bits 20–22 hold the baked shadow bits per texel (New, PLAN §12) |
 | `src/shared/math.rs` | `Mathf.Lerp`/`InverseLerp`/`MoveTowards`/`SmoothStep` call sites | `BO/core/unity_math.rs:18-46` | Replaced; helpers named for what they do |
 | `src/shared/mesh_hash.rs` | (Unity `Mesh.GetFastHash`, `C/Core/DynamicLightManager.cs:646,1208`) | none | New; hashes triangle corners (position + UV1 bits) in draw order, so de-indexed meshes keep their hash |
@@ -51,7 +51,8 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/shared/shader_buffer.rs` | none | none | New; rewrites a `ShaderBuffer` asset in place, keeping its GPU size |
 | `src/shared/sky.rs` | none | none | New; the sky's 144-byte spherical-harmonic block after the globals header (M20), with its layout test against the WESL |
 | `src/shared/sun_shadow.rs` | none | none | New (M22); the 208-byte sun-shadow block after the sky block (`GpuSunShadow`, `SunShadowBlock`), with its layout test against the WESL |
-| `src/shared/shaders/types.wesl` | `S/DynamicLighting.cginc:10-130` (struct, type/shimmer constants, flag getters); globals `:343-356` | `BO/shaders/dynamic_lighting_types.wgsl` | Ported to WESL; adds the `LightGlobals` header and the `DynamicLights` buffer struct; `light_group`, the `SkyIrradiance` block and `LIGHT_TYPE_SKY` (New); the `SunShadow` block (New, M22) |
+| `src/shared/probes.rs` | none | none | New (M30); the reflection-probe block after the sun-shadow block (`GpuReflectionProbe`, 208 bytes, 16 of them after a 16-byte count), `ReflectionProbeRecords`, with its layout test against the WESL |
+| `src/shared/shaders/types.wesl` | `S/DynamicLighting.cginc:10-130` (struct, type/shimmer constants, flag getters); globals `:343-356` | `BO/shaders/dynamic_lighting_types.wgsl` | Ported to WESL; adds the `LightGlobals` header and the `DynamicLights` buffer struct; `light_group`, the `SkyIrradiance` block and `LIGHT_TYPE_SKY` (New); the `SunShadow` block (New, M22); the `ReflectionProbes` block (New, M30) |
 | `src/shared/variant.rs` | Henry's shader keywords, `C/Core/DynamicLightManager.cs` | none | New; generates the `variant` WESL module (`QUALITY`, `FEATURE_*` constants) under a fixed handle (PLAN §7.3) |
 | `src/shared/wesl_check.rs` | none | none | New (test-only); compiles WESL with Bevy's `wesl` and inspects layouts with naga |
 
@@ -82,7 +83,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/light/area_record_tests.rs` | none | none | New; packed area-light records: their shape, nothing lit past the radius, and shadow-point records adding up to the whole light |
 | `src/light/area_tests.rs` | none | none | New; the area-light math against brute-force integration over the shapes |
 | `src/light/budget.rs` | `C/Core/DynamicLightManager.cs:1051-1088,1258-1262` | none | Ported; stable sort (ties keep order); Henry's editor-only frustum bypass dropped |
-| `src/light/buffer.rs` | `C/Core/DynamicLightManager.cs:903-924,1154-1159` | none (replaces the per-frame buffers of `BO/render/gpu.rs:246-470`) | New; globals header + sky irradiance + sun shadow + baked slots + realtime lights in one `ShaderBuffer`; also records the camera the realtime lights were chosen for (`RealtimeViewer`), which `light_clusters` builds its grid over |
+| `src/light/buffer.rs` | `C/Core/DynamicLightManager.cs:903-924,1154-1159` | none (replaces the per-frame buffers of `BO/render/gpu.rs:246-470`) | New; globals header + sky irradiance + sun shadow + baked slots + realtime lights in one `ShaderBuffer`; also records the camera the realtime lights were chosen for (`RealtimeViewer`), which `light_clusters` builds its grid over; the reflection-probe block (M30) |
 | `src/light/component.rs` | `C/Lighting/DynamicLight.cs:30-370` (fields, defaults) | `BO/core/config.rs` | Lifted |
 | `src/light/features.rs` | none | none | New; which `ShaderFeatures` the packed lights need |
 | `src/light/kinds.rs` | `C/Lighting/DynamicLight{Type,ShadowMode,IlluminationMode,TransparencyMode,Shimmer}.cs`, `C/Lighting/DynamicBounceLightingCompressionMode.cs` | `BO/core/types.rs` | Lifted; `Sun` and `is_distant` (M19) and `Sky` (M20) are New; enums match Henry's; `EnabledMax` behaves as `Enabled` (rays alpha-test directly) |
@@ -98,7 +99,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/light/shaders/light_types.wesl` | `S/DynamicLighting.cginc:140-341`; `S/Internal/Common.cginc:3-37`; `S/Generators/TrilinearFilter.cginc:1-36` | `BO/shaders/dynamic_lighting_spatial.wgsl`, `BO/shaders/dynamic_lighting_common.wgsl` | Lifted; shimmer uses the lowbias32 hash (public domain) instead of Shadertoy `rand` (`Common.cginc:39-41`); our clock instead of `_Time`; right = up × forward |
 | `src/light/spatial.rs` | `C/Core/DynamicLightManager.cs:1320-1407`; cookie scale `:1345` | `BO/core/spatial.rs` | Lifted; Unity-parity tests dropped; the cookie scale clamps the cone to 0–90° |
 | `src/light/sun.rs` | none | none | New; CPU reference of `sun.wesl`: the specular direction within the sun's disk and Karis's energy normalization (M19, PLAN §12) |
-| `src/light/systems.rs` | `C/Core/DynamicLightManager.cs:1004-1159` (moved baked lights, budget, packing order); `C/Core/DynamicLightManager.LightPositions.cs:67-100` | none | Ported; moved-light detection lives in `placement.rs` |
+| `src/light/systems.rs` | `C/Core/DynamicLightManager.cs:1004-1159` (moved baked lights, budget, packing order); `C/Core/DynamicLightManager.LightPositions.cs:67-100` | none | Ported; moved-light detection lives in `placement.rs`; realtime lights are ranked around a reflection probe's capture point while it is captured (`CaptureViewpoint`, M30) |
 | `src/light/tests.rs` | none | none | New |
 
 ### `light_clusters/`
@@ -122,20 +123,21 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 |---|---|---|---|
 | `src/surface/mod.rs` | none | none | New; wiring: `SurfacePlugin`, `MaterialPlugin<DynLitMaterial>`, loads the surface WESL modules, alpha-mask system |
 | `src/surface/alpha_mask.rs` | `S/Generators/PhotonCubeTransparent.cginc:55-71` (0.5 alpha cutoff) | none | New; derives `BakeAlphaMask` from `DynLitMaterial`; `Mask(c)` materials bake with their own cutoff |
-| `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false`; the realtime light clusters at binding 29, the sky's specular cube at 30–31 and the sun's cascades at 32 (New) |
+| `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false`; the realtime light clusters at binding 29, the reflection cube array at 30–31 (the sky's specular cube, then the probes', M30) and the sun's cascades at 32 (New) |
 | `src/surface/shader_tests.rs` | none | none | New |
 | `src/surface/mirror.rs` | none | none | New; CPU reference of `brdf.wesl` and Metallic shading's per-light specular term in `light_processor.wesl` |
-| `src/surface/shared_arrays.rs` | none | none | New; re-prepares lit materials when the shadow cubemap or sun cascade array, cookie array or sky cube is replaced |
+| `src/surface/reflection.rs` | none | none | New; `Reflection`, a material's own cubemap, and the cube-array view it gets so it binds where the reflection cube array does (M30) |
+| `src/surface/shared_arrays.rs` | none | none | New; re-prepares lit materials when the shadow cubemap or sun cascade array, cookie array or reflection cube array is replaced |
 | `src/surface/unbaked.rs` | none | none | New; reports lit meshes without bake data, for the `unbaked_meshes` shader feature |
-| `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide, 27–28 the LTC table, 29 the realtime light clusters, declared by `clusters.wesl`, 30–31 the sky's specular cube, 32 the sun's cascades, declared by `sun_vsm.wesl`) |
+| `src/surface/shaders/bindings.wesl` | globals `S/DynamicLighting.cginc:343-356` | none | New; every resource on the material bind group (0–19 material, 20+ scene-wide, 27–28 the LTC table, 29 the realtime light clusters, declared by `clusters.wesl`, 30–31 the reflection cube array: the sky's specular cube, then the probes' (M30), 32 the sun's cascades, declared by `sun_vsm.wesl`) |
 | `src/surface/shaders/brdf.wesl` | none (Henry's `S/Internal/Common.cginc:291-342` is LearnOpenGL code, CC BY-NC) | none | Replaced; GGX / Smith / Schlick rewritten from the published papers |
 | `src/surface/shaders/dynlit.wesl` | fragment bodies `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260`; lighting-only mode `S/DynamicLightingDiffuse.shader:141` | none | Ported; `TRIANGLE_ID` / `PRIMITIVE_INDEX` paths; Unity fog and lightmaps dropped |
 | `src/surface/shaders/dynlit_prepass.wesl` | `S/Generators/DepthNormals.cginc:40-47`, `S/Generators/DepthOnly.cginc` | none | Ported; alpha cutout only |
 | `src/surface/shaders/dynlit_vertex.wesl` | none (Henry relies on `SV_PrimitiveID`) | none | New; Bevy's static mesh vertex shader plus a flat triangle ID |
 | `src/surface/shaders/light_processor.wesl` | `S/Generators/LightProcessor.cginc:1-235`; bounce cones `S/DynamicLighting.cginc:154-163,195-207`; per-light terms `S/DynamicLightingDiffuse.shader:163-203`, `S/DynamicLightingMetallic.shader:262-345` | none | Ported; Metallic intensity-applied-twice and bounce cross-terms fixed (PLAN §12); Metallic diffuse not divided by π, specular scaled by π instead; rectangle lights reflect through the LTC table (New, PLAN §12); a sun's realtime shadow from its cascades (New, M22) |
 | `src/surface/shaders/lighting.wesl` | `S/DynamicLighting.cginc:1006-1158` (`DYNLIT_FRAGMENT_INTERNAL`) | none | Ported; macros become functions; baked and realtime lights in separate loops; baked entries ≥ `baked_count` ignored; baked shadows decoded at the light's bits per texel, and area lights on dynamic geometry use the soft cube lookup (New, PLAN §12); realtime lights come from the fragment's light-grid cell (New, PLAN §12); realtime distant lights go to the sun or the sky (New) |
-| `src/surface/shaders/sky_light.wesl` | none | none | New; `add_sky`: the sky's spherical-harmonic diffuse light, and with Metallic shading its prefiltered reflection weighted by Schlick's Fresnel with roughness (M20, PLAN §12); both scaled by the baked sky visibility (M21) |
-| `src/surface/shaders/shade.wesl` | `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260` | none | Ported; Unity reflection probes replaced by an optional own cubemap; the light-count heat map (debug view) is New |
+| `src/surface/shaders/sky_light.wesl` | none | none | New; `add_sky`: the sky's spherical-harmonic diffuse light, and with Metallic shading its prefiltered reflection weighted by Schlick's Fresnel with roughness (M20, PLAN §12); both scaled by the baked sky visibility (M21); no reflection inside a reflection probe, whose cube holds the sky already (M30) |
+| `src/surface/shaders/shade.wesl` | `S/DynamicLightingDiffuse.shader:110-161`, `S/DynamicLightingMetallic.shader:141-260` | none | Ported; Unity's reflection probes (`unity_SpecCube0`, `BoxProjectedCubemapDirection`) are not ported: a material's own cubemap, and our own reflection probes, picked per pixel by box, with box-projected reflections and their irradiance on meshes without bake data, replace them (M30); the light-count heat map (debug view) is New |
 
 ### `bake/`
 
@@ -234,7 +236,7 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/realtime_shadows/cubemaps.rs` | `C/Core/DynamicLightManager.ShadowCamera.cs:49-50,61-63,99` | none | Ported; Rg32Float when the device has `FLOAT32_FILTERABLE`, Rg16Float otherwise; the array grows up to the budget; the sun's cascade array (New, M22) |
 | `src/realtime_shadows/extract.rs` | none | none | New; each rendering face and sun cascade becomes a render-world view (`ExtractedView`, `NoIndirectDrawing`) with its casters and target; views that stop rendering lose it |
 | `src/realtime_shadows/face_tests.rs` | none | none | New; app tests: listed casters are marked visible without a camera, only rendering faces carry a view, and rendering cascades carry an orthographic one |
-| `src/realtime_shadows/faces.rs` | `C/Core/DynamicLightManager.ShadowCamera.cs:11-19,49` | none | Replaced; cube faces re-derived for WebGPU (left-handed faces, mirrored writes); nearest lights first (Henry: light-buffer order); wider face blur for area lights (New); the brightest sun gets the cascades (New, M22) |
+| `src/realtime_shadows/faces.rs` | `C/Core/DynamicLightManager.ShadowCamera.cs:11-19,49` | none | Replaced; cube faces re-derived for WebGPU (left-handed faces, mirrored writes; the orientation table now lives in `shared/cube.rs`); nearest lights first (Henry: light-buffer order); wider face blur for area lights (New); the brightest sun gets the cascades (New, M22) |
 | `src/realtime_shadows/materials.rs` | none | none | New; `CasterMaterial` / `CasterMaterialPlugin`: casters that switch material, whose material is edited or whose textures (re)load redraw the faces that see them |
 | `src/realtime_shadows/phase.rs` | none | none | New; the binned `ShadowFace3d` phase and `Reported`, which wraps Bevy's prepass draw commands and reports faces whose draws skip |
 | `src/realtime_shadows/queue.rs` | none | none | New; specializes each caster through its material's `prepass_specialize` with Bevy's depth-prepass key (opaque and masked cast) and fills a fresh phase per rendering face |
@@ -273,13 +275,28 @@ Henry's package has no sky light; the whole slice is New (M20, PLAN §12). The f
 | `src/environment/prefilter.rs` | none | none | New; the 128² specular cube, one roughness per level, 64 Hammersley GGX samples per texel read from the pyramid at the sample's solid angle |
 | `src/environment/images.rs` | none | none | New; equirect images from 32-bit, 16-bit and 8-bit RGBA, the Rgba16Float cube and background images, placeholders |
 | `src/environment/frame.rs` | none | none | New; `SkyFrame`, the sky's turn and tint from its packed light record, and `first_sky`, which looks in the baked and the realtime distant slots |
-| `src/environment/systems.rs` | none | none | New; builds a sky's data off the main thread, rebuilds it when the image changes, warns about extra skies |
+| `src/environment/systems.rs` | none | none | New; builds a sky's data off the main thread, rebuilds it when the image changes, warns about extra skies; keeps the specular cube's texels on the CPU for the reflection cube array (M30) |
 | `src/environment/render.rs` | none | none | New; the background pass in `Core3d` between the opaque and transparent passes, behind opaque geometry at depth 0 |
 | `src/environment/mirror.rs` | none | none | New; CPU reference of `sky.wesl`, `background.wesl` and `add_sky` |
 | `src/environment/shader_tests.rs` | none | none | New |
 | `src/environment/tests.rs` | none | none | New; the sky build and rebuild in a headless app, and the clamp limiting the light but not the background |
 | `src/environment/shaders/sky.wesl` | none | none | New; the sky frame, irradiance from the coefficients, equirect UVs and the background's level of detail |
 | `src/environment/shaders/background.wesl` | none | none | New; full-screen triangle that draws the sky image where no geometry was drawn |
+
+### `reflection_probes/`
+
+Henry's package samples Unity's reflection probes (`unity_SpecCube0` with box projection, in `S/DynamicLightingMetallic.shader`); none of it is ported. The slice is New (M30, PLAN §14). Box projection follows Lagarde and Zanuttini, "Local Image-based Lighting With Parallax-corrected Cubemaps" (2012), written from the paper; the prefilter and the irradiance are the environment slice's.
+
+| Our file | Henry | bevyout | Status |
+|---|---|---|---|
+| `src/reflection_probes/mod.rs` | none | none | New; wiring: `ReflectionProbesPlugin`, `ReflectionProbe`, `CaptureReflectionProbes`, `ReflectionProbeStatus`, `WaitingPipelines` (moved from `examples/support/capture.rs`), the `REFLECTION_CUBES` handle, loads `probes.wesl` |
+| `src/reflection_probes/assemble.rs` | none | none | New; reads back the six faces (rows padded to 256 bytes), resamples them to an equirect image through each face camera's own orientation, prefilters it with the environment slice, and builds the cube array (the sky first) |
+| `src/reflection_probes/capture.rs` | none | none | New; one probe at a time once the scene is ready: six 90° HDR cameras for a few frames, `ReadbackOnce` per face, the prefilter on the async compute pool |
+| `src/reflection_probes/records.rs` | none | none | New; the probe's oriented box, the packed records (smallest box first, at most 16), and the CPU mirror of `probes.wesl` (the probe holding a point, box projection) |
+| `src/reflection_probes/systems.rs` | none | none | New; which probes need a capture (moved, changed, a new bake, sky or lit shader, `CaptureReflectionProbes`), the cube array and the records each frame |
+| `src/reflection_probes/shader_tests.rs` | none | none | New; compiles `probes.wesl` and checks its margin against `records` |
+| `src/reflection_probes/tests.rs` | none | none | New; padded rows, face orientation, resampling and its irradiance, the cube array's layout |
+| `src/reflection_probes/shaders/probes.wesl` | none | none | New; whether a probe's box holds a point (with a 1% margin) and the box-projected direction |
 
 ### `fog/`
 
@@ -327,10 +344,10 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `src/gltf_import/mod.rs` | none | none | New; wiring: the glTF plugin and its settings |
 | `src/gltf_import/convert.rs` | none | none (bevyout's `viewer/material_shading.rs` is not used) | New; `StandardMaterial` → `DynLitMaterial`, Metallic shading where needed |
-| `src/gltf_import/nodes.rs` | none | none | New (M28); applies node extras in `SpawnScene` after the scene spawner, `BakeStatic` on the node's own mesh primitives, room and portal helpers (their own meshes removed, a warning when a helper mesh isn't the unit shape) |
+| `src/gltf_import/nodes.rs` | none | none | New (M28); applies node extras in `SpawnScene` after the scene spawner, `BakeStatic` on the node's own mesh primitives, room and portal helpers (their own meshes removed, a warning when a helper mesh isn't the unit shape); reflection probe helpers (M30) |
 | `src/gltf_import/node_tests.rs` | none | none | New (M28); node extras in an app: read before `PostUpdate`, static tags on own primitives only, helpers drop their own primitives and keep child nodes |
-| `src/gltf_import/extras.rs` | field names and defaults of `C/Lighting/DynamicLight.cs:30-370` | none | New; `dynlight_*` node extras (Blender custom properties); area-light `dynlight_type`/`dynlight_size` and `fog: "frustum"` are New; the explicit light-key list and the warnings are New (M28) |
-| `src/gltf_import/helpers.rs` | none | none | New (M28); `dynlight_room`, `dynlight_portal` and `dynlight_portal_closed`: strict flags, the conflict rules, the unit-shape check for helper meshes |
+| `src/gltf_import/extras.rs` | field names and defaults of `C/Lighting/DynamicLight.cs:30-370` | none | New; `dynlight_*` node extras (Blender custom properties); area-light `dynlight_type`/`dynlight_size` and `fog: "frustum"` are New; the explicit light-key list and the warnings are New (M28); `dynlight_probe_diffuse` (M30) |
+| `src/gltf_import/helpers.rs` | none | none | New (M28); `dynlight_room`, `dynlight_portal` and `dynlight_portal_closed`: strict flags, the conflict rules, the unit-shape check for helper meshes; `dynlight_reflection_probe`, alone or with a room (M30) |
 | `src/gltf_import/extras_tests.rs` | none | none | New (M28, the light tests moved from `extras.rs`); every light key, unknown keys, strict flags and each row of the conflict table |
 
 ### `debug/`
@@ -349,6 +366,7 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | `examples/gpu_check_area.rs` | none | none | New; a baked and an unbaked floor under a panel and a tube, read back and compared with `baked_lighting::mirror` and `dynamic_geometry::mirror` at every quality tier |
 | `examples/gpu_check_sun.rs` | none | none | New; a baked and an unbaked floor under a soft sun and a uniform sky, read back and compared with `baked_lighting::mirror`, `dynamic_geometry::sun_mirror` and `sky_mirror` |
 | `examples/gpu_check_sky.rs` | none | none | New; a Diffuse and a Metallic ball under a turned, tinted sky with the background behind them, read back and compared with `environment::mirror` |
+| `examples/gpu_check_probes.rs` | none | none | New (M30); a room of six unlit colored walls with a probe captured off-centre: a chrome quad compared with `reflection_probes::records::box_projected`, a white unbaked quad with the probe's irradiance, and that irradiance with the walls'; `--webgpu-limits` |
 | `examples/gpu_check_specular.rs` | none | none | New; a Metallic copper floor at two roughnesses under rectangles, a tube and a point light, read back and compared with `surface::mirror` and `light::ltc` |
 | `examples/inspector/main.rs` | role of `E/Inspectors/DynamicLightEditor.cs`; light from `DynamicLight::spot()` (`E/EditorMenus.cs:125-131`) | none | New; Feathers UI, bake button |
 | `examples/inspector/panel.rs` | role of `E/Inspectors/DynamicLightEditor.cs` | none | New |
@@ -362,7 +380,7 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | `examples/support/mod.rs` | none | none | New; page canvas, status line and query-string arguments for the web demos; `--camera` for fixed views |
 | `examples/support/baking.rs` | none | none | New; in-memory bakes, queued until the browser has painted the status |
 | `examples/support/orbit.rs` | none | none | New; drag-to-orbit, scroll-to-zoom camera that drifts when idle and can follow an entity |
-| `examples/support/capture.rs` | none | none | New; `--capture`: one still, repeatable 1280×720 frame for the visual baselines, taken once bakes and sky builds have finished |
+| `examples/support/capture.rs` | none | none | New; `--capture`: one still, repeatable 1280×720 frame for the visual baselines, taken once bakes, sky builds and reflection probe captures have finished |
 | `examples/support/lightmap_uvs.rs` | none | none | New; UV1 sets for Bevy's primitive meshes (a per-face atlas for boxes, moved from `lighting_test`) |
 | `examples/outdoor/main.rs`, `scene.rs` | none | none | New; a courtyard under a baked soft sun and a baked sky with a porch, a lamp, two Metallic balls, and moving objects shadowed by the sun map and the sky probes that cast realtime sun shadows (M22); `--camera` |
 | `examples/outdoor/sky.rs` | none | none | New; a procedural sky image matched to the sun, or an HDRI from `--hdri`, scaled and turned to the sun |
@@ -373,10 +391,11 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 | `examples/rooms/layout.rs` | none | none | New (M27); walls with doors and windows (each with a hidden leaf, M28), the corridor with six rooms and a yard, the rooms' lights |
 | `examples/rooms/grid.rs` | none | none | New (M27); `--grid N`: N × N rooms joined by offset doors |
 | `examples/rooms/path.rs` | none | none | New (M27); the `--path` flythroughs on virtual time (a fixed step while `--frames` measures), bobbing lamps |
+| `examples/rooms/probes.rs` | none | none | New (M30); `--probes`: a reflection probe in every room, with a chrome ball and a brushed gold block |
 | `tests/area_light_bake.rs` | none | none | New; panels bake soft shadows close to a brute-force trace, tubes soften only along their length, point lights keep one bit |
 | `tests/bake_api.rs` | none | none | New; synthetic fixtures only |
 | `tests/bake_ecs.rs` | none | none | New; synthetic fixtures only |
-| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular`, `gpu_check_area`, `gpu_check_sun` and `gpu_check_sky` examples, check `lighting_test` screenshots, and check what `rooms` culls, behind shut doors too, and its `--door-cycle` (M28) |
+| `tests/gpu_examples.rs` | none | `bevyout/tests/dynamic_lighting_gpu.rs` (approach only) | New; ignored-by-default GPU tests that run the `gpu_check` (also with `--many` at WebGPU's default limits), `gpu_check_specular`, `gpu_check_area`, `gpu_check_sun`, `gpu_check_sky` and `gpu_check_probes` (M30) examples, check `lighting_test` screenshots, and check what `rooms` culls, behind shut doors too, and its `--door-cycle` (M28) |
 | `tests/gpu_baselines.rs` | none | none | New; visual baselines: still frames of the examples compared with `tests/baselines/` by FLIP (the comparison lives in `tests/common/flip.rs`) |
 | `tests/common/mod.rs` | none | none | New; helpers shared by the GPU test files |
 | `tests/common/flip.rs` | none | none | New (M28, split from `tests/gpu_baselines.rs`); a captured frame against its baseline by FLIP, blessing |

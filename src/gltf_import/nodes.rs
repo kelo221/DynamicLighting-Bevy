@@ -1,5 +1,5 @@
 //! Node extras applied as a glTF scene spawns: lights, effects, fog, static and shadow flags, and
-//! room and portal helpers.
+//! room, portal and reflection probe helpers.
 //!
 //! [`read_node_extras`] runs in `SpawnScene` after the scene spawner, so a scene's components
 //! are in place in the frame it first appears, before anything in `PostUpdate` sees it.
@@ -44,7 +44,9 @@ pub(super) fn read_node_extras(
         for warning in &parsed.warnings {
             warn!("dynlight gltf: node {label}: {warning}");
         }
-        if let Some(helper) = parsed.helper {
+        if parsed.helper.is_some() || parsed.reflection_probe.is_some() {
+            // A probe's box is the room's unit cube.
+            let helper = parsed.helper.unwrap_or(Helper::Room);
             let own: Vec<Entity> = own_primitives(children, &primitives).collect();
             let bounds = meshes
                 .as_deref()
@@ -66,13 +68,17 @@ pub(super) fn read_node_extras(
                 commands.entity(primitive).despawn();
             }
             let mut node = commands.entity(node);
-            match helper {
-                Helper::Room => {
+            if let Some(probe) = parsed.reflection_probe {
+                node.insert(probe);
+            }
+            match parsed.helper {
+                None => {}
+                Some(Helper::Room) => {
                     node.insert(Room {
                         half_size: Vec3::ONE,
                     });
                 }
-                Helper::Portal { closed } => {
+                Some(Helper::Portal { closed }) => {
                     node.insert(Portal::new(Vec2::splat(2.0)));
                     if closed {
                         node.insert(ClosedPortal);

@@ -213,6 +213,32 @@ fn rooms() {
     check("rooms", "rooms", &["--camera", ROOMS_DOOR]);
 }
 
+/// The same room with reflection probes: a chrome ball reflecting the room and the doorway, and
+/// every unbaked mesh lit by its room's probe instead of the ambient color.
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms_probes() {
+    check(
+        "rooms_probes",
+        "rooms",
+        &["--probes", "--camera", ROOMS_DOOR],
+    );
+}
+
+/// The probes' shader path through FXC, which the other scenes don't compile.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs a GPU"]
+fn rooms_probes_on_fxc_match() {
+    check_with_env(
+        "rooms_probes_fxc",
+        "rooms_probes",
+        "rooms",
+        &["--probes", "--camera", ROOMS_DOOR],
+        &[("WGPU_BACKEND", "dx12"), ("WGPU_DX12_COMPILER", "fxc")],
+    );
+}
+
 /// What portal culling leaves out lights nothing in view.
 #[test]
 #[ignore = "needs a GPU"]

@@ -233,3 +233,29 @@ fn helper_meshes_must_keep_their_unit_shape() {
         Vec3::new(0.6, 1.1, 0.0)
     ));
 }
+
+#[test]
+fn probes_fill_their_box_alone_or_with_a_room() {
+    let probe = parse(r#"{"dynlight_reflection_probe": true, "dynlight_probe_diffuse": 0.4}"#);
+    assert_eq!((probe.helper, probe.warnings.len()), (None, 0));
+    let diffuse = probe.reflection_probe.map(|probe| probe.diffuse_intensity);
+    assert_eq!(diffuse, Some(0.4));
+    let room =
+        parse(r#"{"dynlight_room": 1, "dynlight_reflection_probe": 1, "dynlight_radius": 2}"#);
+    assert_eq!(room.helper, Some(Helper::Room));
+    assert!(room.reflection_probe.is_some() && room.light.is_none());
+    assert_eq!(room.warnings.len(), 1, "{:?}", room.warnings);
+}
+
+#[test]
+fn probe_mistakes_make_no_probe() {
+    let portal = parse(r#"{"dynlight_portal": true, "dynlight_reflection_probe": true}"#);
+    assert_eq!(portal.helper, Some(Helper::Portal { closed: false }));
+    assert!(portal.reflection_probe.is_none());
+    assert_eq!(portal.warnings.len(), 1, "{:?}", portal.warnings);
+    let unreadable = parse(r#"{"dynlight_reflection_probe": "yes"}"#);
+    assert!(unreadable.reflection_probe.is_none() && unreadable.warnings.len() == 1);
+    let alone = parse(r#"{"dynlight_probe_diffuse": 0.5, "dynlight_static": true}"#);
+    assert!(alone.reflection_probe.is_none() && alone.bake_static);
+    assert_eq!(alone.warnings.len(), 1, "{:?}", alone.warnings);
+}

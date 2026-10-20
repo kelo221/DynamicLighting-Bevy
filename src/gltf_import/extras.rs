@@ -1,7 +1,7 @@
 //! Reads DynLight settings from glTF node extras (Blender custom properties).
 //!
 //! All keys are optional. A node is a light when it has at least one of the light keys (the
-//! rows from `dynlight_type` to `dynlight_fog`) and isn't a room or portal helper.
+//! rows from `dynlight_type` to `dynlight_fog`) and isn't a room, portal or probe helper.
 //!
 //! | Key | Value |
 //! |---|---|
@@ -20,8 +20,11 @@
 //! | `dynlight_room` | `true`/`false`/`1`/`0`: the node's local ±1 cube is a [`Room`](crate::portals::Room) |
 //! | `dynlight_portal` | `true`/`false`/`1`/`0`: the ±1 square in the node's local XY plane is a [`Portal`](crate::portals::Portal) |
 //! | `dynlight_portal_closed` | `true`/`false`/`1`/`0`, with `dynlight_portal`: the portal starts [closed](crate::portals::ClosedPortal) |
+//! | `dynlight_reflection_probe` | `true`/`false`/`1`/`0`: the node's local ±1 cube is a [`ReflectionProbe`]'s box, captured from its middle; it may also be the `dynlight_room` |
+//! | `dynlight_probe_diffuse` | number, with `dynlight_reflection_probe`: the probe's [`diffuse_intensity`](ReflectionProbe::diffuse_intensity) |
 //!
-//! A room or portal helper is never a light and never baked, and its own meshes are removed.
+//! A room, portal or probe helper is never a light and never baked, and its own meshes are
+//! removed.
 //! Conflicting or unreadable keys, and unknown `dynlight_` keys, are reported in
 //! [`NodeExtras::warnings`].
 
@@ -29,13 +32,15 @@ use bevy::prelude::*;
 use serde_json::{Map, Value};
 
 pub use super::helpers::Helper;
-use super::helpers::{CLOSED, PORTAL, ROOM, intent};
+use super::helpers::{CLOSED, PORTAL, PROBE, ROOM, intent};
 use crate::effects::{LightEffect, LightEffectKind};
 use crate::fog::{VolumetricLight, VolumetricShape};
 use crate::light::{DynamicLight, LightType, Shimmer};
+use crate::reflection_probes::ReflectionProbe;
 
 const STATIC: &str = "dynlight_static";
 const CAST_SHADOWS: &str = "dynlight_cast_shadows";
+const PROBE_DIFFUSE: &str = "dynlight_probe_diffuse";
 
 /// The keys that make a node a light.
 pub const LIGHT_KEYS: [&str; 13] = [
@@ -64,6 +69,8 @@ pub struct NodeExtras {
     /// `dynlight_cast_shadows` is `false`.
     pub no_shadow_casting: bool,
     pub helper: Option<Helper>,
+    /// A reflection probe filling the node's local ±1 cube.
+    pub reflection_probe: Option<ReflectionProbe>,
     /// Mistakes in the extras, each with what was made instead.
     pub warnings: Vec<String>,
 }
@@ -76,7 +83,17 @@ pub fn parse(json: &str) -> NodeExtras {
     };
     let mut extras = NodeExtras::default();
     let known = |key: &str| {
-        LIGHT_KEYS.contains(&key) || [STATIC, CAST_SHADOWS, ROOM, PORTAL, CLOSED].contains(&key)
+        LIGHT_KEYS.contains(&key)
+            || [
+                STATIC,
+                CAST_SHADOWS,
+                ROOM,
+                PORTAL,
+                CLOSED,
+                PROBE,
+                PROBE_DIFFUSE,
+            ]
+            .contains(&key)
     };
     for key in map.keys() {
         if key.starts_with("dynlight_") && !known(key) {
@@ -88,22 +105,32 @@ pub fn parse(json: &str) -> NodeExtras {
         .into_iter()
         .filter(|key| map.contains_key(*key))
         .collect();
+    let diffuse = number(&map, PROBE_DIFFUSE);
+    if map.contains_key(PROBE_DIFFUSE) && (!intent.probe || diffuse.is_none()) {
+        extras.warnings.push(format!(
+            "{PROBE_DIFFUSE} needs a number and {PROBE} on the same node; ignored"
+        ));
+    }
     if intent.intended {
         extras.helper = intent.helper;
+        extras.reflection_probe = intent.probe.then(|| ReflectionProbe {
+            diffuse_intensity: diffuse.unwrap_or(1.0).max(0.0),
+            ..default()
+        });
         if !light_keys.is_empty() {
             let keys = light_keys.join(", ");
-            extras.warnings.push(format!(
-                "a room or portal is never a light, so {keys} were ignored"
-            ));
+            extras
+                .warnings
+                .push(format!("a helper is never a light, so {keys} were ignored"));
         }
         if boolean(&map, STATIC) == Some(true) {
-            extras.warnings.push(format!(
-                "a room or portal is never baked, so {STATIC} was ignored"
-            ));
+            extras
+                .warnings
+                .push(format!("a helper is never baked, so {STATIC} was ignored"));
         }
         if map.contains_key(CAST_SHADOWS) {
             extras.warnings.push(format!(
-                "a room or portal casts no shadows, so {CAST_SHADOWS} was ignored"
+                "a helper casts no shadows, so {CAST_SHADOWS} was ignored"
             ));
         }
         return extras;

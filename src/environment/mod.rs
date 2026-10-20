@@ -3,8 +3,9 @@
 //!
 //! When the image loads, a background task projects it to spherical harmonics for diffuse
 //! light (packed into the light buffer as `shared::GpuSkyIrradiance`), prefilters it into a GGX
-//! cube for Metallic reflections ([`SKY_SPECULAR`]) and builds a mip-mapped copy for the
-//! background ([`SKY_BACKGROUND`]). Like Henry's lights, the sky's color, intensity and
+//! cube for Metallic reflections ([`SKY_SPECULAR`], which the reflection-probes slice copies
+//! into the cube array lit materials bind) and builds a mip-mapped copy for the background
+//! ([`SKY_BACKGROUND`]). Like Henry's lights, the sky's color, intensity and
 //! intensity effects stay live, and turning its entity turns it.
 //!
 //! Shader modules: `dynlight::environment::shaders::sky`; the background pass is
@@ -38,9 +39,10 @@ pub use frame::{SkyFrame, first_sky};
 use crate::light::{DynamicLight, LightSystems};
 use crate::shared::shaders_available;
 
-/// The prefiltered specular cube every lit material binds: mip level `m` is the sky seen by
+/// The sky's prefiltered specular cube, kept on the CPU: mip level `m` is the sky seen by
 /// perceptual roughness `m / (levels − 1)`, in the sky's own frame. White while no sky has an
-/// image, black while an image sky is being built.
+/// image, black while an image sky is being built. Lit materials reflect it as cube 0 of
+/// `reflection_probes::REFLECTION_CUBES`.
 pub const SKY_SPECULAR: Handle<Image> = uuid_handle!("2f6c1d8e-93a4-4b7f-b0e5-6a1c9d3e7f28");
 /// The sky image with mips that the background pass draws.
 pub const SKY_BACKGROUND: Handle<Image> = uuid_handle!("7a3e5b90-1c4d-4e8f-a6b2-d95f0c3e1a47");

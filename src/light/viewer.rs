@@ -10,6 +10,12 @@ use bevy::prelude::*;
 #[reflect(Component, Debug, Clone, Default, PartialEq)]
 pub struct LightingViewer;
 
+/// While set, the realtime lights are chosen around this point in every direction instead of for
+/// the viewer camera, and the realtime light grid is off: a reflection probe capture sets it, so
+/// its six faces see the lights around the probe.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CaptureViewpoint(pub Option<Vec3>);
+
 /// How a camera ranks as the viewer, the highest first; `None` for cameras that can't be it:
 /// inactive ones, and those neither marked [`LightingViewer`] nor 3D. Marked cameras come
 /// before the others, then higher `order` before lower.

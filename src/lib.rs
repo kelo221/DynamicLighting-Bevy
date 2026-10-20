@@ -26,6 +26,7 @@ pub mod light;
 pub mod light_clusters;
 pub mod portals;
 pub mod realtime_shadows;
+pub mod reflection_probes;
 pub mod scheduling;
 pub mod shared;
 pub mod surface;
@@ -49,6 +50,7 @@ pub mod prelude {
         Transparency, sun_light,
     };
     pub use crate::portals::{ClosedPortal, Portal, PortalSettings, PortalSide, Room};
+    pub use crate::reflection_probes::{CaptureReflectionProbes, ReflectionProbe};
     pub use crate::scheduling::{MainSchedules, SingleThreadedSchedulesPlugin};
     pub use crate::shared::{
         BakeId, DynamicLightingSettings, FeatureSelection, NoShadowCasting, RuntimeQuality,
@@ -70,6 +72,9 @@ impl Plugin for DynamicLightingPlugin {
             light_clusters::LightClustersPlugin,
             cookies::CookiesPlugin,
             environment::EnvironmentPlugin,
+            reflection_probes::ReflectionProbesPlugin,
+        ))
+        .add_plugins((
             surface::SurfacePlugin,
             bake::BakePlugin,
             baked_lighting::BakedLightingPlugin,

@@ -2,6 +2,8 @@
 
 use bevy::math::Vec3;
 
+pub use crate::shared::cube::face_orientation;
+
 /// Texels per side of a shadow cubemap face (Henry's 512).
 pub const SHADOW_CUBEMAP_RESOLUTION: u32 = 512;
 
@@ -21,20 +23,6 @@ pub const MAX_AREA_BLUR: f32 = 4.0;
 pub fn face_blur(extent: f32, radius: f32) -> f32 {
     let size = (4.0 * extent / radius.max(1.0e-6)).clamp(0.0, 1.0);
     POINT_BLUR + (MAX_AREA_BLUR - POINT_BLUR) * size
-}
-
-/// Forward and up of the view that renders cube face `face`, in WebGPU face order
-/// (`+X, -X, +Y, -Y, +Z, -Z`; see `shared::cube`). Cube faces are left-handed, so the rendered
-/// image is mirrored horizontally when it is written into the face.
-pub fn face_orientation(face: u32) -> (Vec3, Vec3) {
-    match face {
-        0 => (Vec3::X, Vec3::Y),
-        1 => (Vec3::NEG_X, Vec3::Y),
-        2 => (Vec3::Y, Vec3::NEG_Z),
-        3 => (Vec3::NEG_Y, Vec3::Z),
-        4 => (Vec3::Z, Vec3::Y),
-        _ => (Vec3::NEG_Z, Vec3::Y),
-    }
 }
 
 /// The lights that get shadow cubemaps: those nearest to `viewer` first (ties by key), at most

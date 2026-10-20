@@ -78,8 +78,13 @@ pub(super) fn plugin(app: &mut App) {
         .init_resource::<MissingFeatures>()
         .init_resource::<AutomaticChoice>()
         .insert_resource(LitShaderFeatures(features))
-        .add_systems(Last, choose_features);
+        .add_systems(Last, choose_features.in_set(ChooseFeatures));
 }
+
+/// Where [`LitShaderFeatures`] is updated in `Last` and the frame's [`ShaderFeaturesInUse`] and
+/// [`SceneLoading`] are cleared.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChooseFeatures;
 
 #[derive(Resource, Default)]
 pub(super) struct AutomaticChoice(FeatureChoice);

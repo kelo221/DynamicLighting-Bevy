@@ -194,6 +194,8 @@ struct Shading {
     // Metallic shading: a specular term per light, and diffuse light weighted by Fresnel.
     // Otherwise Henry's Diffuse shading.
     specular: bool,
+    // The sky's cube is reflected: neither the material's own cube nor a probe's is.
+    sky_reflection: bool,
 }
 
 // Light gathered at a fragment.

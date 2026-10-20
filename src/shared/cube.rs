@@ -76,6 +76,20 @@ pub fn texel_direction(face: u32, x: u32, y: u32, resolution: u32) -> Vec3 {
     )
 }
 
+/// Forward and up of the view that renders cube face `face`, in WebGPU face order
+/// (`+X, -X, +Y, -Y, +Z, -Z`). Cube faces are left-handed, so the rendered
+/// image is mirrored horizontally when it is written into the face.
+pub fn face_orientation(face: u32) -> (Vec3, Vec3) {
+    match face {
+        0 => (Vec3::X, Vec3::Y),
+        1 => (Vec3::NEG_X, Vec3::Y),
+        2 => (Vec3::Y, Vec3::NEG_Z),
+        3 => (Vec3::NEG_Y, Vec3::Z),
+        4 => (Vec3::Z, Vec3::Y),
+        _ => (Vec3::NEG_Z, Vec3::Y),
+    }
+}
+
 /// Flat index of texel `(x, y)` on `face`: `face · resolution² + y · resolution + x`.
 pub fn texel_index(face: u32, x: u32, y: u32, resolution: u32) -> u32 {
     face * resolution * resolution + y * resolution + x

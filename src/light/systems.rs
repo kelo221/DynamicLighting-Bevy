@@ -12,12 +12,12 @@ use super::component::DynamicLight;
 use super::kinds::LightType;
 use super::pack::{PackContext, pack};
 use super::placement::{LightPlacement, pose_of};
-use super::viewer::{LightingViewer, viewer_rank};
+use super::viewer::{CaptureViewpoint, LightingViewer, viewer_rank};
 use crate::effects::LightEffectState;
 use crate::portals::{self, RoomGraph, RoomView};
 use crate::shared::{
     DynamicGeometryMode, DynamicLightingSettings, GpuLight, GpuLightGlobals, NamePaths,
-    RuntimeQuality, SkyIrradiance, SunShadowBlock,
+    ReflectionProbeRecords, RuntimeQuality, SkyIrradiance, SunShadowBlock,
 };
 
 type CameraItem<'a> = (
@@ -91,7 +91,8 @@ type LightItem<'a> = (
 /// the budget. Of the sky lights only the chosen one is packed.
 ///
 /// A realtime light within the budget must lie in the viewer's frustum and be seen by some
-/// relevant camera through the rooms.
+/// relevant camera through the rooms. While a [`CaptureViewpoint`] is set they are chosen around
+/// it instead, in every direction.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pack_lights(
     time: Res<Time>,
@@ -99,9 +100,13 @@ pub(super) fn pack_lights(
     slots: Res<BakedLightSlots>,
     placement: Res<LightPlacement>,
     (attachments, choices): (Res<LightAttachments>, Res<LightChoices>),
-    (sky, sun_shadow): (Res<SkyIrradiance>, Res<SunShadowBlock>),
+    (sky, sun_shadow, probes): (
+        Res<SkyIrradiance>,
+        Res<SunShadowBlock>,
+        Res<ReflectionProbeRecords>,
+    ),
     lights: Query<LightItem>,
-    (cameras, rooms): (Query<CameraItem>, Res<RoomGraph>),
+    (cameras, rooms, viewpoint): (Query<CameraItem>, Res<RoomGraph>, Res<CaptureViewpoint>),
     paths: NamePaths,
     mut packed: ResMut<PackedLights>,
 ) {
@@ -168,7 +173,8 @@ pub(super) fn pack_lights(
     let camera = relevant
         .iter()
         .max_by_key(|(rank, ..)| *rank)
-        .map(|&(_, camera, _)| camera);
+        .map(|&(_, camera, _)| camera)
+        .filter(|_| viewpoint.0.is_none());
     packed.viewer = camera.map(|(camera, transform, _)| RealtimeViewer {
         view_from_world: transform.to_matrix().inverse(),
         clip_from_view: camera.clip_from_view(),
@@ -196,7 +202,9 @@ pub(super) fn pack_lights(
     }
     let selected = select_realtime(
         candidates,
-        camera.map(|(_, transform, _)| transform.translation()),
+        viewpoint
+            .0
+            .or(camera.map(|(_, transform, _)| transform.translation())),
         settings.realtime_light_budget as usize,
         |center, radius| {
             // The viewer's frustum alone bounds the realtime lights, as it bounds the clusters.
@@ -241,6 +249,7 @@ pub(super) fn pack_lights(
     };
     packed.sky = sky.0;
     packed.sun_shadow = sun_shadow.0;
+    packed.probes = probes.0;
 }
 
 pub fn quality_level(quality: RuntimeQuality) -> u32 {

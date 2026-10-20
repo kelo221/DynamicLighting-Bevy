@@ -6,7 +6,7 @@ import dynlight::shared::shaders::types::GpuLight;
 import dynlight::shared::shaders::variant::FEATURE_SKY;
 import dynlight::environment::shaders::sky::{sky_irradiance, sky_local};
 import dynlight::surface::shaders::bindings::{
-    material, dynamic_lights, reflection_texture, reflection_sampler, FLAG_REFLECTION,
+    dynamic_lights, reflection_texture, reflection_sampler,
 };
 import dynlight::surface::shaders::brdf::fresnel_schlick_roughness;
 import dynlight::surface::shaders::light_processor::{LightSum, Shading, SurfacePoint};
@@ -26,13 +26,13 @@ fn add_sky(sum: ptr<function, LightSum>, shading: Shading, light: GpuLight, surf
     }
     let fresnel = fresnel_schlick_roughness(max(dot(surface.normal, shading.view), 0.0), shading.f0, shading.roughness);
     (*sum).diffuse += irradiance * ((1.0 - fresnel) * (1.0 - shading.metallic));
-    // A material with its own reflection cube reflects that instead, and binds it in place of
-    // the sky's.
-    if (material.flags & FLAG_REFLECTION) != 0u {
+    // A material with its own reflection cube, or a fragment in a reflection probe, reflects
+    // that instead.
+    if !shading.sky_reflection {
         return;
     }
     let direction = sky_local(light, reflect(-shading.view, surface.normal));
     let lod = shading.roughness * f32(textureNumLevels(reflection_texture) - 1u);
-    let reflected = textureSampleLevel(reflection_texture, reflection_sampler, direction, lod).rgb;
+    let reflected = textureSampleLevel(reflection_texture, reflection_sampler, direction, 0u, lod).rgb;
     (*sum).reflection += reflected * strength * fresnel;
 }

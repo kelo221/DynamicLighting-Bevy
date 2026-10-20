@@ -7,6 +7,7 @@ use super::GltfImportPlugin;
 use crate::bake::BakeStatic;
 use crate::light::DynamicLight;
 use crate::portals::{ClosedPortal, Portal, Room};
+use crate::reflection_probes::ReflectionProbe;
 use crate::shared::NoShadowCasting;
 
 fn app() -> App {
@@ -117,4 +118,23 @@ fn a_room_that_is_also_a_portal_keeps_its_mesh_and_makes_nothing() {
     let node = app.world().entity(node);
     assert!(!node.contains::<Room>() && !node.contains::<Portal>());
     assert!(app.world().get_entity(primitive).is_ok());
+}
+
+#[test]
+fn a_probe_node_loses_its_primitives_and_may_be_a_room() {
+    let mut app = app();
+    let world = app.world_mut();
+    let json = r#"{"dynlight_room": true, "dynlight_reflection_probe": true}"#;
+    let node = world.spawn(extras(json)).id();
+    let primitive = world.spawn((Mesh3d::default(), ChildOf(node))).id();
+    let probe = world
+        .spawn(extras(r#"{"dynlight_reflection_probe": 1}"#))
+        .id();
+    app.update();
+    let world = app.world();
+    let both = world.entity(node);
+    assert!(both.contains::<Room>() && both.contains::<ReflectionProbe>());
+    assert!(world.get_entity(primitive).is_err());
+    let probe = world.entity(probe);
+    assert!(probe.contains::<ReflectionProbe>() && !probe.contains::<Room>());
 }

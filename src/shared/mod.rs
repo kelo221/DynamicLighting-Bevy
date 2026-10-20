@@ -1,6 +1,7 @@
-//! Small kernel used by two or more slices: stable bake identity, the GPU light record,
-//! scene-wide settings, the no-shadow marker, math helpers, the camera sphere test, per-frame shader buffer writes,
-//! the base WESL types module and the shader variant.
+//! Small kernel used by two or more slices: stable bake identity, the GPU light record and the
+//! records in the light buffer's header, scene-wide settings, the no-shadow marker, math
+//! helpers, cube conventions, the camera sphere test, per-frame shader buffer writes, the base
+//! WESL types module and the shader variant.
 //!
 //! Shaders import the types module as `dynlight::shared::shaders::types` and the generated
 //! variant constants as `dynlight::shared::shaders::variant`.
@@ -15,6 +16,7 @@ mod gpu_light;
 pub mod math;
 pub mod mesh_hash;
 mod name_path;
+mod probes;
 mod settings;
 mod shader_buffer;
 mod shadow_casting;
@@ -28,12 +30,16 @@ use bevy::prelude::*;
 use bevy::shader::{Shader, load_shader_library};
 
 pub use bake_id::{BakeId, ResolvedBakeId};
-pub use feature_use::{LitShaderFeatures, SceneLoading, ShaderFeaturesInUse};
+pub use feature_use::{ChooseFeatures, LitShaderFeatures, SceneLoading, ShaderFeaturesInUse};
 pub use frustum::sees_sphere;
 pub use globals::{GPU_LIGHT_GLOBALS_SIZE, GpuLightGlobals};
 pub use gpu_light::{ChannelFlags, GPU_LIGHT_SIZE, GpuLight};
 pub use mesh_hash::{hash_mesh, mesh_content_hash};
 pub use name_path::NamePaths;
+pub use probes::{
+    GPU_REFLECTION_PROBE_SIZE, GPU_REFLECTION_PROBES_SIZE, GpuReflectionProbe, GpuReflectionProbes,
+    MAX_REFLECTION_PROBES, ReflectionProbeRecords,
+};
 pub use settings::{
     DEBUG_LIGHT_COUNT_MAX, DebugView, DynamicGeometryMode, DynamicLightingSettings,
     FeatureSelection, RuntimeQuality, ShaderFeatures, TrackingMode, TriangleIdSource,
@@ -52,7 +58,8 @@ impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DynamicLightingSettings>()
             .init_resource::<SkyIrradiance>()
-            .init_resource::<SunShadowBlock>();
+            .init_resource::<SunShadowBlock>()
+            .init_resource::<ReflectionProbeRecords>();
         feature_use::plugin(app);
     }
 

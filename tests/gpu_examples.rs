@@ -72,6 +72,20 @@ fn gpu_specular_light_matches_the_cpu_mirror() {
     );
 }
 
+/// A probe captured off-centre in a room of colored walls: box-projected reflections on chrome
+/// and irradiance on a mesh without bake data, at this GPU's limits and WebGPU's.
+#[test]
+#[ignore = "needs a GPU"]
+fn gpu_reflection_probes_match_the_cpu_mirror() {
+    for args in [&[][..], &["--webgpu-limits"]] {
+        let log = run_example("gpu_check_probes", args);
+        assert!(
+            log.contains("GPU reflection probes match the CPU mirror"),
+            "{log}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "needs a GPU"]
 fn gpu_area_shadows_match_the_cpu_mirror_at_every_quality() {

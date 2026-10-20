@@ -72,6 +72,13 @@ pub(super) struct SkyBuilds {
     restart: bool,
 }
 
+/// `cube` kept on the CPU only: the reflection-probes slice copies it into the cube array lit
+/// materials bind.
+fn cpu_only(mut cube: Image) -> Image {
+    cube.asset_usage = bevy::asset::RenderAssetUsages::MAIN_WORLD;
+    cube
+}
+
 /// The sky's diffuse light, specular cube and background from its image.
 pub(super) fn build_sky(
     source: &Image,
@@ -96,7 +103,7 @@ pub(super) fn build_sky(
     );
     Ok(SkyData {
         irradiance: to_gpu(&irradiance_over_pi(project(sh_level))),
-        specular: specular_image(&cube),
+        specular: cpu_only(specular_image(&cube)),
         background: background_image(&background),
         texels,
         milliseconds: start.elapsed().as_millis(),
@@ -151,7 +158,7 @@ pub(super) fn build_skies(
             Err(error) => {
                 warn!("dynlight sky: can't light with the sky image: {error}");
                 // An earlier sky's data would light the scene in its place.
-                let _ = images.insert(&SKY_SPECULAR, placeholder_specular());
+                let _ = images.insert(&SKY_SPECULAR, cpu_only(placeholder_specular()));
                 irradiance.0 = GpuSkyIrradiance::default();
                 builds.shown = Shown::Nothing;
                 (builds.built, builds.failed) = (None, current);
@@ -172,7 +179,7 @@ pub(super) fn build_skies(
         (builds.running, builds.restart) = (None, false);
         (builds.built, builds.failed) = (None, None);
         if builds.shown != Shown::Uniform {
-            let _ = images.insert(&SKY_SPECULAR, uniform_specular());
+            let _ = images.insert(&SKY_SPECULAR, cpu_only(uniform_specular()));
             irradiance.0 = to_gpu(&uniform(Vec3::ONE));
             builds.shown = Shown::Uniform;
         }
@@ -180,7 +187,7 @@ pub(super) fn build_skies(
     };
     if builds.shown == Shown::Uniform {
         // An image sky adds no light until it is built.
-        let _ = images.insert(&SKY_SPECULAR, placeholder_specular());
+        let _ = images.insert(&SKY_SPECULAR, cpu_only(placeholder_specular()));
         irradiance.0 = GpuSkyIrradiance::default();
         builds.shown = Shown::Nothing;
     }
@@ -230,7 +237,7 @@ pub(super) fn insert_placeholders(app: &mut App) {
         return;
     };
     images
-        .insert(&SKY_SPECULAR, placeholder_specular())
+        .insert(&SKY_SPECULAR, cpu_only(placeholder_specular()))
         .expect("the sky specular handle is a fixed UUID");
     images
         .insert(&SKY_BACKGROUND, placeholder_background())
