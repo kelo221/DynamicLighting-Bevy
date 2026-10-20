@@ -4,7 +4,7 @@
 use bevy::math::{Vec2, Vec3};
 
 use super::bits::TexelRect;
-use super::geometry::uv_barycentrics;
+use super::geometry::{closest_point_on_triangle, uv_barycentrics};
 use super::mesh_builder::trace_rect;
 
 /// A texel whose center lies inside the triangle in UV space.
@@ -71,6 +71,75 @@ pub fn triangle_texels(
     texels
 }
 
+/// The texels of a `size`² map that the triangle touches in UV space although their centers lie
+/// outside it, skipping those `owned` says some triangle's center sample already covers. Each is
+/// placed at the triangle's point nearest the texel center. A triangle narrower than a texel,
+/// like the strips of a thin pipe, owns few centers or none, and its texels would stay unlit.
+pub fn touched_texels(
+    vertices: [Vec3; 3],
+    normals: [Vec3; 3],
+    uvs: [Vec2; 3],
+    face_normal: Vec3,
+    size: u32,
+    owned: impl Fn(u32, u32) -> bool,
+) -> Vec<SurfaceTexel> {
+    let s = size as f32;
+    let (min, max) = (
+        uvs[0].min(uvs[1]).min(uvs[2]),
+        uvs[0].max(uvs[1]).max(uvs[2]),
+    );
+    let first = (min * s).floor().max(Vec2::ZERO);
+    let last = (max * s).floor().min(Vec2::splat(s - 1.0));
+    let half = 0.5 / s;
+    let mut texels = Vec::new();
+    for y in first.y as u32..=last.y as u32 {
+        for x in first.x as u32..=last.x as u32 {
+            if owned(x, y) {
+                continue;
+            }
+            let center = texel_center(x, y, size);
+            let Some(w) = nearest_weights(uvs, center) else {
+                continue;
+            };
+            let nearest = uvs[0] * w.x + uvs[1] * w.y + uvs[2] * w.z;
+            if (nearest - center).abs().max_element() > half {
+                continue;
+            }
+            let position = vertices[0] * w.x + vertices[1] * w.y + vertices[2] * w.z;
+            let normal = (normals[0] * w.x + normals[1] * w.y + normals[2] * w.z)
+                .try_normalize()
+                .unwrap_or(face_normal);
+            texels.push(SurfaceTexel {
+                x,
+                y,
+                position,
+                normal,
+            });
+        }
+    }
+    texels
+}
+
+/// Vertex weights of the triangle's point nearest `point` in UV space, or `None` for a triangle
+/// without UV area.
+fn nearest_weights(uvs: [Vec2; 3], point: Vec2) -> Option<Vec3> {
+    let lift = |uv: Vec2| uv.extend(0.0);
+    let [a, b, c] = uvs.map(lift);
+    let nearest = closest_point_on_triangle(lift(point), a, b, c).truncate();
+    let area = (b - a).cross(c - a).z;
+    if area == 0.0 || !area.is_finite() {
+        return None;
+    }
+    let weight = |p: Vec2, q: Vec2| (lift(p) - lift(nearest)).cross(lift(q) - lift(nearest)).z;
+    let w = Vec3::new(
+        weight(uvs[1], uvs[2]),
+        weight(uvs[2], uvs[0]),
+        weight(uvs[0], uvs[1]),
+    ) / area;
+    let w = w.max(Vec3::ZERO);
+    Some(w / w.element_sum().max(f32::MIN_POSITIVE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +164,35 @@ mod tests {
             assert!((texel.normal.length() - 1.0).abs() < 1e-5);
             assert!(texel.x + texel.y <= 3);
         }
+    }
+
+    #[test]
+    fn thin_triangles_touch_texels_whose_centers_they_miss() {
+        // A sliver in texel column 1 of a 4² map, 0.3 texels wide, left of the column's centers.
+        let uvs = [
+            Vec2::new(0.30, 0.05),
+            Vec2::new(0.375, 0.05),
+            Vec2::new(0.30, 0.95),
+        ];
+        let vertices = uvs.map(|uv| Vec3::new(uv.x, 0.0, uv.y));
+        let normals = [Vec3::Y; 3];
+        assert!(triangle_texels(vertices, normals, uvs, Vec3::Y, 4).is_empty());
+        let touched = touched_texels(vertices, normals, uvs, Vec3::Y, 4, |_, _| false);
+        let cells: Vec<(u32, u32)> = touched.iter().map(|t| (t.x, t.y)).collect();
+        assert_eq!(cells, [(1, 0), (1, 1), (1, 2), (1, 3)]);
+        for texel in &touched {
+            let uv = Vec2::new(texel.position.x, texel.position.z);
+            assert!(
+                uv.x >= 0.30 - 1e-6 && uv.x <= 0.375 + 1e-6,
+                "{uv} lies on the sliver"
+            );
+            assert!(
+                (uv.y - (texel.y as f32 + 0.5) / 4.0).abs() < 0.13,
+                "{uv} near the center row"
+            );
+        }
+        let owned = touched_texels(vertices, normals, uvs, Vec3::Y, 4, |_, y| y == 2);
+        assert_eq!(owned.len(), 3, "owned texels are skipped");
     }
 
     #[test]

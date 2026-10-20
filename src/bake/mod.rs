@@ -22,6 +22,7 @@ mod light_bvh;
 mod light_shape;
 mod mesh_bake;
 mod mesh_builder;
+mod mesh_texels;
 pub mod mirror;
 mod occluder;
 mod progress;

@@ -181,7 +181,8 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/sun_map.rs` | none | none | New; the orthographic unorm16 depth map of the static scene along each baked sun's rays, for meshes without bake data (M19) |
 | `src/bake/snapshot.rs` | `C/Core/DynamicLightingTracer.TemporaryScene.cs:43-118`; `C/Core/DynamicLightManager.cs:522-548` | none | Replaced; ECS query (`BakeStatic` meshes, non-realtime lights); area lights with their shape (New); sky lights bake unless `realtime` (M21; M20 left them out) |
 | `src/bake/systems.rs` | `E/EditorMenus.cs:9-67` (bake menus); `C/Core/DynamicLightManager.cs:1581-1621` | none | Replaced; `BakeRequest` message on the async compute pool, Preview / Full presets; in-memory result, optional file |
-| `src/bake/texels.rs` | `C/Core/DynamicLightingTracer.TriangleUvToFull3dStep.cs:1-225`; `C/Utilities/MathEx.cs:185-273` | none | Ported; explicit "outside" result and renormalized normals (PLAN §12) |
+| `src/bake/texels.rs` | `C/Core/DynamicLightingTracer.TriangleUvToFull3dStep.cs:1-225`; `C/Utilities/MathEx.cs:185-273` | none | Ported; explicit "outside" result and renormalized normals (PLAN §12); touched texels for thin triangles (New, PLAN §12) |
+| `src/bake/mesh_texels.rs` | none | none | New: which texels a mesh traces (touched texels, buried texels skipped; PLAN §12) |
 | `src/bake/triangle_words.rs` | `C/Core/DynamicTrianglesBuilder.cs:75-99,198-366` | none (the `BO/baker.rs` serializer is not reused) | Ported; same word layout |
 | `src/bake/tests/mod.rs` | none | none | New; synthetic floor, cuboid and light fixtures |
 | `src/bake/tests/bounce.rs` | none | none | New |

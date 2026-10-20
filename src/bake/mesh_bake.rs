@@ -12,13 +12,13 @@ use super::geometry::{Aabb, approx_eq, sphere_intersects_triangle};
 use super::input::{BakeError, BakeLight, BakeOptions};
 use super::light_bvh::LightBvh;
 use super::mesh_builder::{PreparedMesh, crop_rect};
+use super::mesh_texels::MeshTexels;
 use super::mirror::MAX_TRIANGLE_LIGHTS;
 use super::occluder::{Occluders, RayCaster};
 use super::progress::BakeProgress;
 use super::shadow_grid::{AtomicShadowGrid, ShadowRegion};
 use super::shadows;
 use super::texel_shadow::texel_shadow;
-use super::texels::triangle_texels;
 use super::triangle_words::{TriangleRecord, serialize_triangles};
 
 /// Henry's tolerance for surfaces facing slightly away from a light.
@@ -76,11 +76,12 @@ pub fn bake_mesh(scene: &Scene, prepared: &PreparedMesh) -> Result<MeshOutput, B
         .map(|triangle| associate(scene, prepared, triangle))
         .collect();
     let regions = light_regions(&setups, scene.lights.len());
+    let texels = MeshTexels::new(&scene.occluders, scene.options.seed, prepared, &setups);
 
-    let traced = trace(scene, prepared, &setups, &regions);
+    let traced = trace(scene, prepared, &setups, &regions, &texels);
     scene.progress.check()?;
 
-    let (mut bounce, bounce_rays) = bounce::bake_mesh_bounce(scene, prepared, &setups);
+    let (mut bounce, bounce_rays) = bounce::bake_mesh_bounce(scene, prepared, &setups, &texels);
     scene.progress.check()?;
 
     let mut entries = shadows::LightEntries::new(setups, &mut bounce);
@@ -204,6 +205,7 @@ fn trace(
     prepared: &PreparedMesh,
     setups: &[TriangleSetup],
     regions: &LightRegions,
+    mesh_texels: &MeshTexels,
 ) -> Traced {
     let size = prepared.resolution;
     let visited = AtomicBitGrid::new(size, size);
@@ -223,13 +225,7 @@ fn trace(
             if setup.face_normal == Vec3::ZERO || scene.progress.is_cancelled() {
                 return (0, 0);
             }
-            let texels = triangle_texels(
-                prepared.vertices(triangle),
-                prepared.normals(triangle),
-                prepared.uvs(triangle),
-                setup.face_normal,
-                size,
-            );
+            let texels = mesh_texels.of(prepared, triangle, setup.face_normal);
             let offset = setup.face_normal * RAY_OFFSET;
             let mut rays = 0u64;
             for &light_slot in &setup.lights {

@@ -2,6 +2,7 @@
 //! read back through the shader mirror.
 
 mod bounce;
+mod coverage;
 mod determinism;
 mod footprint;
 mod layout;

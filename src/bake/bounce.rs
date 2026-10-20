@@ -15,10 +15,11 @@ use super::bounce_map::BounceMap;
 use super::input::{BakeLight, BakeOptions};
 use super::mesh_bake::{RAY_OFFSET, Scene, TriangleSetup};
 use super::mesh_builder::PreparedMesh;
+use super::mesh_texels::MeshTexels;
 use super::occluder::{Occluders, RayCaster};
 use super::progress::BakeProgress;
 use super::random;
-use super::texels::triangle_texels;
+use super::texels::SurfaceTexel;
 
 /// The first surface seen from a light through one cube texel.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -127,6 +128,7 @@ pub fn bake_mesh_bounce(
     scene: &Scene,
     prepared: &PreparedMesh,
     setups: &[TriangleSetup],
+    mesh_texels: &MeshTexels,
 ) -> (Vec<Vec<Option<Vec<f32>>>>, u64) {
     if !scene.bounce_in_scene {
         return (Vec::new(), 0);
@@ -157,7 +159,10 @@ pub fn bake_mesh_bounce(
         let light = scene.lights[slot];
         let gathered: Vec<Gathered> = receivers
             .par_iter()
-            .map(|&(t, _)| gather_triangle(scene, prepared, &setups[t], t, light, cube))
+            .map(|&(t, _)| {
+                let texels = mesh_texels.of(prepared, t, setups[t].face_normal);
+                gather_triangle(scene, &texels, &setups[t], prepared, light, cube)
+            })
             .collect();
         // Later triangles overwrite shared texels, as in Henry's sequential loop.
         let mut map = BounceMap::new(prepared.resolution, crops);
@@ -184,29 +189,22 @@ type Gathered = (Vec<(u32, u32, f32)>, u64);
 /// photons add `max(n_s·d, 0) · max(n_p·−d, 0) · intensity`, averaged over all samples.
 fn gather_triangle(
     scene: &Scene,
-    prepared: &PreparedMesh,
+    texels: &[SurfaceTexel],
     setup: &TriangleSetup,
-    triangle: usize,
+    prepared: &PreparedMesh,
     light: &BakeLight,
     cube: &PhotonCube,
 ) -> Gathered {
     if setup.face_normal == Vec3::ZERO {
         return (Vec::new(), 0);
     }
-    let texels = triangle_texels(
-        prepared.vertices(triangle),
-        prepared.normals(triangle),
-        prepared.uvs(triangle),
-        setup.face_normal,
-        prepared.resolution,
-    );
     let samples = light.bounce.samples.max(2);
     let spread_step = 0.9 / (samples - 1) as f32;
     let alpha_test = light.alpha_tested();
     let normal = setup.face_normal;
     let mut rays = 0u64;
     let mut out = Vec::with_capacity(texels.len());
-    for texel in &texels {
+    for texel in texels {
         let to_texel = texel.position - light.position;
         if to_texel.length_squared() > light.radius * light.radius {
             continue;
