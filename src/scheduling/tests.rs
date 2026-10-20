@@ -6,8 +6,8 @@ use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
 use bevy::render::{ExtractSchedule, Render, RenderApp, RenderScheduleOrder};
 
-use super::SingleThreadedSchedulesPlugin;
 use super::executors::{single_threaded, switch_main, switch_render};
+use super::{MainSchedules, SingleThreadedSchedulesPlugin};
 
 #[derive(Component)]
 struct Spawned;
@@ -66,26 +66,38 @@ fn update_threads(plugin: Option<SingleThreadedSchedulesPlugin>) -> Vec<ThreadId
     app.world_mut().remove_resource::<Threads>().unwrap().0
 }
 
+fn with_main(main: MainSchedules) -> Option<SingleThreadedSchedulesPlugin> {
+    Some(SingleThreadedSchedulesPlugin { main, ..default() })
+}
+
+/// Which of `Update`, `PostUpdate` and `Last` ran on the thread that updated the app.
+fn ran_here(plugin: Option<SingleThreadedSchedulesPlugin>) -> Vec<bool> {
+    let here = std::thread::current().id();
+    let threads = update_threads(plugin);
+    assert_eq!(threads.len(), 3);
+    threads.iter().map(|&thread| thread == here).collect()
+}
+
 #[test]
 fn main_schedules_run_on_the_thread_that_updates_the_app() {
-    let here = std::thread::current().id();
-    let threads = update_threads(Some(SingleThreadedSchedulesPlugin::default()));
-    assert_eq!(threads, vec![here; 3]);
-    // The multi-threaded executor runs them on its workers, so the check above means something.
+    assert_eq!(ran_here(with_main(MainSchedules::All)), [true; 3]);
+    // The multi-threaded executor runs them on its workers, so the checks mean something.
     if MULTI_THREADED {
-        let threads = update_threads(None);
-        assert_eq!(threads.len(), 3);
-        assert!(threads.iter().all(|&thread| thread != here));
-        let main_off = SingleThreadedSchedulesPlugin {
-            main: false,
-            ..default()
-        };
-        assert!(
-            update_threads(Some(main_off))
-                .iter()
-                .all(|&thread| thread != here)
-        );
+        assert_eq!(ran_here(None), [false; 3]);
+        assert_eq!(ran_here(with_main(MainSchedules::Off)), [false; 3]);
     }
+}
+
+/// By default `Update` keeps the multi-threaded executor and the engine's schedules switch.
+#[test]
+fn the_default_leaves_update_alone() {
+    assert_eq!(
+        SingleThreadedSchedulesPlugin::default().main,
+        MainSchedules::Engine
+    );
+    let expected = [!MULTI_THREADED, true, true];
+    assert_eq!(ran_here(Some(default())), expected);
+    assert_eq!(ran_here(with_main(MainSchedules::Engine)), expected);
 }
 
 /// A schedule an app adds to the main schedule order keeps its executor and its settings,
@@ -102,7 +114,13 @@ fn only_bevys_own_main_schedules_switch() {
         .insert_after(Update, Test);
     app.add_systems(FixedUpdate, spawn);
     // Every sub-app has a `First`.
-    assert_eq!(switch_main(&mut app), 2, "First and FixedUpdate");
+    assert_eq!(switch_main(&mut app, MainSchedules::Off), 0);
+    assert_eq!(switch_main(&mut app, MainSchedules::Engine), 1, "First");
+    assert_eq!(
+        switch_main(&mut app, MainSchedules::All),
+        2,
+        "First and FixedUpdate"
+    );
 
     let world = app.world_mut();
     world.run_schedule(Test);
@@ -157,7 +175,10 @@ fn render_switches_only_when_asked() {
         render_app.add_systems(Render, note_thread);
         let mut app = App::new();
         app.insert_sub_app(RenderApp, render_app);
-        app.add_plugins(SingleThreadedSchedulesPlugin { main: true, render });
+        app.add_plugins(SingleThreadedSchedulesPlugin {
+            main: MainSchedules::All,
+            render,
+        });
         app.finish();
 
         let world = app.sub_app_mut(RenderApp).world_mut();

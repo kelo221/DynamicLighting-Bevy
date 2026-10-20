@@ -21,9 +21,17 @@
 //! `NonSend` data created there) loses it; Bevy's `create_surfaces` on macOS and iOS is why
 //! `Render` keeps its executor there.
 //!
+//! What is lost is running whole systems side by side. Bevy's engine and render systems are short,
+//! and its per-mesh work is split across threads inside single systems, so they lose little. A
+//! game's own systems in `Update` and the fixed-timestep schedules (physics, AI, animation) can be
+//! long and independent, which is what the multi-threaded executor is for, so by default those
+//! schedules keep it ([`MainSchedules::Engine`]). [`MainSchedules::All`] switches them too, for
+//! apps whose game logic is light; [`MainSchedules::Off`] leaves the main app alone, for apps
+//! with heavy systems of their own in `PreUpdate` or `PostUpdate`.
+//!
 //! Executors are an app-wide choice, so
-//! [`DynamicLightingPlugin`](crate::DynamicLightingPlugin) doesn't add this plugin. An app with
-//! long independent systems can be faster with the multi-threaded executor; measure both.
+//! [`DynamicLightingPlugin`](crate::DynamicLightingPlugin) doesn't add this plugin. Measure your
+//! own app with and without it.
 
 mod executors;
 #[cfg(test)]
@@ -35,9 +43,8 @@ use bevy::render::RenderApp;
 /// Runs Bevy's per-frame schedules on Bevy's single-threaded executor. Add it with the other
 /// plugins; it switches the schedules once, in its `finish`, after every plugin's `build`.
 ///
-/// - `main`: Bevy's main schedules from `First` to `Last` (with `StateTransition` and
-///   `SpawnScene`) and its fixed-timestep schedules from `FixedFirst` to `FixedLast`. Startup
-///   schedules keep their executor.
+/// - `main`: which of Bevy's main-app schedules switch; see [`MainSchedules`]. Startup schedules
+///   keep their executor.
 /// - `render`: the render world's extraction, `First`, `Render`, the schedule that runs them,
 ///   the render graph and the `Core3d` and `Core2d` camera schedules. On macOS and iOS `Render`
 ///   keeps its executor, because window surfaces have to be created on the main thread there.
@@ -46,17 +53,32 @@ use bevy::render::RenderApp;
 /// after this plugin's `finish` (in another plugin's `finish` or `cleanup`, or at runtime).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SingleThreadedSchedulesPlugin {
-    pub main: bool,
+    pub main: MainSchedules,
     pub render: bool,
 }
 
 impl Default for SingleThreadedSchedulesPlugin {
     fn default() -> Self {
         Self {
-            main: true,
+            main: MainSchedules::Engine,
             render: true,
         }
     }
+}
+
+/// Which of Bevy's main-app schedules [`SingleThreadedSchedulesPlugin`] switches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MainSchedules {
+    /// None of them.
+    Off,
+    /// The engine's schedules around `Update`: `First`, `PreUpdate`, `StateTransition`,
+    /// `RunFixedMainLoop`, `SpawnScene`, `PostUpdate` and `Last`. `Update` and the
+    /// fixed-timestep schedules, where a game's own systems usually are, keep their executor.
+    #[default]
+    Engine,
+    /// The engine's schedules, `Update`, and the fixed-timestep schedules from `FixedFirst` to
+    /// `FixedLast`.
+    All,
 }
 
 impl Plugin for SingleThreadedSchedulesPlugin {
@@ -65,11 +87,7 @@ impl Plugin for SingleThreadedSchedulesPlugin {
     /// After every plugin's `build`, and before pipelined rendering moves the render app to its
     /// own thread in `cleanup`.
     fn finish(&self, app: &mut App) {
-        let main = if self.main {
-            executors::switch_main(app.main_mut())
-        } else {
-            0
-        };
+        let main = executors::switch_main(app.main_mut(), self.main);
         let render = match app.get_sub_app_mut(RenderApp) {
             Some(render_app) if self.render => executors::switch_render(render_app),
             _ => 0,

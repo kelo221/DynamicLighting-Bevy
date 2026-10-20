@@ -10,8 +10,8 @@
 //! [`baked_lighting::ActiveBake`] to apply it. The crate is organized as vertical slices, one
 //! module per feature; see `AGENTS.md`.
 //!
-//! [`scheduling::SingleThreadedSchedulesPlugin`] is separate and opt-in: it runs the app's
-//! per-frame schedules on Bevy's single-threaded executor, which saves a fixed cost per frame.
+//! [`scheduling::SingleThreadedSchedulesPlugin`] is separate and opt-in: it runs Bevy's engine and
+//! render-world schedules on Bevy's single-threaded executor, which saves a fixed cost per frame.
 
 pub mod bake;
 pub mod baked_lighting;
@@ -49,7 +49,7 @@ pub mod prelude {
         Transparency, sun_light,
     };
     pub use crate::portals::{ClosedPortal, Portal, PortalSettings, PortalSide, Room};
-    pub use crate::scheduling::SingleThreadedSchedulesPlugin;
+    pub use crate::scheduling::{MainSchedules, SingleThreadedSchedulesPlugin};
     pub use crate::shared::{
         BakeId, DynamicLightingSettings, FeatureSelection, RuntimeQuality, ShaderFeatures,
         TriangleIdSource,

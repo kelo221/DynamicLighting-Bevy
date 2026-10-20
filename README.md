@@ -17,7 +17,7 @@ The crate is its own lighting system. It never uses Bevy's lights (`PointLight`,
 - **Materials:** `DynLitMaterial` covers Henry's Diffuse, Metallic (GGX) and Unlit shaders, with normal, occlusion and metallic-roughness maps. glTF `StandardMaterial`s, light extras and room and portal helpers are converted on load.
 - **Volumetric fog:** sphere, box, cone and square-shaft (`Frustum`) fog volumes per light, as a post-process pass. The shaft starts at an area light's size, for fluorescent fixtures.
 - **Rooms and portals:** optional `Room` cells and `Portal` openings stop each camera's view at the walls, so realtime lights, shadow cubemaps and fog volumes that no camera can see through a door or window are left out. Walls are never assumed to stop light: only lights whose whole sphere is out of sight are dropped, so while every light fits the budgets the image doesn't change, and when they don't the budget goes to lights a camera can see.
-- **Low-overhead scheduling:** the opt-in `SingleThreadedSchedulesPlugin` runs the frame's schedules on Bevy's single-threaded executor, which saves about 1 ms a frame in the benchmark scenes.
+- **Low-overhead scheduling:** the opt-in `SingleThreadedSchedulesPlugin` runs Bevy's engine and render-world schedules on Bevy's single-threaded executor, which saved about 1 ms a frame in the benchmark scenes. A game's own `Update` and fixed-timestep systems keep the multi-threaded executor unless you ask otherwise.
 - **Debug views:** `DynamicLightingSettings::debug_view` shows lighting on white surfaces, or a heat map of how many lights reach each fragment.
 
 ## Compared with Henry's original
@@ -197,17 +197,27 @@ These keys take only `True`/`False` or `1`/`0`. A helper's own mesh is removed w
 
 ### Scheduling
 
-In a scene like the benchmark hall below, most of a frame's CPU time goes to Bevy's multi-threaded executor rather than to the systems it runs. A frame runs several hundred systems, most of them for a few microseconds, and the executor hands them to worker threads and waits for them to come back. `SingleThreadedSchedulesPlugin` runs Bevy's per-frame schedules of the main app and of the render world on Bevy's single-threaded executor instead:
+In a scene like the benchmark hall below, most of a frame's CPU time goes to Bevy's multi-threaded executor rather than to the systems it runs. A frame runs several hundred systems, most of them for a few microseconds, and the executor hands them to worker threads and waits for them to come back. `SingleThreadedSchedulesPlugin` runs Bevy's engine schedules of the main app and the render world's schedules on Bevy's single-threaded executor instead:
 
 ```rust,ignore
 app.add_plugins((DefaultPlugins, DynamicLightingPlugin, SingleThreadedSchedulesPlugin::default()));
 ```
 
+This doesn't make rendering single-threaded. Bevy's per-mesh work (extracting and preparing meshes, writing the instance and indirect buffers, finishing command buffers) is split across the task pool inside single systems, and keeps that. Each pass records its draws in one system on either executor, and Bevy runs the prepass and main-pass systems one after another anyway. What the plugin gives up is running whole systems side by side. It costs little for Bevy's engine and render systems, which are short. A game's own systems can be long and independent (physics, AI, animation), and that is what the multi-threaded executor is for.
+
+So `main` chooses how much of the main app switches:
+
+- `MainSchedules::Engine` (the default) switches `First`, `PreUpdate`, `StateTransition`, `RunFixedMainLoop`, `SpawnScene`, `PostUpdate` and `Last`. `Update` and the fixed-timestep schedules keep the multi-threaded executor.
+- `MainSchedules::All` also switches `Update` and `FixedFirst` to `FixedLast`, for apps whose own systems are light. The measurements below use this setting, as the examples' `--single-threaded` does.
+- `MainSchedules::Off` leaves the main app alone. Use it when a plugin of yours runs heavy systems in `PreUpdate` or `PostUpdate`; some physics plugins step there.
+
+Most of the saving is in the render world: in the first benchmark screen, switching only the render world saved about 0.9 ms, and switching only the main app about 0.2 ms. `render: false` leaves the render world alone.
+
 The render world still runs on its own thread beside the main world, systems that split their own work across the task pool (`par_iter`, as transform propagation and visibility do) still do, and commands are applied at the same points. The one exception is an exclusive system with commands of its own, such as one piped into a system with `Commands`: they are applied at the next sync point instead of when it returns. What changes is that systems Bevy may run in either order now run in one order, fixed when the schedule is built, and each schedule runs all its systems on its own thread. dynlight renders the same images either way (the visual baselines are checked with the plugin), and Bevy's ambiguity detection finds no pair involving dynlight systems whose result depends on that order.
 
-Schedules your app adds, and schedules created after the plugin's `finish`, keep their executor and settings. A render-world system of your own that needs the main thread (`NonSend` data created there) loses it. Bevy's own window surfaces need it on macOS and iOS, so there the `Render` schedule keeps its executor. `main: false` or `render: false` leaves one side alone. The examples take `--single-threaded`.
+Schedules your app adds, and schedules created after the plugin's `finish`, keep their executor and settings. A render-world system of your own that needs the main thread (`NonSend` data created there) loses it. Bevy's own window surfaces need it on macOS and iOS, so there the `Render` schedule keeps its executor. The examples take `--single-threaded`.
 
-`DynamicLightingPlugin` doesn't add it, because the executor is a choice for the whole app: an app whose own systems are long and independent can be faster on the multi-threaded executor, so measure both. In the benchmark scenes it saves about 1 ms a frame, for dynlight and for Bevy's own lights alike (see Performance).
+`DynamicLightingPlugin` doesn't add it, because the executor is a choice for the whole app. The benchmark scenes are close to the plugin's best case: one material, one camera and almost no game logic. There it saved about 1 ms a frame with every schedule switched, for dynlight and for Bevy's own lights alike (see Performance). Scenes with many materials and cameras, and games with heavy systems, haven't been measured yet, so measure your own app with and without it.
 
 ### Platforms
 
@@ -259,7 +269,7 @@ Bevy doesn't sort opaque draws front to back, and its draw order changes from bu
 
 ### With `SingleThreadedSchedulesPlugin`
 
-Frame times with and without the plugin (see Usage), for dynlight and for Bevy's own lights with the plugin added to the same harness. The setup is the one above, measured in a later session on 2026-10-20; each figure is the median of 10 runs, with every configuration alternating in one session.
+Frame times with and without the plugin (see Usage), for dynlight and for Bevy's own lights with the plugin added to the same harness. The plugin ran with `main: MainSchedules::All`, every schedule switched; the default, which leaves `Update` and the fixed-timestep schedules alone, hasn't been measured yet. The setup is the one above, measured in a later session on 2026-10-20; each figure is the median of 10 runs, with every configuration alternating in one session.
 
 | Scene | dynlight | dynlight, plugin | Bevy | Bevy, plugin |
 |---|---|---|---|---|

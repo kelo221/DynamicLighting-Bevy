@@ -57,12 +57,17 @@ pub fn flag(name: &str) -> bool {
     args().any(|arg| arg == name)
 }
 
-/// `--single-threaded` runs the app's per-frame schedules on Bevy's single-threaded executor;
-/// without it the plugin changes nothing.
+/// `--single-threaded` runs all of the app's per-frame schedules, `Update` included, on Bevy's
+/// single-threaded executor; without it the plugin changes nothing.
 pub fn scheduling() -> dynlight::scheduling::SingleThreadedSchedulesPlugin {
+    use dynlight::scheduling::MainSchedules;
     let on = flag("--single-threaded");
     dynlight::scheduling::SingleThreadedSchedulesPlugin {
-        main: on,
+        main: if on {
+            MainSchedules::All
+        } else {
+            MainSchedules::Off
+        },
         render: on,
     }
 }
