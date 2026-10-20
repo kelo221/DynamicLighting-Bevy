@@ -67,6 +67,22 @@ fn bvh_queries_match_the_geometry() {
     assert_eq!(occluders.triangles[hit.occluder as usize].mesh, 1);
 }
 
+#[test]
+fn meshes_that_cast_no_shadows_are_left_out_but_keep_their_index() {
+    let mut glass = floor(1, Vec3::Y, 1.0);
+    glass.occludes = false;
+    let plane = floor(2, Vec3::ZERO, 1.0);
+    let meshes = [&glass, &plane];
+    let occluders = Occluders::build(&meshes);
+    let origin = Vec3::new(0.3, 2.0, -0.4);
+    let hit = occluders
+        .closest_hit(origin, Vec3::NEG_Y, 10.0, false)
+        .unwrap();
+    assert!((hit.distance - 2.0).abs() < 1e-6, "passes the glass");
+    assert_eq!(occluders.triangles[hit.occluder as usize].mesh, 1);
+    assert!(!occluders.occluded(origin, Vec3::NEG_Y, 1.5, false));
+}
+
 /// A plane whose texture is transparent on its left half (u < 0.5).
 fn half_transparent() -> BakeMesh {
     let mut plane = floor(1, Vec3::ZERO, 1.0);

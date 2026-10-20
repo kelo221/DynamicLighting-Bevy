@@ -60,6 +60,20 @@ fn static_meshes_are_not_lights() {
 }
 
 #[test]
+fn meshes_cast_shadows_unless_told_not_to() {
+    assert!(!parse(r#"{"dynlight_static": true}"#).no_shadow_casting);
+    assert!(!parse(r#"{"dynlight_cast_shadows": true}"#).no_shadow_casting);
+    for off in ["false", "0"] {
+        let extras = parse(&format!(r#"{{"dynlight_cast_shadows": {off}}}"#));
+        assert!(extras.no_shadow_casting, "{off}");
+        assert!(extras.light.is_none() && extras.warnings.is_empty());
+    }
+    let room = parse(r#"{"dynlight_room": true, "dynlight_cast_shadows": false}"#);
+    assert!(!room.no_shadow_casting);
+    assert_eq!(room.warnings.len(), 1, "{:?}", room.warnings);
+}
+
+#[test]
 fn unrelated_and_malformed_extras_are_ignored() {
     assert_eq!(parse(r#"{"foo": 1}"#), NodeExtras::default());
     assert_eq!(parse("not json"), NodeExtras::default());

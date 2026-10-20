@@ -1,5 +1,5 @@
 //! Small kernel used by two or more slices: stable bake identity, the GPU light record,
-//! scene-wide settings, math helpers, the camera sphere test, per-frame shader buffer writes,
+//! scene-wide settings, the no-shadow marker, math helpers, the camera sphere test, per-frame shader buffer writes,
 //! the base WESL types module and the shader variant.
 //!
 //! Shaders import the types module as `dynlight::shared::shaders::types` and the generated
@@ -17,6 +17,7 @@ pub mod mesh_hash;
 mod name_path;
 mod settings;
 mod shader_buffer;
+mod shadow_casting;
 mod sky;
 mod sun_shadow;
 mod variant;
@@ -38,6 +39,7 @@ pub use settings::{
     FeatureSelection, RuntimeQuality, ShaderFeatures, TrackingMode, TriangleIdSource,
 };
 pub use shader_buffer::{buffer_capacity, frame_shader_buffer, write_shader_buffer};
+pub use shadow_casting::NoShadowCasting;
 pub use sky::{GPU_SKY_SIZE, GpuSkyIrradiance, SkyIrradiance};
 pub use sun_shadow::{
     GPU_SUN_SHADOW_SIZE, GpuSunCascade, GpuSunShadow, SUN_CASCADE_COUNT, SunShadowBlock,

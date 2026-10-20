@@ -7,6 +7,7 @@ use super::GltfImportPlugin;
 use crate::bake::BakeStatic;
 use crate::light::DynamicLight;
 use crate::portals::{ClosedPortal, Portal, Room};
+use crate::shared::NoShadowCasting;
 
 fn app() -> App {
     let mut app = App::new();
@@ -32,6 +33,22 @@ fn a_static_node_tags_its_own_primitives_and_not_its_child_nodes() {
     let tagged = |entity: Entity| app.world().entity(entity).contains::<BakeStatic>();
     assert!(tagged(node) && tagged(primitive));
     assert!(!tagged(child_node) && !tagged(child_primitive));
+}
+
+#[test]
+fn a_node_without_shadows_tags_its_own_primitives() {
+    let mut app = app();
+    let world = app.world_mut();
+    let json = r#"{"dynlight_static": true, "dynlight_cast_shadows": false}"#;
+    let node = world.spawn(extras(json)).id();
+    let primitive = world.spawn((Mesh3d::default(), ChildOf(node))).id();
+    let child_node = world.spawn((extras("{}"), ChildOf(node))).id();
+    let child_primitive = world.spawn((Mesh3d::default(), ChildOf(child_node))).id();
+    app.update();
+    let silent = |entity: Entity| app.world().entity(entity).contains::<NoShadowCasting>();
+    assert!(silent(node) && silent(primitive));
+    assert!(!silent(child_node) && !silent(child_primitive));
+    assert!(app.world().entity(primitive).contains::<BakeStatic>());
 }
 
 /// Whether the light component was on the node each time `PostUpdate` ran.

@@ -21,6 +21,7 @@ use super::slots::{ALL_FACES, CubePose};
 use super::sun::SunCascadeView;
 use super::tracking::ShadowTarget;
 use super::views::{ShadowFace, ShadowFaceUniform, ShadowFaces, cull_casters};
+use crate::shared::NoShadowCasting;
 
 const POSE: CubePose = CubePose {
     position: Vec3::ZERO,
@@ -74,6 +75,8 @@ fn listed_casters_are_visible_without_a_camera() {
     // In front of face 0 (+X), and far beyond the light's radius.
     let near = spawn_caster(&mut app, &mesh, Vec3::new(2.0, 0.0, 0.0));
     let far = spawn_caster(&mut app, &mesh, Vec3::new(40.0, 0.0, 0.0));
+    let silent = spawn_caster(&mut app, &mesh, Vec3::new(2.0, 1.0, 0.0));
+    app.world_mut().entity_mut(silent).insert(NoShadowCasting);
     let faces: Vec<Entity> = (0..6)
         .map(|layer| app.world_mut().spawn(face(layer, true)).id())
         .collect();
@@ -90,6 +93,7 @@ fn listed_casters_are_visible_without_a_camera() {
     let visible = |entity| world.get::<ViewVisibility>(entity).unwrap().get();
     assert!(visible(near), "no camera sees it, but the light does");
     assert!(!visible(far), "out of the light's reach");
+    assert!(!visible(silent), "casts no shadows");
     let listed = |layer: usize| {
         world
             .get::<ShadowFace>(faces[layer])

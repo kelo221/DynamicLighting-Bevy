@@ -16,6 +16,7 @@
 //! | `dynlight_effect` | an effect name such as `candle` or `fluorescent_starter` |
 //! | `dynlight_fog` | `sphere`, `box`, `cone_z`, `cone_y`, `frustum` |
 //! | `dynlight_static` | bool, on mesh nodes: bake shadows onto and from this mesh |
+//! | `dynlight_cast_shadows` | bool, on mesh nodes, default `true`: `false` makes it cast no shadows, baked or realtime ([`NoShadowCasting`](crate::shared::NoShadowCasting)) |
 //! | `dynlight_room` | `true`/`false`/`1`/`0`: the node's local ±1 cube is a [`Room`](crate::portals::Room) |
 //! | `dynlight_portal` | `true`/`false`/`1`/`0`: the ±1 square in the node's local XY plane is a [`Portal`](crate::portals::Portal) |
 //! | `dynlight_portal_closed` | `true`/`false`/`1`/`0`, with `dynlight_portal`: the portal starts [closed](crate::portals::ClosedPortal) |
@@ -34,6 +35,7 @@ use crate::fog::{VolumetricLight, VolumetricShape};
 use crate::light::{DynamicLight, LightType, Shimmer};
 
 const STATIC: &str = "dynlight_static";
+const CAST_SHADOWS: &str = "dynlight_cast_shadows";
 
 /// The keys that make a node a light.
 pub const LIGHT_KEYS: [&str; 13] = [
@@ -59,6 +61,8 @@ pub struct NodeExtras {
     pub effect: Option<LightEffect>,
     pub fog: Option<VolumetricLight>,
     pub bake_static: bool,
+    /// `dynlight_cast_shadows` is `false`.
+    pub no_shadow_casting: bool,
     pub helper: Option<Helper>,
     /// Mistakes in the extras, each with what was made instead.
     pub warnings: Vec<String>,
@@ -71,8 +75,9 @@ pub fn parse(json: &str) -> NodeExtras {
         return NodeExtras::default();
     };
     let mut extras = NodeExtras::default();
-    let known =
-        |key: &str| LIGHT_KEYS.contains(&key) || [STATIC, ROOM, PORTAL, CLOSED].contains(&key);
+    let known = |key: &str| {
+        LIGHT_KEYS.contains(&key) || [STATIC, CAST_SHADOWS, ROOM, PORTAL, CLOSED].contains(&key)
+    };
     for key in map.keys() {
         if key.starts_with("dynlight_") && !known(key) {
             extras.warnings.push(format!("unknown key {key} ignored"));
@@ -96,9 +101,15 @@ pub fn parse(json: &str) -> NodeExtras {
                 "a room or portal is never baked, so {STATIC} was ignored"
             ));
         }
+        if map.contains_key(CAST_SHADOWS) {
+            extras.warnings.push(format!(
+                "a room or portal casts no shadows, so {CAST_SHADOWS} was ignored"
+            ));
+        }
         return extras;
     }
     extras.bake_static = boolean(&map, STATIC).unwrap_or(false);
+    extras.no_shadow_casting = !boolean(&map, CAST_SHADOWS).unwrap_or(true);
     if light_keys.is_empty() {
         return extras;
     }

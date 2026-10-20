@@ -7,7 +7,8 @@ use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
 use super::layout::BakedBuffers;
-use crate::shared::{BakeId, ResolvedBakeId, hash_mesh};
+use crate::bake::BlendedSurface;
+use crate::shared::{BakeId, NoShadowCasting, ResolvedBakeId, hash_mesh};
 
 /// Every baked mesh's triangle words (binding 23 of lit materials).
 pub const BAKED_TRIANGLES: Handle<ShaderBuffer> =
@@ -41,6 +42,8 @@ pub(super) struct MeshHashes {
     hashes: HashMap<AssetId<Mesh>, Option<u64>>,
     /// Bake ids already reported as stale, so the warning shows once per bake.
     reported: HashSet<BakeId>,
+    /// Bake ids already reported for casting shadows differently than in the bake.
+    reported_shadows: HashSet<BakeId>,
 }
 
 pub(super) fn create_buffers(app: &mut App) {
@@ -105,10 +108,14 @@ type ReceiverItem<'a> = (
     &'a Mesh3d,
     Option<&'a MeshTag>,
     Has<BakedReceiver>,
+    Has<NoShadowCasting>,
+    Has<BlendedSurface>,
 );
 
 /// Gives every baked mesh entity the `MeshTag` of its receiver record, when its mesh still
-/// matches the bake, and takes tags away from meshes that no longer have a matching record.
+/// matches the bake, and takes tags away from meshes that no longer have a matching record. A
+/// mesh that now casts shadows differently keeps its record (its own lighting still matches),
+/// but the shadows it casts on others are stale, which is reported.
 pub(super) fn tag_receivers(
     mut commands: Commands,
     applied: Res<AppliedBake>,
@@ -118,15 +125,31 @@ pub(super) fn tag_receivers(
 ) {
     if applied.is_changed() {
         hashes.reported.clear();
+        hashes.reported_shadows.clear();
     }
-    let MeshHashes { hashes, reported } = &mut *hashes;
-    for (entity, &ResolvedBakeId(id), mesh, tag, tagged) in &receivers {
+    let MeshHashes {
+        hashes,
+        reported,
+        reported_shadows,
+    } = &mut *hashes;
+    for (entity, &ResolvedBakeId(id), mesh, tag, tagged, no_shadows, blended) in &receivers {
         let wanted = applied.buffers.receivers.get(&id).and_then(|receiver| {
             let hash = *hashes
                 .entry(mesh.id())
                 .or_insert_with(|| meshes.get(mesh.id()).and_then(hash_mesh));
             match hash {
-                Some(hash) if hash == receiver.content_hash => Some(receiver.tag),
+                Some(hash) if hash == receiver.content_hash => {
+                    if receiver.occludes == (no_shadows || blended)
+                        && reported_shadows.insert(id)
+                    {
+                        warn!(
+                            "mesh {:#018x} {} shadows since it was baked; the shadows it casts                              are out of date until the scene is baked again",
+                            id.0,
+                            if receiver.occludes { "no longer casts" } else { "now casts" }
+                        );
+                    }
+                    Some(receiver.tag)
+                }
                 // Not loaded yet: the hash is recomputed once the mesh arrives.
                 None if meshes.get(mesh.id()).is_none() => {
                     hashes.remove(&mesh.id());

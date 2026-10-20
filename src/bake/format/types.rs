@@ -180,6 +180,8 @@ pub struct BakedMesh {
     pub resolution: u32,
     /// The mesh's `dynamic_triangles` words, read as [`crate::bake::mirror::TriangleView`] does.
     pub triangles: Vec<u32>,
+    /// Whether the mesh cast shadows in the bake ([`crate::bake::BakeMesh::occludes`]).
+    pub occludes: bool,
 }
 
 impl BakedMesh {

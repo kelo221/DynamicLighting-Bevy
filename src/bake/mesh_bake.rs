@@ -101,6 +101,7 @@ pub fn bake_mesh(scene: &Scene, prepared: &PreparedMesh) -> Result<MeshOutput, B
             content_hash: prepared.mesh.content_hash,
             resolution: prepared.resolution,
             triangles,
+            occludes: prepared.mesh.occludes,
         },
         texels: traced.texels,
         rays: traced.rays,

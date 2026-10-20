@@ -37,6 +37,9 @@ pub struct BakeMesh {
     pub uv0: Option<Vec<Vec2>>,
     /// Base color alpha for transparent shadows; needs [`Self::uv0`].
     pub alpha: Option<AlphaTexture>,
+    /// Whether the mesh casts shadows. Meshes that don't are still baked as receivers, but every
+    /// ray passes through them.
+    pub occludes: bool,
 }
 
 impl Default for BakeMesh {
@@ -50,6 +53,7 @@ impl Default for BakeMesh {
             uv1: Vec::new(),
             uv0: None,
             alpha: None,
+            occludes: true,
         }
     }
 }

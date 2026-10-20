@@ -85,12 +85,14 @@ fn sample() -> BakedScene {
                 content_hash: 0xABCD,
                 resolution: 128,
                 triangles: vec![4, 0, 0, 5, 0],
+                occludes: true,
             },
             BakedMesh {
                 id: BakeId(2),
                 content_hash: 3,
                 resolution: 2,
                 triangles: vec![],
+                occludes: false,
             },
         ],
         distance_cubes: vec![0x3C00_3C00, 7],
@@ -213,6 +215,14 @@ fn unknown_versions_are_rejected_clearly() {
             Err(FormatError::UnsupportedVersion { found: 1, .. })
         ),
         "version 1 bakes have no light shapes and need a re-bake"
+    );
+    bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+    assert!(
+        matches!(
+            decode(&bytes),
+            Err(FormatError::UnsupportedVersion { found: 4, .. })
+        ),
+        "version 4 bakes don't say which meshes cast shadows"
     );
 }
 

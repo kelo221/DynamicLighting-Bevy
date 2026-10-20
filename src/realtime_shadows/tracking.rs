@@ -16,6 +16,7 @@ use bevy::prelude::*;
 
 use super::slots::CasterChange;
 use crate::baked_lighting::BakedReceiver;
+use crate::shared::NoShadowCasting;
 
 /// Frames in which every face renders after something may have been missing. Rendering runs a
 /// frame behind, so a report arrives a frame or two late.
@@ -120,9 +121,11 @@ type CasterItem<'a> = (
     &'a InheritedVisibility,
     Has<BakedReceiver>,
 );
+/// Meshes that cast shadows.
+type Casting = (With<Mesh3d>, Without<NoShadowCasting>);
 /// A caster that became baked is reported too, so its bounds say it is baked.
 type Edited = (
-    With<Mesh3d>,
+    Casting,
     Or<(
         Changed<Mesh3d>,
         Changed<Aabb>,
@@ -133,13 +136,10 @@ type Edited = (
 );
 /// Systems that set a transform every frame mark it changed even while it stays put, so these
 /// casters only count when their transform differs from the last one seen.
-type Moved = (With<Mesh3d>, Changed<GlobalTransform>);
+type Moved = (Casting, Changed<GlobalTransform>);
 /// Skinned meshes move with their joints and morph targets change shape, both without a
 /// transform change of their own.
-type Animated = (
-    With<Mesh3d>,
-    Or<(With<SkinnedMesh>, Changed<MeshMorphWeights>)>,
-);
+type Animated = (Casting, Or<(With<SkinnedMesh>, Changed<MeshMorphWeights>)>);
 
 /// The world-space bounding sphere of a caster.
 pub(super) fn bounds(transform: &GlobalTransform, aabb: &Aabb, baked: bool) -> CasterChange {
@@ -198,7 +198,9 @@ pub(super) fn track_casters(
     edited: Query<CasterItem, Edited>,
     moved: Query<CasterItem, Moved>,
     animated: Query<CasterItem, Animated>,
-    casters: Query<CasterItem, With<Mesh3d>>,
+    casters: Query<CasterItem, Casting>,
+    silenced: Query<Entity, (With<Mesh3d>, Added<NoShadowCasting>)>,
+    mut unsilenced: RemovedComponents<NoShadowCasting>,
     remeshed: Query<Entity, (With<Mesh3d>, AssetChanged<Mesh3d>)>,
     rebaked: Query<(), (With<Mesh3d>, Added<BakedReceiver>)>,
     mut unbaked: RemovedComponents<BakedReceiver>,
@@ -232,13 +234,16 @@ pub(super) fn track_casters(
         *settle = SETTLE_FRAMES;
     }
 
-    for entity in removed.read() {
+    // A mesh that stops casting shadows leaves the faces it was in, like a removed one.
+    for entity in removed.read().chain(&silenced) {
         list.extend(known.0.remove(&entity).and_then(|seen| seen.bounds));
     }
-    let unbaked = unbaked
+    let unsilenced: Vec<Entity> = unsilenced.read().collect();
+    let returned = unbaked
         .iter()
+        .chain(&unsilenced)
         .filter_map(|&entity| casters.get(entity).ok());
-    for caster in edited.iter().chain(unbaked) {
+    for caster in edited.iter().chain(returned) {
         report(caster, &mut known, list, settle);
     }
     for caster in &moved {
@@ -252,7 +257,9 @@ pub(super) fn track_casters(
         list.extend(current(caster, settle));
     }
 
-    let fresh = touched.0.drain(..).chain(&remeshed).chain(relayered.read());
+    let fresh = (touched.0.drain(..).chain(&remeshed))
+        .chain(relayered.read())
+        .chain(unsilenced);
     for entity in fresh {
         lingering.insert(entity, SETTLE_FRAMES);
     }

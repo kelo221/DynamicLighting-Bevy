@@ -14,7 +14,7 @@ use super::cascades::{CascadePose, CascadeViewer, fit_cascades, plan_cascades};
 use super::casters::Caster;
 use super::cubemaps::{SUN_CASCADES, cascade_array, shadow_cubemap_format};
 use super::tracking::{CasterBounds, CasterChanges};
-use super::views::{CasterQuery, ShadowCubemapStats, caster_of};
+use super::views::{CasterQuery, Casting, ShadowCubemapStats, caster_of};
 use crate::light::{
     BakedInPlace, DynamicLight, LightAttachments, LightPose, LightRank, LightType, LightingViewer,
     ShadowMode, first_ranked, viewer_rank,
@@ -220,7 +220,7 @@ pub(super) fn place_sun_cascades(
 pub(super) fn cull_sun_casters(
     cascades: Res<SunCascades>,
     mut views: Query<&mut SunCascadeView>,
-    casters: Query<CasterQuery, With<Mesh3d>>,
+    casters: Query<CasterQuery, Casting>,
     mut visibility: Query<&mut ViewVisibility>,
     mut found: Local<Vec<(Entity, Caster)>>,
 ) {

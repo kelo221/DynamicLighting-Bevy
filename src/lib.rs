@@ -51,8 +51,8 @@ pub mod prelude {
     pub use crate::portals::{ClosedPortal, Portal, PortalSettings, PortalSide, Room};
     pub use crate::scheduling::{MainSchedules, SingleThreadedSchedulesPlugin};
     pub use crate::shared::{
-        BakeId, DynamicLightingSettings, FeatureSelection, RuntimeQuality, ShaderFeatures,
-        TriangleIdSource,
+        BakeId, DynamicLightingSettings, FeatureSelection, NoShadowCasting, RuntimeQuality,
+        ShaderFeatures, TriangleIdSource,
     };
     pub use crate::surface::{DynLitMaterial, ShadingModel};
 }

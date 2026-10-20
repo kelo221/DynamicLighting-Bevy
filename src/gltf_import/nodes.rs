@@ -1,5 +1,5 @@
-//! Node extras applied as a glTF scene spawns: lights, effects, fog, static flags, and room and
-//! portal helpers.
+//! Node extras applied as a glTF scene spawns: lights, effects, fog, static and shadow flags, and
+//! room and portal helpers.
 //!
 //! [`read_node_extras`] runs in `SpawnScene` after the scene spawner, so a scene's components
 //! are in place in the frame it first appears, before anything in `PostUpdate` sees it.
@@ -13,6 +13,7 @@ use super::extras::{self, Helper};
 use super::helpers::helper_mesh_fits;
 use crate::bake::BakeStatic;
 use crate::portals::{ClosedPortal, Portal, Room};
+use crate::shared::NoShadowCasting;
 
 /// A node's own mesh primitives. Bevy spawns each primitive of a node's mesh as a child that
 /// carries the `Mesh3d`; the node itself and its child nodes never carry one.
@@ -84,6 +85,12 @@ pub(super) fn read_node_extras(
             commands.entity(node).insert(BakeStatic);
             for primitive in own_primitives(children, &primitives) {
                 commands.entity(primitive).insert(BakeStatic);
+            }
+        }
+        if parsed.no_shadow_casting {
+            commands.entity(node).insert(NoShadowCasting);
+            for primitive in own_primitives(children, &primitives) {
+                commands.entity(primitive).insert(NoShadowCasting);
             }
         }
         let mut node = commands.entity(node);

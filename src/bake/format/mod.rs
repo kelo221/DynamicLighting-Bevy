@@ -40,8 +40,8 @@ pub use types::{BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, Sky
 pub const MAGIC: [u8; 8] = *b"DYNLIGHT";
 /// Bumped on every layout change; loaders reject other versions. Version 2 added each light's
 /// area shape and shadow bits per texel, version 3 suns and their sun maps, version 4 skies,
-/// 8-bit shadows and the sky probes.
-pub const FORMAT_VERSION: u32 = 4;
+/// 8-bit shadows and the sky probes, version 5 whether each mesh casts shadows.
+pub const FORMAT_VERSION: u32 = 5;
 const HEADER_BYTES: usize = 24;
 /// The largest sun map side a file may hold.
 pub const MAX_SUN_MAP_RESOLUTION: u32 = 8192;
@@ -149,6 +149,7 @@ fn encode_payload(scene: &BakedScene) -> Vec<u8> {
         w.u64(mesh.id.0);
         w.u64(mesh.content_hash);
         w.u32(mesh.resolution);
+        w.u32(u32::from(mesh.occludes));
         w.words(&mesh.triangles);
     }
 
@@ -204,14 +205,21 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
         .map(|node| bytemuck::pod_read_unaligned(bytemuck::cast_slice(node)))
         .collect();
 
-    let mesh_count = r.count(28)?;
+    let mesh_count = r.count(32)?;
     let mut meshes = Vec::with_capacity(mesh_count);
     for _ in 0..mesh_count {
+        let (id, content_hash, resolution) = (BakeId(r.u64()?), r.u64()?, r.u32()?);
+        let occludes = match r.u32()? {
+            0 => false,
+            1 => true,
+            _ => return Err(FormatError::Invalid("mesh shadow flag")),
+        };
         meshes.push(BakedMesh {
-            id: BakeId(r.u64()?),
-            content_hash: r.u64()?,
-            resolution: r.u32()?,
+            id,
+            content_hash,
+            resolution,
             triangles: r.words()?,
+            occludes,
         });
     }
 

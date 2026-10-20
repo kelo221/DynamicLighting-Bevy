@@ -23,7 +23,9 @@ use super::tracking::{CasterChanges, bounds};
 use crate::baked_lighting::BakedReceiver;
 use crate::light::LightAttachments;
 use crate::shared::cube::CUBE_FACE_COUNT;
-use crate::shared::{DynamicGeometryMode, DynamicLightingSettings, RuntimeQuality};
+use crate::shared::{
+    DynamicGeometryMode, DynamicLightingSettings, NoShadowCasting, RuntimeQuality,
+};
 
 /// One face of a shadow cubemap: array layer `layer`, seen from its light at `pose`.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -199,6 +201,7 @@ pub(super) fn place_shadow_faces(
 }
 
 /// The meshes the shadow views may draw, as [`CasterItem`]s.
+pub(super) type Casting = (With<Mesh3d>, Without<NoShadowCasting>);
 pub(super) type CasterQuery<'a> = (
     Entity,
     &'a GlobalTransform,
@@ -241,7 +244,7 @@ pub(super) fn caster_of(item: CasterItem) -> (Entity, Caster) {
 pub(super) fn cull_casters(
     placed: Res<ShadowFaces>,
     mut faces: Query<&mut ShadowFace>,
-    casters: Query<CasterQuery, With<Mesh3d>>,
+    casters: Query<CasterQuery, Casting>,
     mut visibility: Query<&mut ViewVisibility>,
     mut found: Local<Vec<(Entity, Caster)>>,
 ) {

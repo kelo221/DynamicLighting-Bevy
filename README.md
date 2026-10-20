@@ -103,6 +103,8 @@ Meshes need `DynLitMaterial`; Bevy's `StandardMaterial` is never lit by dynlight
 
 Shadow maps use the mesh's UV1, or UV0 when there is no UV1; overlapping UVs are fine for shadows. Bounce light needs non-overlapping UV1, because it is one map per mesh. Meshes that change after the bake are detected through a content hash: they lose their baked shadows, with a warning, until the next bake. Lights that move fall back to realtime lighting until the next bake. Turning a light keeps its bake, except for area lights and suns: turning or resizing an area light, or turning a sun or changing its disk, has the same effect. A sun can move freely, because it has no position, and a sky can also turn and change its image.
 
+Meshes whose material blends (`AlphaMode::Blend`, `Premultiplied`, `Add` or `Multiply`), such as glass, cast no shadows, baked or realtime; they still receive them. Add `NoShadowCasting` to keep any other mesh out of every shadow, for example a lamp shade with the light inside it; in Blender, set the custom property `dynlight_cast_shadows` to `False`. Changing either after a bake keeps the bake but warns that the shadows the mesh casts are out of date.
+
 ### Sun and sky
 
 ```rust,ignore

@@ -78,6 +78,8 @@ pub struct ReceiverInput<'a> {
     /// Shadow map side in texels.
     pub resolution: u32,
     pub triangles: &'a [u32],
+    /// Whether the mesh cast shadows in the bake.
+    pub occludes: bool,
 }
 
 /// Where a baked mesh's data went, for tagging its entity.
@@ -87,6 +89,7 @@ pub struct Receiver {
     pub tag: u32,
     pub content_hash: u64,
     pub triangle_count: u32,
+    pub occludes: bool,
 }
 
 /// Contents of both buffers plus the receiver lookup.
@@ -137,6 +140,7 @@ impl BakedBuffers {
                     tag,
                     content_hash: mesh.content_hash,
                     triangle_count,
+                    occludes: mesh.occludes,
                 },
             );
         }
@@ -236,12 +240,14 @@ mod tests {
                     content_hash: 1,
                     resolution: 64,
                     triangles: &a,
+                    occludes: true,
                 },
                 ReceiverInput {
                     id: BakeId(20),
                     content_hash: 2,
                     resolution: 32,
                     triangles: &b,
+                    occludes: true,
                 },
             ],
             SceneInput {

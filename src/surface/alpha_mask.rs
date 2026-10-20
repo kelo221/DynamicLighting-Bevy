@@ -1,11 +1,13 @@
 //! Baked meshes with see-through [`DynLitMaterial`]s get a [`BakeAlphaMask`] from their base
-//! color, so lights with transparency enabled shine through the clear parts at bake time.
+//! color, so lights with transparency enabled shine through the clear parts at bake time, and
+//! those with blended materials a [`BlendedSurface`], so the bake traces through them as
+//! realtime shadows skip them.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 
-use crate::bake::{AlphaTexture, BakeAlphaMask, BakeStatic};
+use crate::bake::{AlphaTexture, BakeAlphaMask, BakeStatic, BlendedSurface};
 
 use super::material::DynLitMaterial;
 
@@ -52,6 +54,14 @@ pub fn material_alpha(
     }))
 }
 
+/// Whether `mode` blends, so the mesh casts no shadows: the alpha modes realtime shadows skip.
+pub fn blends(mode: AlphaMode) -> bool {
+    matches!(
+        mode,
+        AlphaMode::Blend | AlphaMode::Premultiplied | AlphaMode::Add | AlphaMode::Multiply
+    )
+}
+
 /// The image's texels as RGBA8, or `None` when they only exist on the GPU.
 fn rgba8(image: &Image) -> Option<Vec<u8>> {
     match image.texture_descriptor.format {
@@ -78,10 +88,12 @@ type MaskedMesh<'a> = (
     &'a MeshMaterial3d<DynLitMaterial>,
     Option<&'a BakeAlphaMask>,
     Has<DerivedAlphaMask>,
+    Has<BlendedSurface>,
 );
 type MaskChanges = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<DynLitMaterial>>)>;
 
-/// Keeps derived [`BakeAlphaMask`]s in step with the materials of [`BakeStatic`] meshes.
+/// Keeps derived [`BakeAlphaMask`]s and [`BlendedSurface`]s in step with the materials of
+/// [`BakeStatic`] meshes.
 pub(super) fn sync_alpha_masks(
     mut commands: Commands,
     mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
@@ -96,7 +108,16 @@ pub(super) fn sync_alpha_masks(
         return;
     }
     let mut cache = HashMap::new();
-    for (entity, material, current, derived) in &meshes {
+    for (entity, material, current, derived, blended) in &meshes {
+        // Unknown until the material loads.
+        if let Some(material) = materials.get(&material.0) {
+            let wanted = blends(material.alpha_mode);
+            if wanted && !blended {
+                commands.entity(entity).insert(BlendedSurface);
+            } else if !wanted && blended {
+                commands.entity(entity).remove::<BlendedSurface>();
+            }
+        }
         if current.is_some() && !derived {
             continue;
         }
@@ -179,5 +200,35 @@ mod tests {
             !alpha.is_opaque(Vec2::new(0.25, 0.5)),
             "100/255 is below 0.5"
         );
+    }
+
+    #[test]
+    fn blended_materials_mark_their_meshes() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<DynLitMaterial>()
+            .add_systems(Update, sync_alpha_masks);
+        let glass = DynLitMaterial {
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        };
+        let world = app.world_mut();
+        let material = world.resource_mut::<Assets<DynLitMaterial>>().add(glass);
+        let mesh = world
+            .spawn((BakeStatic, MeshMaterial3d(material.clone())))
+            .id();
+        app.update();
+        let blended = |app: &App| app.world().entity(mesh).contains::<BlendedSurface>();
+        assert!(blended(&app));
+        let world = app.world_mut();
+        if let Some(mut glass) = world
+            .resource_mut::<Assets<DynLitMaterial>>()
+            .get_mut(&material)
+        {
+            glass.alpha_mode = AlphaMode::Opaque;
+        }
+        app.update();
+        assert!(!blended(&app), "opaque again");
     }
 }

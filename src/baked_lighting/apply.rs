@@ -39,6 +39,7 @@ pub fn scene_buffers(scene: &BakedScene) -> BakedBuffers {
         content_hash: mesh.content_hash,
         resolution: mesh.resolution,
         triangles: &mesh.triangles,
+        occludes: mesh.occludes,
     });
     BakedBuffers::build(
         meshes,
@@ -200,6 +201,7 @@ mod tests {
             content_hash: 77,
             resolution: 16,
             triangles: vec![4, 0, 0, 5, 0],
+            occludes: true,
         }];
         scene.distance_cubes = vec![0; 2 * 64 * 64 * 3];
         scene

@@ -1,7 +1,8 @@
 //! Snapshots the ECS into plain [`BakeInput`]: world-space static meshes and baked lights.
 //!
-//! Meshes are entities with [`BakeStatic`], [`Mesh3d`] and [`GlobalTransform`]; lights are
-//! every [`DynamicLight`] that isn't `realtime`, area lights and suns with their shape.
+//! Meshes are entities with [`BakeStatic`], [`Mesh3d`] and [`GlobalTransform`]; those with
+//! [`NoShadowCasting`] or [`BlendedSurface`] cast no shadows. Lights are every [`DynamicLight`]
+//! that isn't `realtime`, area lights and suns with their shape.
 //! Entities without a [`BakeId`] get one derived from their `Name` path (root first) plus, for
 //! meshes, the mesh asset path.
 
@@ -13,11 +14,11 @@ use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::light::{DynamicLight, LightShape};
-use crate::shared::{BakeId, NamePaths, mesh_content_hash};
+use crate::shared::{BakeId, NamePaths, NoShadowCasting, mesh_content_hash};
 
 use super::identity::{Candidate, assign_ids};
 use super::input::{AlphaTexture, BakeBounce, BakeInput, BakeLight, BakeMesh};
-use super::settings::BakeStatic;
+use super::settings::{BakeStatic, BlendedSurface};
 
 /// Base color alpha for transparent baked shadows. Put it on a [`BakeStatic`] mesh that has UV0;
 /// lights with `Transparency::Enabled` then shine through texels with alpha below the cutoff.
@@ -53,6 +54,8 @@ type StaticMesh = (
     &'static GlobalTransform,
     Option<&'static BakeId>,
     Option<&'static BakeAlphaMask>,
+    Has<NoShadowCasting>,
+    Has<BlendedSurface>,
 );
 type BakedLightEntity = (
     Entity,
@@ -81,7 +84,7 @@ impl SceneSnapshot<'_, '_> {
                 .ok_or(SnapshotError::NoMeshAssets)?;
             // Meshes shared by many entities are reported once.
             let mut without_uv1 = HashSet::new();
-            for (entity, handle, transform, id, alpha) in &self.meshes {
+            for (entity, handle, transform, id, alpha, no_shadows, blended) in &self.meshes {
                 let label = || self.label(entity);
                 let mesh = assets
                     .get(&handle.0)
@@ -97,7 +100,8 @@ impl SceneSnapshot<'_, '_> {
                         label()
                     );
                 }
-                let bake = data.to_world(transform, alpha.map(|a| a.0.clone()));
+                let mut bake = data.to_world(transform, alpha.map(|a| a.0.clone()));
+                bake.occludes = !(no_shadows || blended);
                 candidates.push(Candidate::mesh(
                     &self.paths,
                     entity,
@@ -251,6 +255,7 @@ impl MeshData {
             uv1: to_vec2(&self.uv1),
             alpha: alpha.filter(|_| uv0.is_some()),
             uv0,
+            occludes: true,
         }
     }
 }

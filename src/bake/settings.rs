@@ -10,6 +10,12 @@ use crate::light::BounceCompression;
 #[reflect(Component, Default, Debug, PartialEq, Clone)]
 pub struct BakeStatic;
 
+/// A [`BakeStatic`] mesh whose material is blended (alpha modes Blend, Premultiplied, Add and
+/// Multiply), such as glass. The bake traces through it, as realtime shadows skip it. The
+/// surface slice keeps it in step with the mesh's `DynLitMaterial`.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlendedSurface;
+
 /// Bake resolution and storage settings.
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default, Debug, Clone, PartialEq)]

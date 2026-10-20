@@ -57,7 +57,7 @@ pub use input::{AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeM
 pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
 pub use progress::{BakeProgress, BakeStage};
 pub use settings::{
-    BakeSettings, BakeStatic, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES,
+    BakeSettings, BakeStatic, BlendedSurface, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES,
     PREVIEW_SUN_MAP_RESOLUTION,
 };
 pub use sky_probes::MAX_SKY_PROBES;

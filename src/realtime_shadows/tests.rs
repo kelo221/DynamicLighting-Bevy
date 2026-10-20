@@ -13,6 +13,7 @@ use bevy::render::render_resource::AsBindGroup;
 use super::materials::{CasterMaterial, touch_casters};
 use super::tracking::{CasterBounds, CasterChanges, ShadowFeedback, TouchedCasters, track_casters};
 use crate::baked_lighting::BakedReceiver;
+use crate::shared::NoShadowCasting;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 struct Masked {
@@ -238,5 +239,28 @@ fn render_layer_changes_report_the_caster() {
     settle(&mut app);
     app.world_mut().entity_mut(caster).remove::<RenderLayers>();
     assert_eq!(frame(&mut app), (true, false), "back on the default layer");
+    settle(&mut app);
+}
+
+#[test]
+fn casters_that_stop_casting_shadows_are_reported_where_they_were() {
+    let mut app = app();
+    let (caster, ..) = spawn_caster(&mut app);
+    settle(&mut app);
+    let known = |app: &App| app.world().resource::<CasterBounds>().spheres(false).len();
+    assert_eq!(known(&app), 1);
+    app.world_mut().entity_mut(caster).insert(NoShadowCasting);
+    assert_eq!(frame(&mut app), (true, false), "its old faces redraw");
+    assert_eq!(known(&app), 0);
+    settle(&mut app);
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(GlobalTransform::from_xyz(0.0, 0.0, 2.0));
+    assert_eq!(frame(&mut app), (false, false), "moving casts no shadow");
+    app.world_mut()
+        .entity_mut(caster)
+        .remove::<NoShadowCasting>();
+    assert_eq!(frame(&mut app), (true, false), "casts shadows again");
+    assert_eq!(known(&app), 1);
     settle(&mut app);
 }

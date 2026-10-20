@@ -74,11 +74,15 @@ fn build_cwbvh(tris: &[Triangle]) -> CwBvh {
 }
 
 impl<'a> Occluders<'a> {
-    /// Collects every non-degenerate triangle of `meshes` (sorted bake order) and builds the BVH.
-    /// The build is single-threaded and depends only on the input order, so it is deterministic.
+    /// Collects every non-degenerate triangle of the meshes that cast shadows (`meshes` in sorted
+    /// bake order; [`OccluderTriangle::mesh`] indexes all of them) and builds the BVH. The build
+    /// is single-threaded and depends only on the input order, so it is deterministic.
     pub fn build(meshes: &'a [&'a BakeMesh]) -> Self {
         let mut triangles = Vec::new();
         for (mesh_index, mesh) in meshes.iter().enumerate() {
+            if !mesh.occludes {
+                continue;
+            }
             for (triangle, corners) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
                 let vertices = [0, 1, 2].map(|k| Vec3A::from(mesh.positions[corners[k] as usize]));
                 let normal = (vertices[1] - vertices[0]).cross(vertices[2] - vertices[0]);

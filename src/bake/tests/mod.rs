@@ -6,6 +6,7 @@ mod determinism;
 mod footprint;
 mod layout;
 mod occluder;
+mod shadowless;
 mod sky;
 mod sun;
 
@@ -79,6 +80,7 @@ fn mesh(
         uv1,
         uv0: None,
         alpha: None,
+        occludes: true,
     }
 }
 
