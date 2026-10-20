@@ -2,6 +2,7 @@
 //! read back through the shader mirror.
 
 mod bounce;
+mod colored_bounce;
 mod coverage;
 mod determinism;
 mod footprint;
@@ -82,6 +83,7 @@ fn mesh(
         uv0: None,
         alpha: None,
         occludes: true,
+        albedo: Vec3::ONE,
     }
 }
 

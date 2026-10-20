@@ -1,5 +1,6 @@
 //! Suns: parallel shadows matching the analytic projection, penumbras that widen with the sun's
 //! disk and the blocker's height, and suns kept out of the light BVH and the distance cubes.
+//! Sun bounce is in [`super::colored_bounce`].
 
 use bevy::math::{Vec2, Vec3};
 
@@ -9,7 +10,6 @@ use crate::bake::mirror::TriangleView;
 use crate::bake::progress::BakeProgress;
 use crate::bake::texels::triangle_texels;
 use crate::bake::{BakedScene, bake};
-use crate::light::Illumination;
 use crate::shared::{BakeId, DynamicGeometryMode};
 
 const FLOOR_HALF: f32 = 2.0;
@@ -132,9 +132,8 @@ fn penumbras_widen_with_the_disk_and_the_blocker_height() {
 }
 
 #[test]
-fn suns_skip_the_light_bvh_bounce_and_distance_cubes() {
-    let mut sun = sun_light(5, Vec3::new(0.2, 1.0, 0.1), 0.53);
-    sun.illumination = Illumination::SingleBounce;
+fn suns_skip_the_light_bvh_and_distance_cubes() {
+    let sun = sun_light(5, Vec3::new(0.2, 1.0, 0.1), 0.53);
     let input = BakeInput {
         meshes: vec![
             floor(1, Vec3::ZERO, FLOOR_HALF),

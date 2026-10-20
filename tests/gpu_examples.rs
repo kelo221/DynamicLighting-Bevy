@@ -110,6 +110,18 @@ fn gpu_sun_and_sky_shadows_match_the_cpu_mirror_at_every_quality() {
     }
 }
 
+#[test]
+#[ignore = "needs a GPU"]
+fn gpu_colored_bounce_matches_the_cpu_mirror_at_every_quality() {
+    for quality in ["integrated", "low", "medium", "high"] {
+        let log = run_example("gpu_check_bounce", &["--quality", quality]);
+        assert!(
+            log.contains("GPU bounce light matches the CPU mirror"),
+            "{log}"
+        );
+    }
+}
+
 /// Integrated-graphics quality has no realtime sun shadows.
 #[test]
 #[ignore = "needs a GPU"]

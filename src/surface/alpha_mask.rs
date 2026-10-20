@@ -63,7 +63,7 @@ pub fn blends(mode: AlphaMode) -> bool {
 }
 
 /// The image's texels as RGBA8, or `None` when they only exist on the GPU.
-fn rgba8(image: &Image) -> Option<Vec<u8>> {
+pub(super) fn rgba8(image: &Image) -> Option<Vec<u8>> {
     match image.texture_descriptor.format {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => image.data.clone(),
         _ => image

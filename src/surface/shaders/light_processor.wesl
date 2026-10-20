@@ -216,9 +216,9 @@ struct LightSum {
 // Henry's Metallic shader divides diffuse light by π and applies the intensity twice; here a
 // rough non-metal under Metallic shading matches Diffuse shading instead, and the specular BRDF
 // is scaled by π to match (light colors carry irradiance / π).
-fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, geometry: LightGeometry, light: GpuLight, map: f32, bounce: f32) {
+fn add_light(sum: ptr<function, LightSum>, shading: Shading, surface: SurfacePoint, geometry: LightGeometry, light: GpuLight, map: f32, bounce: vec3<f32>) {
     let strength = light.color * attenuation(light, geometry.distance_sqr);
-    if map > 0.0 || bounce > 0.0 {
+    if map > 0.0 || any(bounce > vec3(0.0)) {
         (*sum).lights += 1u;
     }
     if !shading.specular {
@@ -269,6 +269,6 @@ fn add_unshadowed(sum: ptr<function, LightSum>, shading: Shading, light: GpuLigh
     }
     let map = light_mask(light, surface, geometry, time);
     if map != 0.0 {
-        add_light(sum, shading, surface, geometry, light, map, 0.0);
+        add_light(sum, shading, surface, geometry, light, map, vec3(0.0));
     }
 }

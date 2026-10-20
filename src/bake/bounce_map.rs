@@ -7,6 +7,8 @@
 //! exactly the values a full map would. Reads outside the window are 0; the blur clamps at the
 //! map edges like Henry's.
 
+use bevy::math::Vec3;
+
 use super::bits::TexelRect;
 
 /// Henry's blur: 7 taps, sigma 5.
@@ -15,12 +17,12 @@ pub const BLUR_SIGMA: f32 = 5.0;
 /// How far beyond the triangle crops the window reaches: dilation (1) plus blur radius (3).
 pub const WINDOW_MARGIN: u32 = 1 + (BLUR_KERNEL_SIZE as u32) / 2;
 
-/// A window of a `size`² bounce texture.
+/// A window of a `size`² bounce texture, red, green and blue (all equal for white bounce).
 #[derive(Clone, Debug, PartialEq)]
 pub struct BounceMap {
     size: u32,
     rect: TexelRect,
-    values: Vec<f32>,
+    values: Vec<Vec3>,
 }
 
 impl BounceMap {
@@ -36,7 +38,7 @@ impl BounceMap {
         Self {
             size,
             rect,
-            values: vec![0.0; (rect.width() * rect.height()) as usize],
+            values: vec![Vec3::ZERO; (rect.width() * rect.height()) as usize],
         }
     }
 
@@ -45,22 +47,23 @@ impl BounceMap {
     }
 
     /// The value at map texel `(x, y)`; 0 outside the map or the window.
-    pub fn get(&self, x: i64, y: i64) -> f32 {
+    pub fn get(&self, x: i64, y: i64) -> Vec3 {
         if self.rect.contains(x, y) {
             self.values[self.index(x as u32, y as u32)]
         } else {
-            0.0
+            Vec3::ZERO
         }
     }
 
     /// Writes a gathered texel, which must lie inside the window.
-    pub fn set(&mut self, x: u32, y: u32, value: f32) {
+    pub fn set(&mut self, x: u32, y: u32, value: Vec3) {
         let index = self.index(x, y);
         self.values[index] = value;
     }
 
     /// `DilateBounceTexture`: every texel takes the first positive value among itself and its
-    /// eight neighbours, in Henry's order.
+    /// eight neighbours, in Henry's order. A value with any positive channel counts, and its
+    /// channels move together.
     pub fn dilate(&mut self) {
         const ORDER: [(i64, i64); 9] = [
             (0, 0),
@@ -77,8 +80,8 @@ impl BounceMap {
             ORDER
                 .iter()
                 .map(|&(dx, dy)| map.get(x + dx, y + dy))
-                .find(|&value| value > 0.0)
-                .unwrap_or(0.0)
+                .find(|&value| value.max_element() > 0.0)
+                .unwrap_or(Vec3::ZERO)
         });
         self.values = values;
     }
@@ -93,7 +96,7 @@ impl BounceMap {
         let last = i64::from(self.size) - 1;
         for vertical in [false, true] {
             let values = self.map_window(|map, x, y| {
-                let mut sum = 0.0;
+                let mut sum = Vec3::ZERO;
                 for (k, &weight) in (-half..=half).zip(&weights) {
                     let sample = if vertical {
                         map.get(x, (y + k).clamp(0, last))
@@ -108,7 +111,7 @@ impl BounceMap {
         }
     }
 
-    fn map_window(&self, f: impl Fn(&Self, i64, i64) -> f32) -> Vec<f32> {
+    fn map_window(&self, f: impl Fn(&Self, i64, i64) -> Vec3) -> Vec<Vec3> {
         let r = self.rect;
         (r.min_y..=r.max_y)
             .flat_map(|y| (r.min_x..=r.max_x).map(move |x| (x, y)))
@@ -118,14 +121,14 @@ impl BounceMap {
 
     /// `BuildBounceTextures`: the crop copied into a grid with 2 px of zero padding on every
     /// side (the shadow bits' padded layout), or `None` when nothing in the crop is lit.
-    pub fn crop(&self, crop: TexelRect) -> Option<Vec<f32>> {
+    pub fn crop(&self, crop: TexelRect) -> Option<Vec<Vec3>> {
         let width = crop.width() + 4;
-        let mut grid = vec![0.0; (width * (crop.height() + 4)) as usize];
+        let mut grid = vec![Vec3::ZERO; (width * (crop.height() + 4)) as usize];
         let mut lit = false;
         for y in crop.min_y..=crop.max_y {
             for x in crop.min_x..=crop.max_x {
                 let value = self.get(i64::from(x), i64::from(y));
-                lit |= value > 0.0;
+                lit |= value.max_element() > 0.0;
                 grid[((y - crop.min_y + 2) * width + (x - crop.min_x + 2)) as usize] = value;
             }
         }
@@ -231,7 +234,7 @@ mod tests {
         let crops = rect(0, 0, 14, 14);
         let mut map = BounceMap::new(size, crops);
         for &(x, y, v) in &texels {
-            map.set(x, y, v);
+            map.set(x, y, Vec3::new(v, v * 0.5, v * 0.25));
         }
         map.dilate();
         map.blur();
@@ -240,8 +243,9 @@ mod tests {
             for x in 0..=14u32 {
                 let expected = full[(y * size + x) as usize];
                 let got = map.get(i64::from(x), i64::from(y));
+                let expected = Vec3::new(expected, expected * 0.5, expected * 0.25);
                 assert!(
-                    (expected - got).abs() < 1e-6,
+                    expected.abs_diff_eq(got, 1e-6),
                     "({x}, {y}): {expected} vs {got}"
                 );
             }
@@ -260,12 +264,16 @@ mod tests {
     #[test]
     fn crops_are_padded_and_dropped_when_dark() {
         let mut map = BounceMap::new(16, rect(4, 4, 6, 5));
-        map.set(5, 4, 0.5);
+        map.set(5, 4, Vec3::new(0.0, 0.5, 0.0));
         let grid = map.crop(rect(4, 4, 6, 5)).unwrap();
         assert_eq!(grid.len(), 7 * 6);
-        assert_eq!(grid[2 * 7 + 3], 0.5, "texel (5, 4) lands at (3, 2)");
         assert_eq!(
-            grid.iter().filter(|&&v| v > 0.0).count(),
+            grid[2 * 7 + 3],
+            Vec3::new(0.0, 0.5, 0.0),
+            "texel (5, 4) lands at (3, 2)"
+        );
+        assert_eq!(
+            grid.iter().filter(|v| v.max_element() > 0.0).count(),
             1,
             "padding stays zero"
         );

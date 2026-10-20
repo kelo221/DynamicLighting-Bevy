@@ -26,6 +26,8 @@ pub struct PackContext {
     pub realtime: bool,
     /// Bounce bits per pixel of the light's baked bounce data, 1 to 8.
     pub bounce_bits_per_pixel: u32,
+    /// The light's baked bounce data is colored.
+    pub colored_bounce: bool,
     /// Bits per texel of the light's baked shadows: 1, or more for an area light's soft shadows.
     pub shadow_bits_per_texel: u32,
     /// Slot in the cookie texture array, if the light has a cookie there.
@@ -41,6 +43,7 @@ impl Default for PackContext {
             effect_intensity: 1.0,
             realtime: true,
             bounce_bits_per_pixel: 8,
+            colored_bounce: false,
             shadow_bits_per_texel: 1,
             cookie_index: None,
             shadow_cubemap_index: None,
@@ -63,6 +66,7 @@ pub fn pack(light: &DynamicLight, pose: LightPose, context: PackContext) -> GpuL
         cookie,
         bounce_bits_per_pixel: context.bounce_bits_per_pixel,
         shadow_bits_per_texel: context.shadow_bits_per_texel,
+        colored_bounce: context.colored_bounce,
     }
     .pack();
     let [gp1, gp2, mut gp3] = type_parameters(light, context.seconds);

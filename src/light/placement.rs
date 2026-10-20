@@ -146,6 +146,7 @@ mod tests {
             radius: light.radius,
             shape,
             bounce_bits_per_pixel: 8,
+            colored_bounce: false,
             shadow_bits_per_texel: if shape == LightShape::Point { 1 } else { 4 },
         };
         BakedLightSlots {

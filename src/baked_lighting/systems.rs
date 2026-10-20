@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 
 use super::layout::BakedBuffers;
-use crate::bake::BlendedSurface;
+use crate::bake::{BlendedSurface, SurfacePending};
 use crate::shared::{BakeId, NoShadowCasting, ResolvedBakeId, hash_mesh};
 
 /// Every baked mesh's triangle words (binding 23 of lit materials).
@@ -110,12 +110,13 @@ type ReceiverItem<'a> = (
     Has<BakedReceiver>,
     Has<NoShadowCasting>,
     Has<BlendedSurface>,
+    Has<SurfacePending>,
 );
 
 /// Gives every baked mesh entity the `MeshTag` of its receiver record, when its mesh still
 /// matches the bake, and takes tags away from meshes that no longer have a matching record. A
 /// mesh that now casts shadows differently keeps its record (its own lighting still matches),
-/// but the shadows it casts on others are stale, which is reported.
+/// but the shadows it casts on others are stale, which is reported once its material is known.
 pub(super) fn tag_receivers(
     mut commands: Commands,
     applied: Res<AppliedBake>,
@@ -132,20 +133,27 @@ pub(super) fn tag_receivers(
         reported,
         reported_shadows,
     } = &mut *hashes;
-    for (entity, &ResolvedBakeId(id), mesh, tag, tagged, no_shadows, blended) in &receivers {
+    for (entity, &ResolvedBakeId(id), mesh, tag, tagged, no_shadows, blended, pending) in &receivers
+    {
         let wanted = applied.buffers.receivers.get(&id).and_then(|receiver| {
             let hash = *hashes
                 .entry(mesh.id())
                 .or_insert_with(|| meshes.get(mesh.id()).and_then(hash_mesh));
             match hash {
                 Some(hash) if hash == receiver.content_hash => {
-                    if receiver.occludes == (no_shadows || blended)
+                    if !pending
+                        && receiver.occludes == (no_shadows || blended)
                         && reported_shadows.insert(id)
                     {
                         warn!(
-                            "mesh {:#018x} {} shadows since it was baked; the shadows it casts                              are out of date until the scene is baked again",
+                            "mesh {:#018x} {} shadows since it was baked; the shadows it casts \
+                             are out of date until the scene is baked again",
                             id.0,
-                            if receiver.occludes { "no longer casts" } else { "now casts" }
+                            if receiver.occludes {
+                                "no longer casts"
+                            } else {
+                                "now casts"
+                            }
                         );
                     }
                     Some(receiver.tag)

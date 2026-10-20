@@ -129,6 +129,8 @@ pub struct BakedSettings {
     /// Any light baked bounce lighting: every triangle light entry is 3 words
     /// (`DL_BOUNCE_LAYOUT`) instead of 2.
     pub bounce: bool,
+    /// Bounce texels hold three channels (red, green, blue) instead of one.
+    pub colored_bounce: bool,
     /// The dynamic geometry mode the distance cubes were baked for, which selects the shader
     /// filter. Stored distances are exact in every mode.
     pub dynamic_geometry: DynamicGeometryMode,
@@ -143,6 +145,7 @@ impl Default for BakedSettings {
     fn default() -> Self {
         Self {
             bounce: false,
+            colored_bounce: false,
             dynamic_geometry: DynamicGeometryMode::default(),
             pixel_density: 128.0,
             max_lightmap_size: 2048,

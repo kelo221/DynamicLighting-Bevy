@@ -138,6 +138,11 @@ impl<'a> Occluders<'a> {
         normal.try_normalize().unwrap_or(face)
     }
 
+    /// The mean color the hit mesh reflects ([`BakeMesh::albedo`]).
+    pub fn albedo(&self, hit: &SurfaceHit) -> Vec3 {
+        self.meshes[self.triangles[hit.occluder as usize].mesh as usize].albedo
+    }
+
     /// Whether a hit on `occluder` with barycentrics `w` is on an opaque part of its texture.
     fn blocks(&self, occluder: &OccluderTriangle, w: Vec3) -> bool {
         let mesh = self.meshes[occluder.mesh as usize];

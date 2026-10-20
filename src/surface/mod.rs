@@ -7,8 +7,10 @@
 //! reference of Metallic shading's per-light specular term.
 
 mod alpha_mask;
+mod bake_albedo;
 mod material;
 pub mod mirror;
+mod pending;
 mod reflection;
 #[cfg(test)]
 mod shader_tests;
@@ -21,6 +23,7 @@ use bevy::prelude::*;
 use bevy::shader::load_shader_library;
 
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
+pub use bake_albedo::{DerivedAlbedo, material_albedo};
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
 pub use reflection::Reflection;
 
@@ -54,6 +57,8 @@ impl Plugin for SurfacePlugin {
                 Update,
                 (
                     alpha_mask::sync_alpha_masks,
+                    bake_albedo::sync_bake_albedos,
+                    pending::sync_surface_pending,
                     shared_arrays::rebind_shared_arrays,
                 ),
             )

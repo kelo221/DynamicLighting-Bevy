@@ -55,7 +55,7 @@ pub fn bake(
 
     let bounce_lights = lights.iter().filter(|l| l.bakes_bounce(options)).count();
     progress.begin(BakeStage::PhotonCubes, bounce_lights as u64);
-    let photons = super::bounce::photon_cubes(&lights, &occluders, options, progress);
+    let bounce = super::bounce::bounce_sources(&lights, &occluders, options, progress);
     progress.check()?;
 
     let mut scene = Scene {
@@ -65,7 +65,7 @@ pub fn bake(
         light_bvh,
         occluders,
         bounce_in_scene,
-        photons,
+        bounce,
         progress,
     };
 
@@ -90,7 +90,7 @@ pub fn bake(
             output
         })
         .collect::<Result<_, _>>()?;
-    scene.photons.clear();
+    scene.bounce.clear();
     for output in outputs.iter().filter(|output| output.crowded.triangles > 0) {
         bevy::log::warn!(
             "dynlight bake: mesh {:#018x} has {} triangles lit by more than {MAX_TRIANGLE_LIGHTS} \
@@ -167,6 +167,7 @@ pub fn bake(
     let baked = BakedScene {
         settings: BakedSettings {
             bounce: bounce_in_scene,
+            colored_bounce: bounce_in_scene && options.colored_bounce,
             dynamic_geometry: options.dynamic_geometry,
             pixel_density: options.pixel_density,
             max_lightmap_size: options.max_lightmap_size,

@@ -49,6 +49,8 @@ pub struct BakedSlot {
     pub shape: LightShape,
     /// Bits per pixel of the light's bounce data, 1 to 8.
     pub bounce_bits_per_pixel: u32,
+    /// The bounce data is colored: [`Self::bounce_bits_per_pixel`] per channel.
+    pub colored_bounce: bool,
     /// Bits per texel of the light's baked shadows: 1, or more for soft area-light shadows.
     pub shadow_bits_per_texel: u32,
 }

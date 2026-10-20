@@ -2,7 +2,8 @@
 //! [`AsyncComputeTaskPool`]; [`BakeFinished`] reports the asset and optional file output.
 //!
 //! Without Bevy's `multi_threaded` feature the async compute pool runs on the main thread, so
-//! the bake blocks that frame until it is done.
+//! the bake blocks that frame until it is done. Requests wait while a static mesh's material is
+//! still loading ([`SurfacePending`]).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,7 +20,8 @@ use super::format::{BakeStats, BakedScene, encode};
 use super::input::{BakeError, BakeInput, BakeOptions};
 use super::progress::BakeProgress;
 use super::settings::{
-    BakeSettings, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES, PREVIEW_SUN_MAP_RESOLUTION,
+    BakeSettings, BakeStatic, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES,
+    PREVIEW_SUN_MAP_RESOLUTION, SurfacePending,
 };
 use super::snapshot::{SceneSnapshot, SnapshotError};
 
@@ -153,15 +155,39 @@ pub fn bake_options(
     options
 }
 
+/// Requests waiting for [`SurfacePending`] meshes, and whether that was logged.
+#[derive(Default)]
+pub(super) struct Waiting {
+    requests: Vec<BakeRequest>,
+    logged: bool,
+}
+
 pub(super) fn start_bakes(
     mut requests: MessageReader<BakeRequest>,
     mut status: ResMut<BakeStatus>,
+    mut waiting: Local<Waiting>,
+    pending: Query<(), (With<BakeStatic>, With<SurfacePending>)>,
     snapshot: SceneSnapshot,
-    settings: Res<BakeSettings>,
-    lighting: Option<Res<DynamicLightingSettings>>,
+    (settings, lighting): (Res<BakeSettings>, Option<Res<DynamicLightingSettings>>),
     mut finished: MessageWriter<BakeFinished>,
 ) {
-    for request in requests.read() {
+    waiting.requests.extend(requests.read().cloned());
+    if waiting.requests.is_empty() {
+        return;
+    }
+    if !pending.is_empty() {
+        if !waiting.logged {
+            info!(
+                "dynlight bake: waiting for the materials of {} meshes to load",
+                pending.iter().count()
+            );
+            waiting.logged = true;
+        }
+        return;
+    }
+    waiting.logged = false;
+    for request in std::mem::take(&mut waiting.requests) {
+        let request = &request;
         let fail = |failure: BakeFailure| {
             error!("dynlight bake: {:?} failed: {failure}", request.output);
             BakeFinished {

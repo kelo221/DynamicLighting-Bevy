@@ -10,7 +10,7 @@ use bevy::transform::TransformPlugin;
 use dynlight::bake::mirror::TriangleView;
 use dynlight::bake::{
     BakeFailure, BakeFinished, BakePreset, BakeRequest, BakeStatus, BakedScene, DynLightBake,
-    SnapshotError, decode, encode,
+    SnapshotError, SurfacePending, decode, encode,
 };
 use dynlight::baked_lighting::{ActiveBake, AppliedBake, has_triangle_ids};
 use dynlight::light::{BakedLightSlots, PackedLights};
@@ -243,6 +243,31 @@ fn bake_request_without_output_returns_an_applicable_asset_and_writes_nothing() 
     app.update();
     assert_bake_applied(&mut app, &scene);
     assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn bakes_wait_for_materials_that_are_still_loading() {
+    let dir = scratch_dir("bake-ecs-pending");
+    let mut app = app(&dir);
+    spawn_scene(&mut app);
+    let loading = app.world_mut().spawn((BakeStatic, SurfacePending)).id();
+    app.update();
+    app.world_mut().write_message(BakeRequest {
+        output: None,
+        preset: BakePreset::Preview,
+    });
+    for _ in 0..3 {
+        app.update();
+        assert!(!app.world().resource::<BakeStatus>().is_running());
+    }
+    app.world_mut()
+        .entity_mut(loading)
+        .remove::<SurfacePending>();
+    app.update();
+    assert!(app.world().resource::<BakeStatus>().is_running());
+    let finished = run_until_finished(&mut app, 1).remove(0);
+    assert!(finished.result.is_ok());
     std::fs::remove_dir_all(&dir).ok();
 }
 

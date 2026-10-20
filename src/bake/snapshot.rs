@@ -25,6 +25,11 @@ use super::settings::{BakeStatic, BlendedSurface};
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct BakeAlphaMask(pub AlphaTexture);
 
+/// The mean linear color a [`BakeStatic`] mesh reflects, for colored bounce light
+/// ([`super::BakeSettings::colored_bounce`]). Meshes without one reflect white.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct BakeAlbedo(pub Vec3);
+
 /// Why the ECS couldn't be turned into bake input.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SnapshotError {
@@ -54,6 +59,7 @@ type StaticMesh = (
     &'static GlobalTransform,
     Option<&'static BakeId>,
     Option<&'static BakeAlphaMask>,
+    Option<&'static BakeAlbedo>,
     Has<NoShadowCasting>,
     Has<BlendedSurface>,
 );
@@ -84,7 +90,8 @@ impl SceneSnapshot<'_, '_> {
                 .ok_or(SnapshotError::NoMeshAssets)?;
             // Meshes shared by many entities are reported once.
             let mut without_uv1 = HashSet::new();
-            for (entity, handle, transform, id, alpha, no_shadows, blended) in &self.meshes {
+            for (entity, handle, transform, id, alpha, albedo, no_shadows, blended) in &self.meshes
+            {
                 let label = || self.label(entity);
                 let mesh = assets
                     .get(&handle.0)
@@ -102,6 +109,9 @@ impl SceneSnapshot<'_, '_> {
                 }
                 let mut bake = data.to_world(transform, alpha.map(|a| a.0.clone()));
                 bake.occludes = !(no_shadows || blended);
+                if let Some(albedo) = albedo {
+                    bake.albedo = albedo.0.clamp(Vec3::ZERO, Vec3::ONE);
+                }
                 candidates.push(Candidate::mesh(
                     &self.paths,
                     entity,
@@ -256,6 +266,7 @@ impl MeshData {
             alpha: alpha.filter(|_| uv0.is_some()),
             uv0,
             occludes: true,
+            albedo: Vec3::ONE,
         }
     }
 }

@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The payload is little-endian; lengths are u64 counts. Sections in order:
-//! settings (flags u32 [bit 0 bounce], dynamic geometry u32 [0 LightingOnly, 1 DistanceCubes,
+//! settings (flags u32 [bit 0 bounce, bit 1 colored bounce], dynamic geometry u32 [0 LightingOnly, 1 DistanceCubes,
 //! 2 Angular], pixel density f32, max lightmap size u32, distance cube resolution u32);
 //! lights (count; id u64, origin 3×f32, radius f32, bounce bits per pixel u32 [0 = none], shape
 //! u32 [0 point-like, 1 rectangle, 2 tube, 3 sun, 4 sky], rotation 4×f32 (x y z w), size 2×f32
@@ -41,7 +41,7 @@ pub const MAGIC: [u8; 8] = *b"DYNLIGHT";
 /// Bumped on every layout change; loaders reject other versions. Version 2 added each light's
 /// area shape and shadow bits per texel, version 3 suns and their sun maps, version 4 skies,
 /// 8-bit shadows and the sky probes, version 5 whether each mesh casts shadows.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 const HEADER_BYTES: usize = 24;
 /// The largest sun map side a file may hold.
 pub const MAX_SUN_MAP_RESOLUTION: u32 = 8192;
@@ -130,7 +130,7 @@ pub fn decode(bytes: &[u8]) -> Result<BakedScene, FormatError> {
 fn encode_payload(scene: &BakedScene) -> Vec<u8> {
     let mut w = Writer::default();
     let settings = &scene.settings;
-    w.u32(u32::from(settings.bounce));
+    w.u32(u32::from(settings.bounce) | u32::from(settings.colored_bounce) << 1);
     w.u32(match settings.dynamic_geometry {
         DynamicGeometryMode::LightingOnly => 0,
         DynamicGeometryMode::DistanceCubes => 1,
@@ -175,7 +175,7 @@ fn encode_payload(scene: &BakedScene) -> Vec<u8> {
 fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
     let mut r = Reader::new(payload);
     let flags = r.u32()?;
-    if flags > 1 {
+    if flags > 3 {
         return Err(FormatError::Invalid("settings flag"));
     }
     let dynamic_geometry = match r.u32()? {
@@ -186,6 +186,7 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
     };
     let settings = BakedSettings {
         bounce: flags & 1 != 0,
+        colored_bounce: flags & 2 != 0,
         dynamic_geometry,
         pixel_density: r.f32()?,
         max_lightmap_size: r.u32()?,

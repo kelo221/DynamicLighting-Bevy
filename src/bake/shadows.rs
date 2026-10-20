@@ -2,10 +2,11 @@
 //! cut each remaining (triangle, light) pair's shadows out of the mesh-wide map with 2 px of
 //! dilated padding.
 
+use bevy::math::Vec3;
 use rayon::prelude::*;
 
 use super::bits::TexelRect;
-use super::bounce_pack::pack_bounce;
+use super::bounce_pack::{pack_bounce, pack_bounce_rgb};
 use super::mesh_bake::{LightRegions, Scene, TriangleSetup};
 use super::mesh_builder::{PreparedMesh, optimize_rect};
 use super::random;
@@ -17,7 +18,7 @@ use super::triangle_words::{TriangleLight, TriangleRecord};
 struct Entry {
     light: u32,
     /// Bounce values over the padded crop grid, when the light bounces onto the triangle.
-    bounce: Option<Vec<f32>>,
+    bounce: Option<Vec<Vec3>>,
 }
 
 /// Every triangle's light entries, from association to serialization.
@@ -28,7 +29,7 @@ pub struct LightEntries {
 impl LightEntries {
     /// Pairs each triangle's lights with its bounce textures (`bounce[t][k]` belongs to light
     /// `k` of triangle `t`; an empty `bounce` means no bounce in this mesh).
-    pub fn new(setups: Vec<TriangleSetup>, bounce: &mut [Vec<Option<Vec<f32>>>]) -> Self {
+    pub fn new(setups: Vec<TriangleSetup>, bounce: &mut [Vec<Option<Vec<Vec3>>>]) -> Self {
         let triangles = setups
             .into_iter()
             .enumerate()
@@ -110,7 +111,13 @@ impl LightEntries {
                                 light.id.0,
                                 triangle as u64,
                             ]);
-                            pack_bounce(&values, compression, &mut rng)
+                            if scene.options.colored_bounce {
+                                pack_bounce_rgb(&values, compression, &mut rng)
+                            } else {
+                                // White bounce: the channels are equal.
+                                let values: Vec<f32> = values.iter().map(|v| v.x).collect();
+                                pack_bounce(&values, compression, &mut rng)
+                            }
                         });
                         TriangleLight {
                             light: entry.light,

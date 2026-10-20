@@ -3,6 +3,7 @@
 //! distance cube fetch. Tests run it over serialized words to prove the layout round-trips; the
 //! WESL port must compute the same indices.
 
+use bevy::math::Vec3;
 use half::f16;
 
 /// Henry clamps garbage light counts so a bad buffer can't hang the GPU.
@@ -93,6 +94,28 @@ impl<'a> TriangleView<'a> {
         let value = self.words[(entry.bounce_offset + index / pixels) as usize];
         let byte = (value >> ((index % pixels) * bits_per_pixel)) & mask;
         byte as f32 / mask as f32
+    }
+
+    /// `bounce_texel_rgb`: a colored bounce texel's red, green and blue (square-rooted), each
+    /// `bits_per_pixel` wide, read from the bit stream.
+    pub fn bounce_texel_rgb(
+        &self,
+        entry: &LightEntry,
+        x: u32,
+        y: u32,
+        bits_per_pixel: u32,
+    ) -> Vec3 {
+        let index = self.grid_index(x, y);
+        let pixel_bits = 3 * bits_per_pixel;
+        let mask = (1u32 << bits_per_pixel) - 1;
+        let (offset, shift) = (index * pixel_bits / 32, index * pixel_bits % 32);
+        let at = (entry.bounce_offset + offset) as usize;
+        let mut word = self.words[at] >> shift;
+        if shift + pixel_bits > 32 {
+            word |= self.words[at + 1] << (32 - shift);
+        }
+        let channel = |c: u32| ((word >> (c * bits_per_pixel)) & mask) as f32 / mask as f32;
+        Vec3::new(channel(0), channel(1), channel(2))
     }
 }
 

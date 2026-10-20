@@ -36,6 +36,7 @@ mod sky_probes;
 mod snapshot;
 mod spread;
 mod sun;
+mod sun_bounce;
 mod sun_map;
 mod systems;
 #[cfg(test)]
@@ -59,10 +60,10 @@ pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
 pub use progress::{BakeProgress, BakeStage};
 pub use settings::{
     BakeSettings, BakeStatic, BlendedSurface, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES,
-    PREVIEW_SUN_MAP_RESOLUTION,
+    PREVIEW_SUN_MAP_RESOLUTION, SurfacePending,
 };
 pub use sky_probes::MAX_SKY_PROBES;
-pub use snapshot::{BakeAlphaMask, SnapshotError};
+pub use snapshot::{BakeAlbedo, BakeAlphaMask, SnapshotError};
 pub use sun_map::{SUN_MAP_RESOLUTION, pack_sun_depth};
 pub use systems::{
     BakeFailure, BakeFinished, BakePreset, BakeReport, BakeRequest, BakeStatus, bake_options,

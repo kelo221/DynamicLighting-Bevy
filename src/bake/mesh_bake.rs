@@ -6,7 +6,7 @@ use bevy::math::Vec3;
 use rayon::prelude::*;
 
 use super::bits::{AtomicBitGrid, BitGrid, TexelRect};
-use super::bounce::{self, PhotonCube};
+use super::bounce::{self, BounceSource};
 use super::format::BakedMesh;
 use super::geometry::{Aabb, approx_eq, sphere_intersects_triangle};
 use super::input::{BakeError, BakeLight, BakeOptions};
@@ -37,8 +37,8 @@ pub struct Scene<'a> {
     pub occluders: Occluders<'a>,
     /// Any light bakes bounce: triangle light entries use the 3-word layout.
     pub bounce_in_scene: bool,
-    /// Photon cubes for bounce lights, by BVH slot.
-    pub photons: Vec<Option<PhotonCube>>,
+    /// Where each bounce light's bounce comes from, by BVH slot.
+    pub bounce: Vec<Option<BounceSource>>,
     pub progress: &'a BakeProgress,
 }
 

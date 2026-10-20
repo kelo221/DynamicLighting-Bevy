@@ -288,21 +288,45 @@ fn bounce_texel(entry: TriangleLight, index: u32, bits: u32) -> f32 {
     return f32((word >> ((index % pixels) * bits)) & mask) / f32(mask);
 }
 
+// One stored colored bounce texel by grid index: red, green and blue side by side, `bits` each,
+// in a bit stream where a texel may continue in the next word.
+fn bounce_texel_rgb(entry: TriangleLight, index: u32, bits: u32) -> vec3<f32> {
+    let pixel_bits = 3u * bits;
+    let mask = (1u << bits) - 1u;
+    let offset = index * pixel_bits;
+    let at = entry.bounce + offset / 32u;
+    let shift = offset % 32u;
+    var word = baked_triangles[at] >> shift;
+    if shift + pixel_bits > 32u {
+        word |= baked_triangles[at + 1u] << (32u - shift);
+    }
+    let stored = vec3<u32>(word, word >> bits, word >> (2u * bits)) & vec3<u32>(mask);
+    return vec3<f32>(stored) / f32(mask);
+}
+
 // Bilinear bounce light at the footprint, squared back to linear. `bits` is the light's bounce
-// bits per pixel.
-fn baked_bounce(triangle: Triangle, entry: TriangleLight, at: Footprint, bits: u32) -> f32 {
+// bits per pixel (per channel when `colored`); white bounce is the same in every channel.
+fn baked_bounce(triangle: Triangle, entry: TriangleLight, at: Footprint, bits: u32, colored: bool) -> vec3<f32> {
     if entry.bounce == 0u {
-        return 0.0;
+        return vec3(0.0);
     }
     let f = at.f;
     let corner = at.corner;
     let top = corner.y * triangle.bounds.z + corner.x;
     let bottom = top + triangle.bounds.z;
+    if colored {
+        let tl = bounce_texel_rgb(entry, top, bits);
+        let tr = bounce_texel_rgb(entry, top + 1u, bits);
+        let bl = bounce_texel_rgb(entry, bottom, bits);
+        let br = bounce_texel_rgb(entry, bottom + 1u, bits);
+        let value = mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+        return value * value;
+    }
     let tl = bounce_texel(entry, top, bits);
     let tr = bounce_texel(entry, top + 1u, bits);
     let bl = bounce_texel(entry, bottom, bits);
     let br = bounce_texel(entry, bottom + 1u, bits);
     let c = mix(vec2(tl, bl), vec2(tr, br), f.x);
     let value = mix(c.x, c.y, f.y);
-    return value * value;
+    return vec3(value * value);
 }

@@ -2,7 +2,7 @@
 //! `DynamicTriangle`). Tests check the row reads against the texel-by-texel reads they replace,
 //! for one-bit shadows, the soft levels of area lights and the sky's 8-bit levels.
 
-use bevy::math::{IVec2, UVec2, Vec2};
+use bevy::math::{IVec2, UVec2, Vec2, Vec3};
 
 /// `QUALITY_*` in `triangles.wesl`, the order of [`crate::shared::RuntimeQuality`].
 pub const QUALITY_INTEGRATED: u32 = 0;
@@ -198,6 +198,61 @@ pub const WINDOWS: [u32; 4] = [0x0777, 0x0EEE, 0x7770, 0xEEE0];
 /// `shadow_bilinear_bits`: the texels set in each of the four windows of a block.
 pub fn window_counts(block: u32) -> [u32; 4] {
     WINDOWS.map(|window| (block & window).count_ones())
+}
+
+/// One light's bounce texels on one triangle, from the entry's bounce offset: `bits` per pixel,
+/// or per channel when `colored`. Grid texel `(x, y)` is pixel `x + y · width`.
+#[derive(Clone, Copy, Debug)]
+pub struct BounceTexels<'a> {
+    pub words: &'a [u32],
+    /// The padded grid width, `bounds.z`.
+    pub width: u32,
+    /// The lightmap texel of grid texel (0, 0), `bounds.xy`.
+    pub origin: UVec2,
+    pub bits: u32,
+    pub colored: bool,
+}
+
+impl BounceTexels<'_> {
+    /// `bounce_texel` / `bounce_texel_rgb`: the stored (square-rooted) pixel.
+    fn texel(&self, index: u32) -> Vec3 {
+        let mask = (1u32 << self.bits) - 1;
+        let read = |at: u32| self.words.get(at as usize).copied().unwrap_or(0);
+        let word = if self.colored {
+            let pixel_bits = 3 * self.bits;
+            let (at, shift) = (index * pixel_bits / 32, index * pixel_bits % 32);
+            let mut word = read(at) >> shift;
+            if shift + pixel_bits > 32 {
+                word |= read(at + 1) << (32 - shift);
+            }
+            word
+        } else {
+            let pixels = 32 / self.bits;
+            read(index / pixels) >> ((index % pixels) * self.bits)
+        };
+        let channel = |c: u32| ((word >> (c * self.bits)) & mask) as f32 / mask as f32;
+        if self.colored {
+            Vec3::new(channel(0), channel(1), channel(2))
+        } else {
+            Vec3::splat(channel(0))
+        }
+    }
+
+    /// `baked_bounce` at lightmap texel coordinates `pixel`: bilinear, squared back to linear.
+    pub fn bounce(&self, pixel: Vec2) -> Vec3 {
+        let f = (pixel - 0.5).fract();
+        let corner = (pixel - 0.5)
+            .floor()
+            .max(Vec2::ZERO)
+            .as_uvec2()
+            .wrapping_sub(self.origin);
+        let top = corner.y * self.width + corner.x;
+        let bottom = top + self.width;
+        let (tl, tr) = (self.texel(top), self.texel(top + 1));
+        let (bl, br) = (self.texel(bottom), self.texel(bottom + 1));
+        let value = tl.lerp(tr, f.x).lerp(bl.lerp(br, f.x), f.y);
+        value * value
+    }
 }
 
 #[cfg(test)]

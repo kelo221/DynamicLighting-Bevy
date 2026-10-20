@@ -122,6 +122,8 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
 | `src/surface/mod.rs` | none | none | New; wiring: `SurfacePlugin`, `MaterialPlugin<DynLitMaterial>`, loads the surface WESL modules, alpha-mask system |
+| `src/surface/bake_albedo.rs` | none | none | New (M31): `BakeAlbedo` from the material's base color and texture |
+| `src/surface/pending.rs` | none | none | New (M31): `SurfacePending` while a baked mesh's material or texture loads |
 | `src/surface/alpha_mask.rs` | `S/Generators/PhotonCubeTransparent.cginc:55-71` (0.5 alpha cutoff) | none | New; derives `BakeAlphaMask` from `DynLitMaterial`; `Mask(c)` materials bake with their own cutoff |
 | `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false`; the realtime light clusters at binding 29, the reflection cube array at 30–31 (the sky's specular cube, then the probes', M30) and the sun's cascades at 32 (New) |
 | `src/surface/shader_tests.rs` | none | none | New |
@@ -149,9 +151,10 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/bits.rs` | `C/Utilities/BitArray2.cs` (bit layout) | none | Ported; adds an OR-only atomic grid so results don't depend on thread order |
 | `src/bake/area.rs` | none | none | New; soft visibility of a texel to a rectangle or tube light: probe rays and a minimum of spread samples, then the rest of the samples where they disagree, weighted like Henry's NdotL margin (PLAN §12, Beyond Henry) |
 | `src/bake/light_shape.rs` | none | none | New; a baked light's reach, shadow bits per texel and facing test by shape (point, area light, sun, sky at 8 bits), with Henry's −0.1 NdotL tolerance |
-| `src/bake/bounce.rs` | `C/Core/DynamicLightingTracer.cs:719-929` (`BounceTriangle`); photon cubes `C/Core/DynamicLightingTracer.PhotonCamera.cs:133-181`, `S/Operations/PhotonCube.shader:46-70`, `C/Utilities/PhotonCube.cs:277-365` | none | Ported gather; photon cubes Replaced by CPU closest-hit rays (default 512², Henry 1024²); our RNG for `onUnitSphere`; at least 2 samples (Henry divides by `samples − 1`) |
+| `src/bake/bounce.rs` | `C/Core/DynamicLightingTracer.cs:719-929` (`BounceTriangle`); photon cubes `C/Core/DynamicLightingTracer.PhotonCamera.cs:133-181`, `S/Operations/PhotonCube.shader:46-70`, `C/Utilities/PhotonCube.cs:277-365` | none | Ported gather; photon cubes Replaced by CPU closest-hit rays (default 512², Henry 1024²); our RNG for `onUnitSphere`; at least 2 samples (Henry divides by `samples − 1`); photons carry the hit's albedo for colored bounce and suns use `sun_bounce` (New, M31) |
+| `src/bake/sun_bounce.rs` | none | none | New (M31): a sun's bounce gathered over each texel's cosine hemisphere |
 | `src/bake/bounce_map.rs` | `C/Core/DynamicLightingTracer.cs:410-465,1150-1246`; blur `C/Utilities/GuassianBlur.cs:10-102` (SmoShaders) | none | Ported; keeps only a window around the crops; the blur reads from a copy (Henry's passes alias source and destination) |
-| `src/bake/bounce_pack.rs` | `C/Core/DynamicTrianglesBuilder.cs:368-599` (`CompressBounceLighting*`) | none (`pack_quantized`, `BO/baker.rs:533-553`, is not used: no sqrt, no dither) | Ported; dither from our PCG32 instead of `Random.Range` |
+| `src/bake/bounce_pack.rs` | `C/Core/DynamicTrianglesBuilder.cs:368-599` (`CompressBounceLighting*`) | none (`pack_quantized`, `BO/baker.rs:533-553`, is not used: no sqrt, no dither) | Ported; dither from our PCG32 instead of `Random.Range`; the colored bit stream is New (M31) |
 | `src/bake/distance_cubes.rs` | `C/Core/DynamicLightingTracer.DistanceCubes.cs:10-71` | none | Replaced; CPU closest-hit rays instead of photon camera renders, WebGPU face order; f16 pairs kept; exact distances (Henry's +0.25 m bias moved into the shader, PLAN §12) |
 | `src/bake/format/mod.rs` | (Henry: gzip-compressed `uint` arrays in a Unity `ScriptableObject`, `C/Lighting/RaycastedScene.cs:19-159`) | gzip container idea `BO/baker.rs:118-183` | New; `.dynlight` header with magic, format version (4 since M21: light kinds and shadow bits, sun maps, sky probes) and CRC-32 of the payload (bevyout: SHA-256 of the file); light records and the sun-map and sky-probe sections are in `lights.rs` and `maps.rs` |
 | `src/bake/format/lights.rs` | none | none | New; the 60-byte light records, their kinds (point-like, rectangle, tube, sun, sky) and order checks (M21, split out of `mod.rs`) |
@@ -186,8 +189,9 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/triangle_words.rs` | `C/Core/DynamicTrianglesBuilder.cs:75-99,198-366` | none (the `BO/baker.rs` serializer is not reused) | Ported; same word layout |
 | `src/bake/tests/mod.rs` | none | none | New; synthetic floor, cuboid and light fixtures |
 | `src/bake/tests/bounce.rs` | none | none | New |
+| `src/bake/tests/colored_bounce.rs` | none | none | New (M31): a sunlit floor bounces onto a wall by its view factor, colored sun and photon bounce, white bakes ignore colors, thread-count determinism |
 | `src/bake/tests/determinism.rs` | none | none | New |
-| `src/bake/tests/sun.rs` | none | none | New; hard sun shadows as the parallel projection, penumbras that widen with the disk and the blocker height, suns outside the light BVH, bounce and distance cubes |
+| `src/bake/tests/sun.rs` | none | none | New; hard sun shadows as the parallel projection, penumbras that widen with the disk and the blocker height, suns outside the light BVH and distance cubes |
 | `src/bake/tests/sky.rs` | none | none | New; roofed against open floors, a wall's analytic view factor, probes under a roof and inside geometry (M21) |
 | `src/bake/tests/footprint.rs` | none | none | New; analytic shadow footprint |
 | `src/bake/tests/layout.rs` | none | none | New |
@@ -365,6 +369,7 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 |---|---|---|---|
 | `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light, with the light grid forced on; `--many` reads 200 small lights back through a perspective camera, so most samples take their lights from cell lists; `--webgpu-limits` caps the device at WebGPU's default limits |
 | `examples/gpu_check_area.rs` | none | none | New; a baked and an unbaked floor under a panel and a tube, read back and compared with `baked_lighting::mirror` and `dynamic_geometry::mirror` at every quality tier |
+| `examples/gpu_check_bounce.rs` | none | none | New (M31); a red wall on a baked floor under a bouncing sun and point light, colored bounce read back against `baked_lighting::mirror::BounceTexels` |
 | `examples/gpu_check_sun.rs` | none | none | New; a baked and an unbaked floor under a soft sun and a uniform sky, read back and compared with `baked_lighting::mirror`, `dynamic_geometry::sun_mirror` and `sky_mirror` |
 | `examples/gpu_check_sky.rs` | none | none | New; a Diffuse and a Metallic ball under a turned, tinted sky with the background behind them, read back and compared with `environment::mirror` |
 | `examples/gpu_check_probes.rs` | none | none | New (M30); a room of six unlit colored walls with a probe captured off-centre: a chrome quad compared with `reflection_probes::records::box_projected`, a white unbaked quad with the probe's irradiance, and that irradiance with the walls'; `--webgpu-limits` |

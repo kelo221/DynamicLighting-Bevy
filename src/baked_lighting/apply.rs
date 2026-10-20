@@ -69,6 +69,7 @@ pub fn scene_slots(scene: &BakedScene) -> Vec<BakedSlot> {
             bounce_bits_per_pixel: light
                 .bounce_compression
                 .map_or(NO_BOUNCE_BITS, |compression| compression.bits_per_pixel()),
+            colored_bounce: scene.settings.colored_bounce && light.bounce_compression.is_some(),
             shadow_bits_per_texel: light.shadow_bits_per_texel,
         })
         .collect()

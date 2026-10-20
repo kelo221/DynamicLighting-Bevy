@@ -16,6 +16,12 @@ pub struct BakeStatic;
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BlendedSurface;
 
+/// A [`BakeStatic`] mesh whose material or base color texture is still loading, so whether it is
+/// blended, its alpha mask and the color it reflects aren't known yet. Bakes wait for these
+/// meshes. The surface slice keeps it in step with the mesh's `DynLitMaterial`.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SurfacePending;
+
 /// Bake resolution and storage settings.
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default, Debug, Clone, PartialEq)]
@@ -45,6 +51,10 @@ pub struct BakeSettings {
     /// scenes space them further apart to stay within
     /// [`MAX_SKY_PROBES`](super::MAX_SKY_PROBES).
     pub sky_probe_spacing: f32,
+    /// Bounce light takes on the color of the surfaces it leaves ([`super::BakeAlbedo`]),
+    /// stored as three channels per bounce texel. Off, bounce light is the light's bounce color
+    /// alone, as in Henry's package, and its photons reflect as if white.
+    pub colored_bounce: bool,
 }
 
 /// Area light samples per texel in Preview bakes, which also skip the minimum samples.
@@ -65,6 +75,7 @@ impl Default for BakeSettings {
             sun_map_resolution: super::sun_map::SUN_MAP_RESOLUTION,
             sky_samples: 64,
             sky_probe_spacing: 1.0,
+            colored_bounce: false,
         }
     }
 }

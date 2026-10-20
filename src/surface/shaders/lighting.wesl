@@ -3,7 +3,7 @@
 
 import dynlight::shared::shaders::types::{
     GpuLight, LightGlobals, GLOBALS_FLAG_LIGHTING_ONLY, LIGHT_TYPE_SKY, light_is_realtime,
-    light_bounce_bits_per_pixel, light_shadow_bits_per_texel, light_extent, light_type,
+    light_bounce_bits_per_pixel, light_has_colored_bounce, light_shadow_bits_per_texel, light_extent, light_type,
 };
 import dynlight::dynamic_geometry::shaders::light_bvh::{
     BvhStack, bvh_node_count, bvh_start, bvh_next,
@@ -154,7 +154,7 @@ fn add_cube_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: GpuL
         }
     }
     map *= light_mask(light, surface, geometry, time);
-    add_light(sum, shading, surface, geometry, light, map, 0.0);
+    add_light(sum, shading, surface, geometry, light, map, vec3(0.0));
 }
 
 // The `sun`-th baked sun on dynamic geometry, shadowed by its sun map when `shadows` is set and
@@ -172,7 +172,7 @@ fn add_sun_map_shadowed(sum: ptr<function, LightSum>, shading: Shading, light: G
         }
     }
     map *= light_mask(light, surface, geometry, time);
-    add_light(sum, shading, surface, geometry, light, map, 0.0);
+    add_light(sum, shading, surface, geometry, light, map, vec3(0.0));
 }
 
 // Light on a baked mesh: the triangle's own baked lights (baked suns and skies among them) with
@@ -237,12 +237,13 @@ fn add_baked(
         return;
     }
     var map = 1.0;
-    var bounce = 0.0;
+    var bounce = vec3(0.0);
     if !light_is_realtime(light) {
         let shadow_bits = light_shadow_bits_per_texel(light);
         map = baked_shadow(triangle, entry, at, QUALITY, shadow_bits);
         if has_bounce {
-            bounce = baked_bounce(triangle, entry, at, light_bounce_bits_per_pixel(light));
+            let bits = light_bounce_bits_per_pixel(light);
+            bounce = baked_bounce(triangle, entry, at, bits, light_has_colored_bounce(light));
         } else if map == 0.0 {
             return;
         }
@@ -250,7 +251,7 @@ fn add_baked(
     if map != 0.0 {
         map *= light_mask(light, surface, geometry, globals.time);
     }
-    if bounce != 0.0 {
+    if any(bounce != vec3(0.0)) {
         bounce *= bounce_mask(light, geometry);
     }
     add_light(sum, shading, surface, geometry, light, map, bounce);

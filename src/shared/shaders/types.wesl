@@ -123,6 +123,7 @@ const LIGHT_FLAG_SHADOW_CUBEMAP: u32 = 32768u;
 const LIGHT_FLAG_COOKIE: u32 = 65536u;
 const LIGHT_BOUNCE_MASK: u32 = 917504u;
 const LIGHT_SHADOW_MASK: u32 = 7340032u;
+const LIGHT_FLAG_COLORED_BOUNCE: u32 = 8388608u;
 
 const LIGHT_TYPE_POINT: u32 = 0u;
 const LIGHT_TYPE_SPOT: u32 = 64u;
@@ -187,7 +188,12 @@ fn light_has_cookie(light: GpuLight) -> bool {
     return (light.channel & LIGHT_FLAG_COOKIE) != 0u;
 }
 
-// Bounce data bits per pixel, 1 to 8.
+// Whether the baked bounce texels hold red, green and blue.
+fn light_has_colored_bounce(light: GpuLight) -> bool {
+    return (light.channel & LIGHT_FLAG_COLORED_BOUNCE) != 0u;
+}
+
+// Bounce data bits per pixel (per channel when colored), 1 to 8.
 fn light_bounce_bits_per_pixel(light: GpuLight) -> u32 {
     return 1u + ((light.channel & LIGHT_BOUNCE_MASK) >> 17u);
 }

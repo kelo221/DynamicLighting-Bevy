@@ -65,7 +65,7 @@ impl GpuLight {
     };
 }
 
-/// The fields packed into [`GpuLight::channel`]. Bits 0–4, 12–14 and 23–31 are unused.
+/// The fields packed into [`GpuLight::channel`]. Bits 0–4, 12–14 and 24–31 are unused.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChannelFlags {
     /// Bit 5: evaluated without baked shadows.
@@ -83,6 +83,8 @@ pub struct ChannelFlags {
     /// Bits 20–22: baked shadow bits per texel, 1 to 8, stored minus one. 1 is Henry's hard
     /// shadow bit; area lights store levels of soft visibility.
     pub shadow_bits_per_texel: u32,
+    /// Bit 23: the baked bounce texels are colored (red, green and blue per pixel).
+    pub colored_bounce: bool,
 }
 
 impl ChannelFlags {
@@ -97,6 +99,7 @@ impl ChannelFlags {
     pub const BOUNCE_MASK: u32 = 0b111 << Self::BOUNCE_SHIFT;
     pub const SHADOW_SHIFT: u32 = 20;
     pub const SHADOW_MASK: u32 = 0b111 << Self::SHADOW_SHIFT;
+    pub const COLORED_BOUNCE: u32 = 1 << 23;
 
     /// Packs the flags; out-of-range values are masked to their field width.
     pub fn pack(self) -> u32 {
@@ -110,6 +113,9 @@ impl ChannelFlags {
         }
         if self.cookie {
             channel |= Self::COOKIE;
+        }
+        if self.colored_bounce {
+            channel |= Self::COLORED_BOUNCE;
         }
         let bounce = self.bounce_bits_per_pixel.clamp(1, 8) - 1;
         channel |= (bounce << Self::BOUNCE_SHIFT) & Self::BOUNCE_MASK;
@@ -126,6 +132,7 @@ impl ChannelFlags {
             cookie: channel & Self::COOKIE != 0,
             bounce_bits_per_pixel: 1 + ((channel & Self::BOUNCE_MASK) >> Self::BOUNCE_SHIFT),
             shadow_bits_per_texel: 1 + ((channel & Self::SHADOW_MASK) >> Self::SHADOW_SHIFT),
+            colored_bounce: channel & Self::COLORED_BOUNCE != 0,
         }
     }
 }
@@ -204,11 +211,12 @@ mod tests {
             cookie: true,
             bounce_bits_per_pixel: 6,
             shadow_bits_per_texel: 8,
+            colored_bounce: true,
         };
         let channel = flags.pack();
         assert_eq!(channel & 0b11111, 0, "bits 0-4 stay unused");
         assert_eq!(channel & (0b111 << 12), 0, "bits 12-14 stay unused");
-        assert_eq!(channel >> 23, 0, "bits 23-31 stay unused");
+        assert_eq!(channel >> 24, 0, "bits 24-31 stay unused");
         assert_eq!(ChannelFlags::unpack(channel), flags);
     }
 
@@ -221,6 +229,7 @@ mod tests {
         assert_eq!(ChannelFlags::COOKIE, 65_536);
         assert_eq!(ChannelFlags::BOUNCE_MASK, 917_504);
         assert_eq!(ChannelFlags::SHADOW_MASK, 7_340_032);
+        assert_eq!(ChannelFlags::COLORED_BOUNCE, 8_388_608);
         let spot = ChannelFlags {
             light_type: 1,
             bounce_bits_per_pixel: 8,

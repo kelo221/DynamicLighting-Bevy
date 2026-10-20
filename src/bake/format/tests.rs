@@ -32,6 +32,7 @@ fn sample() -> BakedScene {
     BakedScene {
         settings: BakedSettings {
             bounce: true,
+            colored_bounce: true,
             dynamic_geometry: DynamicGeometryMode::DistanceCubes,
             pixel_density: 64.0,
             max_lightmap_size: 1024,
@@ -223,6 +224,14 @@ fn unknown_versions_are_rejected_clearly() {
             Err(FormatError::UnsupportedVersion { found: 4, .. })
         ),
         "version 4 bakes don't say which meshes cast shadows"
+    );
+    bytes[8..12].copy_from_slice(&5u32.to_le_bytes());
+    assert!(
+        matches!(
+            decode(&bytes),
+            Err(FormatError::UnsupportedVersion { found: 5, .. })
+        ),
+        "version 5 bakes have no colored bounce flag"
     );
 }
 

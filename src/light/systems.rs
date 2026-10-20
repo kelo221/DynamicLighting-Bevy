@@ -124,6 +124,7 @@ pub(super) fn pack_lights(
         effect_intensity: effect.map_or(1.0, LightEffectState::intensity),
         realtime: true,
         bounce_bits_per_pixel: 8,
+        colored_bounce: false,
         shadow_bits_per_texel: 1,
         cookie_index: attachments.cookies.get(&entity).copied(),
         // A sun's flag means it has the cascades; it has no slot.
@@ -147,6 +148,7 @@ pub(super) fn pack_lights(
             let context = PackContext {
                 realtime: false,
                 bounce_bits_per_pixel: baked.bounce_bits_per_pixel,
+                colored_bounce: baked.colored_bounce,
                 shadow_bits_per_texel: baked.shadow_bits_per_texel,
                 ..context(entity, effect)
             };

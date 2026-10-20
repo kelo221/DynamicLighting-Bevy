@@ -40,6 +40,8 @@ pub struct BakeMesh {
     /// Whether the mesh casts shadows. Meshes that don't are still baked as receivers, but every
     /// ray passes through them.
     pub occludes: bool,
+    /// The mean linear color the mesh reflects (white by default). Only colored bounce reads it.
+    pub albedo: Vec3,
 }
 
 impl Default for BakeMesh {
@@ -54,6 +56,7 @@ impl Default for BakeMesh {
             uv0: None,
             alpha: None,
             occludes: true,
+            albedo: Vec3::ONE,
         }
     }
 }
@@ -154,6 +157,8 @@ pub struct BakeOptions {
     /// Meters between sky probes, before the grid is capped at
     /// [`MAX_SKY_PROBES`](super::MAX_SKY_PROBES).
     pub sky_probe_spacing: f32,
+    /// Bounce light takes on the reflecting surfaces' [`BakeMesh::albedo`].
+    pub colored_bounce: bool,
     /// Seed for every random choice (bounce directions, dithering, area light samples).
     pub seed: u64,
 }
@@ -182,6 +187,7 @@ impl BakeOptions {
             sun_map_resolution: settings.sun_map_resolution,
             sky_samples: settings.sky_samples,
             sky_probe_spacing: settings.sky_probe_spacing,
+            colored_bounce: settings.colored_bounce,
             seed,
         }
     }
@@ -312,12 +318,12 @@ impl BakeLight {
         Ok(())
     }
 
-    /// Whether the tracer bakes bounce lighting for this light. Suns and skies never do: their
-    /// light has no position for photon cubes.
+    /// Whether the tracer bakes bounce lighting for this light. Skies never do; suns gather
+    /// their bounce over each texel's hemisphere instead of from a photon cube.
     pub fn bakes_bounce(&self, options: &BakeOptions) -> bool {
         self.illumination == Illumination::SingleBounce
             && !options.skip_bounce
-            && !self.shape.is_distant()
+            && !matches!(self.shape, LightShape::Sky)
     }
 
     /// Whether shadow rays of this light alpha-test transparent surfaces.
