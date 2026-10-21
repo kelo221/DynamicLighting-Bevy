@@ -42,7 +42,14 @@ impl Plugin for GltfImportPlugin {
         if world.contains_resource::<Assets<StandardMaterial>>()
             && world.contains_resource::<Assets<DynLitMaterial>>()
         {
-            app.add_systems(PostUpdate, convert::convert_materials);
+            app.add_systems(
+                PostUpdate,
+                (
+                    convert::refresh_converted_materials,
+                    convert::convert_materials,
+                )
+                    .chain(),
+            );
         }
     }
 }
