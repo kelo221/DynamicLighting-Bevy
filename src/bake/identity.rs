@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 
+use bevy::platform::collections::HashSet;
+
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -108,14 +110,10 @@ type LightItem<'a> = (
     Option<&'a BakeId>,
     Option<&'a ResolvedBakeId>,
 );
-type IdChanges = Or<(
-    Added<BakeStatic>,
-    Added<DynamicLight>,
-    Changed<Name>,
-    Changed<ChildOf>,
-    Changed<BakeId>,
-    Changed<Mesh3d>,
-)>;
+/// Changes that always count: they are on, or make, a baked mesh or light.
+type OwnChanges = Or<(Added<BakeStatic>, Added<DynamicLight>, Changed<BakeId>)>;
+/// Changes that count only on a baked entity or one of its ancestors (see [`Relevant`]).
+type PathChanges = Or<(Changed<Name>, Changed<ChildOf>, Changed<Mesh3d>)>;
 
 /// Entities that still carry an id but are neither baked meshes nor lights.
 type Unclaimed = (
@@ -124,10 +122,20 @@ type Unclaimed = (
     Without<DynamicLight>,
 );
 
+/// What the ids were last resolved from: every baked mesh and light with its ancestors (their
+/// `Name`s and `ChildOf`s make the name path), and the baked meshes' assets. A change anywhere
+/// else (terrain or foliage streaming in a host game, say) cannot move an id.
+#[derive(Default)]
+pub(super) struct Relevant {
+    entities: HashSet<Entity>,
+    meshes: HashSet<AssetId<Mesh>>,
+}
+
 /// What can change an id since the last run.
 #[derive(SystemParam)]
 pub(super) struct IdTriggers<'w, 's> {
-    changed: Query<'w, 's, (), IdChanges>,
+    own: Query<'w, 's, (), OwnChanges>,
+    path: Query<'w, 's, Entity, PathChanges>,
     lights_changed: Query<'w, 's, (), Changed<DynamicLight>>,
     /// Absent in headless apps without mesh assets.
     mesh_events: Option<MessageReader<'w, 's, AssetEvent<Mesh>>>,
@@ -139,16 +147,34 @@ pub(super) struct IdTriggers<'w, 's> {
 
 impl IdTriggers<'_, '_> {
     /// Whether meshes and lights need their ids resolved again. Drains the change streams.
-    fn take(&mut self) -> (bool, bool) {
-        let structure = !self.changed.is_empty()
+    fn take(&mut self, relevant: &Relevant) -> (bool, bool) {
+        let structure = !self.own.is_empty()
+            | self
+                .path
+                .iter()
+                .any(|entity| relevant.entities.contains(&entity))
             | (self.removed_static.read().count() > 0)
             | (self.removed_lights.read().count() > 0)
             | (self.removed_ids.read().count() > 0)
-            | (self.removed_names.read().count() > 0);
-        let meshes = self
-            .mesh_events
-            .as_mut()
-            .is_some_and(|events| events.read().count() > 0);
+            | (self
+                .removed_names
+                .read()
+                .filter(|entity| relevant.entities.contains(entity))
+                .count()
+                > 0);
+        let meshes = self.mesh_events.as_mut().is_some_and(|events| {
+            events
+                .read()
+                .filter(|event| match event {
+                    AssetEvent::Added { id }
+                    | AssetEvent::Modified { id }
+                    | AssetEvent::Removed { id }
+                    | AssetEvent::Unused { id }
+                    | AssetEvent::LoadedWithDependencies { id } => relevant.meshes.contains(id),
+                })
+                .count()
+                > 0
+        });
         // Toggling `realtime` adds or removes a light from the bake.
         let lights = !self.lights_changed.is_empty();
         (structure || meshes, structure || lights)
@@ -156,6 +182,7 @@ impl IdTriggers<'_, '_> {
 }
 
 /// Keeps [`ResolvedBakeId`] on every [`BakeStatic`] mesh and baked light current.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_bake_ids(
     mut commands: Commands,
     mut triggers: IdTriggers,
@@ -164,8 +191,23 @@ pub(super) fn resolve_bake_ids(
     lights: Query<LightItem>,
     stale: Query<Entity, Unclaimed>,
     mesh_assets: Option<Res<Assets<Mesh>>>,
+    mut relevant: Local<Relevant>,
 ) {
-    let (resolve_meshes, resolve_lights) = triggers.take();
+    let (resolve_meshes, resolve_lights) = triggers.take(&relevant);
+    if resolve_meshes || resolve_lights {
+        relevant.entities.clear();
+        relevant.meshes.clear();
+        for entity in meshes
+            .iter()
+            .map(|item| item.0)
+            .chain(lights.iter().map(|item| item.0))
+        {
+            paths.ancestors(entity, |ancestor| relevant.entities.insert(ancestor));
+        }
+        relevant
+            .meshes
+            .extend(meshes.iter().map(|item| item.1.id()));
+    }
     let mut apply = |entity: Entity, id: BakeId, current: Option<&ResolvedBakeId>| {
         if current != Some(&ResolvedBakeId(id)) {
             commands.entity(entity).insert(ResolvedBakeId(id));
@@ -242,5 +284,42 @@ mod tests {
         );
         assert_eq!(ids[0], BakeId::from_path(["Lamp", "#1"]));
         assert_eq!(ids[3], BakeId::from_path(["Desk"]));
+    }
+
+    /// The trigger filter must not be too tight: a rename of an ancestor, and of nothing else, moves the id.
+    #[test]
+    fn renaming_an_ancestor_moves_the_id_and_a_stranger_does_not() {
+        let mut app = App::new();
+        app.add_systems(Update, resolve_bake_ids);
+        let parent = app.world_mut().spawn(Name::new("House")).id();
+        let stranger = app.world_mut().spawn(Name::new("Bush")).id();
+        let mesh = app
+            .world_mut()
+            .spawn((
+                BakeStatic,
+                Mesh3d::default(),
+                GlobalTransform::default(),
+                Name::new("Wall"),
+                ChildOf(parent),
+            ))
+            .id();
+        let id = |app: &mut App| {
+            app.update();
+            app.update(); // commands of the first update are applied
+            *app.world()
+                .get::<ResolvedBakeId>(mesh)
+                .expect("the baked mesh has an id")
+        };
+        let first = id(&mut app);
+        app.world_mut()
+            .entity_mut(stranger)
+            .insert(Name::new("Tree"));
+        assert_eq!(id(&mut app), first, "a stranger's name moved the id");
+        app.world_mut().entity_mut(parent).insert(Name::new("Barn"));
+        assert_ne!(
+            id(&mut app),
+            first,
+            "the ancestor's new name did not move the id"
+        );
     }
 }

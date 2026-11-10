@@ -93,7 +93,9 @@ type MaskedMesh<'a> = (
 type MaskChanges = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<DynLitMaterial>>)>;
 
 /// Keeps derived [`BakeAlphaMask`]s and [`BlendedSurface`]s in step with the materials of
-/// [`BakeStatic`] meshes.
+/// [`BakeStatic`] meshes. A material's mask is worked out once and kept until that material or
+/// its texture changes.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_alpha_masks(
     mut commands: Commands,
     mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
@@ -102,12 +104,14 @@ pub(super) fn sync_alpha_masks(
     materials: Res<Assets<DynLitMaterial>>,
     images: Res<Assets<Image>>,
     meshes: Query<MaskedMesh, With<BakeStatic>>,
+    mut known: Local<HashMap<AssetId<DynLitMaterial>, Option<AlphaTexture>>>,
 ) {
-    let assets_changed = material_events.read().count() > 0 || image_events.read().count() > 0;
-    if !assets_changed && changed.is_empty() {
+    let touched =
+        super::bake_albedo::touched_materials(&mut material_events, &mut image_events, &materials);
+    if touched.is_empty() && changed.is_empty() {
         return;
     }
-    let mut cache = HashMap::new();
+    known.retain(|id, _| !touched.contains(id));
     for (entity, material, current, derived, blended) in &meshes {
         // Unknown until the material loads.
         if let Some(material) = materials.get(&material.0) {
@@ -121,11 +125,29 @@ pub(super) fn sync_alpha_masks(
         if current.is_some() && !derived {
             continue;
         }
-        let wanted = cache.entry(material.id()).or_insert_with(|| {
-            materials
+        // `None`: the material is not loaded. `Some(None)`: its texture is not readable yet.
+        // `Some(Some(mask))`: settled, opaque (`None`) or masked, and kept.
+        let wanted: Option<Option<&Option<AlphaTexture>>> = if known.contains_key(&material.id()) {
+            Some(known.get(&material.id()))
+        } else {
+            match materials
                 .get(&material.0)
-                .and_then(|material| material_alpha(material, &images))
-        });
+                .map(|material| material_alpha(material, &images))
+            {
+                None => None,
+                Some(Some(None)) => Some(None),
+                Some(settled) => {
+                    known.insert(material.id(), settled.flatten());
+                    Some(known.get(&material.id()))
+                }
+            }
+        };
+        let wanted = match wanted {
+            None => None,
+            Some(None) => Some(None),
+            Some(Some(None)) => None,
+            Some(Some(Some(alpha))) => Some(Some(alpha)),
+        };
         match wanted {
             Some(Some(alpha)) => {
                 if current.is_none_or(|mask| mask.0 != *alpha) {
