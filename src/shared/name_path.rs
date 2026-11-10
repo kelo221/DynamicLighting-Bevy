@@ -28,4 +28,18 @@ impl NamePaths<'_, '_> {
         path.reverse();
         path
     }
+
+    /// Calls `visit` on `entity` and each ancestor, upward; stops early when `visit` returns
+    /// false (an entity already seen has had its ancestors visited too).
+    pub fn ancestors(&self, entity: Entity, mut visit: impl FnMut(Entity) -> bool) {
+        let mut current = Some(entity);
+        let mut depth = 0;
+        while let Some(entity) = current.take() {
+            if !visit(entity) || depth >= 1024 {
+                break;
+            }
+            depth += 1;
+            current = self.hierarchy.get(entity).ok().and_then(|(_, parent)| parent.map(ChildOf::parent));
+        }
+    }
 }
