@@ -149,11 +149,19 @@ impl IdTriggers<'_, '_> {
     /// Whether meshes and lights need their ids resolved again. Drains the change streams.
     fn take(&mut self, relevant: &Relevant) -> (bool, bool) {
         let structure = !self.own.is_empty()
-            | self.path.iter().any(|entity| relevant.entities.contains(&entity))
+            | self
+                .path
+                .iter()
+                .any(|entity| relevant.entities.contains(&entity))
             | (self.removed_static.read().count() > 0)
             | (self.removed_lights.read().count() > 0)
             | (self.removed_ids.read().count() > 0)
-            | (self.removed_names.read().filter(|entity| relevant.entities.contains(entity)).count() > 0);
+            | (self
+                .removed_names
+                .read()
+                .filter(|entity| relevant.entities.contains(entity))
+                .count()
+                > 0);
         let meshes = self.mesh_events.as_mut().is_some_and(|events| {
             events
                 .read()
@@ -174,6 +182,7 @@ impl IdTriggers<'_, '_> {
 }
 
 /// Keeps [`ResolvedBakeId`] on every [`BakeStatic`] mesh and baked light current.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_bake_ids(
     mut commands: Commands,
     mut triggers: IdTriggers,
@@ -188,10 +197,16 @@ pub(super) fn resolve_bake_ids(
     if resolve_meshes || resolve_lights {
         relevant.entities.clear();
         relevant.meshes.clear();
-        for entity in meshes.iter().map(|item| item.0).chain(lights.iter().map(|item| item.0)) {
+        for entity in meshes
+            .iter()
+            .map(|item| item.0)
+            .chain(lights.iter().map(|item| item.0))
+        {
             paths.ancestors(entity, |ancestor| relevant.entities.insert(ancestor));
         }
-        relevant.meshes.extend(meshes.iter().map(|item| item.1.id()));
+        relevant
+            .meshes
+            .extend(meshes.iter().map(|item| item.1.id()));
     }
     let mut apply = |entity: Entity, id: BakeId, current: Option<&ResolvedBakeId>| {
         if current != Some(&ResolvedBakeId(id)) {
@@ -280,17 +295,31 @@ mod tests {
         let stranger = app.world_mut().spawn(Name::new("Bush")).id();
         let mesh = app
             .world_mut()
-            .spawn((BakeStatic, Mesh3d::default(), GlobalTransform::default(), Name::new("Wall"), ChildOf(parent)))
+            .spawn((
+                BakeStatic,
+                Mesh3d::default(),
+                GlobalTransform::default(),
+                Name::new("Wall"),
+                ChildOf(parent),
+            ))
             .id();
         let id = |app: &mut App| {
             app.update();
             app.update(); // commands of the first update are applied
-            *app.world().get::<ResolvedBakeId>(mesh).expect("the baked mesh has an id")
+            *app.world()
+                .get::<ResolvedBakeId>(mesh)
+                .expect("the baked mesh has an id")
         };
         let first = id(&mut app);
-        app.world_mut().entity_mut(stranger).insert(Name::new("Tree"));
+        app.world_mut()
+            .entity_mut(stranger)
+            .insert(Name::new("Tree"));
         assert_eq!(id(&mut app), first, "a stranger's name moved the id");
         app.world_mut().entity_mut(parent).insert(Name::new("Barn"));
-        assert_ne!(id(&mut app), first, "the ancestor's new name did not move the id");
+        assert_ne!(
+            id(&mut app),
+            first,
+            "the ancestor's new name did not move the id"
+        );
     }
 }

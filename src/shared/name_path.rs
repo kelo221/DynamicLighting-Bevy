@@ -39,7 +39,11 @@ impl NamePaths<'_, '_> {
                 break;
             }
             depth += 1;
-            current = self.hierarchy.get(entity).ok().and_then(|(_, parent)| parent.map(ChildOf::parent));
+            current = self
+                .hierarchy
+                .get(entity)
+                .ok()
+                .and_then(|(_, parent)| parent.map(ChildOf::parent));
         }
     }
 }

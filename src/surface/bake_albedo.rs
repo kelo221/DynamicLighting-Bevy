@@ -81,6 +81,7 @@ pub(super) fn touched_materials(
 
 /// Keeps derived [`BakeAlbedo`]s in step with the materials of [`BakeStatic`] meshes. A material's
 /// albedo is worked out once and kept until that material or its texture changes.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_bake_albedos(
     mut commands: Commands,
     mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
@@ -184,7 +185,11 @@ mod tests {
             .init_asset::<DynLitMaterial>();
         let pixel = || {
             Image::new_fill(
-                Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 TextureDimension::D2,
                 &[255, 255, 255, 255],
                 TextureFormat::Rgba8UnormSrgb,
@@ -195,10 +200,13 @@ mod tests {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
             (images.add(pixel()), images.add(pixel()))
         };
-        let material = app.world_mut().resource_mut::<Assets<DynLitMaterial>>().add(DynLitMaterial {
-            base_color_texture: Some(used.clone()),
-            ..default()
-        });
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<DynLitMaterial>>()
+            .add(DynLitMaterial {
+                base_color_texture: Some(used.clone()),
+                ..default()
+            });
         // One system with its own readers, as the sync systems have: (image events read, materials touched) of the last frame.
         #[derive(Resource, Default)]
         struct Seen(usize, HashSet<AssetId<DynLitMaterial>>);
@@ -214,7 +222,11 @@ mod tests {
         );
         app.update(); // the assets' own `Added` events are read here
         let touched_by = |app: &mut App, image: &Handle<Image>| {
-            if let Some(mut image) = app.world_mut().resource_mut::<Assets<Image>>().get_mut(image) {
+            if let Some(mut image) = app
+                .world_mut()
+                .resource_mut::<Assets<Image>>()
+                .get_mut(image)
+            {
                 let _: &mut Image = &mut image; // the write is what marks it modified
             }
             app.update();
@@ -223,8 +235,14 @@ mod tests {
         };
         let (seen, touched) = touched_by(&mut app, &unused);
         assert!(seen > 0, "control: the unused image did send an event");
-        assert!(!touched.contains(&material.id()), "an unrelated image touched the material");
+        assert!(
+            !touched.contains(&material.id()),
+            "an unrelated image touched the material"
+        );
         let (_, touched) = touched_by(&mut app, &used);
-        assert!(touched.contains(&material.id()), "the material's own texture did not touch it");
+        assert!(
+            touched.contains(&material.id()),
+            "the material's own texture did not touch it"
+        );
     }
 }

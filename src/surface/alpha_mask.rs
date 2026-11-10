@@ -95,6 +95,7 @@ type MaskChanges = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<DynLitMaterial>
 /// Keeps derived [`BakeAlphaMask`]s and [`BlendedSurface`]s in step with the materials of
 /// [`BakeStatic`] meshes. A material's mask is worked out once and kept until that material or
 /// its texture changes.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_alpha_masks(
     mut commands: Commands,
     mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
@@ -105,7 +106,8 @@ pub(super) fn sync_alpha_masks(
     meshes: Query<MaskedMesh, With<BakeStatic>>,
     mut known: Local<HashMap<AssetId<DynLitMaterial>, Option<AlphaTexture>>>,
 ) {
-    let touched = super::bake_albedo::touched_materials(&mut material_events, &mut image_events, &materials);
+    let touched =
+        super::bake_albedo::touched_materials(&mut material_events, &mut image_events, &materials);
     if touched.is_empty() && changed.is_empty() {
         return;
     }
@@ -128,7 +130,10 @@ pub(super) fn sync_alpha_masks(
         let wanted: Option<Option<&Option<AlphaTexture>>> = if known.contains_key(&material.id()) {
             Some(known.get(&material.id()))
         } else {
-            match materials.get(&material.0).map(|material| material_alpha(material, &images)) {
+            match materials
+                .get(&material.0)
+                .map(|material| material_alpha(material, &images))
+            {
                 None => None,
                 Some(Some(None)) => Some(None),
                 Some(settled) => {
