@@ -1,7 +1,7 @@
 //! Baked meshes with a [`DynLitMaterial`] get a [`BakeAlbedo`]: the material's mean linear base
 //! color, the color bounce light takes on where it leaves them (colored bounce only).
 
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::bake::{BakeAlbedo, BakeStatic};
@@ -52,7 +52,35 @@ type AlbedoMesh<'a> = (
 );
 type AlbedoChanges = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<DynLitMaterial>>)>;
 
-/// Keeps derived [`BakeAlbedo`]s in step with the materials of [`BakeStatic`] meshes.
+/// The materials an asset event batch can have changed: every material with an event of its own, and every material whose base
+/// color texture has one. An image no material uses (a render target, a fog map rewritten every few seconds) touches none.
+pub(super) fn touched_materials(
+    material_events: &mut MessageReader<AssetEvent<DynLitMaterial>>,
+    image_events: &mut MessageReader<AssetEvent<Image>>,
+    materials: &Assets<DynLitMaterial>,
+) -> HashSet<AssetId<DynLitMaterial>> {
+    fn id<A: Asset>(event: &AssetEvent<A>) -> AssetId<A> {
+        match event {
+            AssetEvent::Added { id }
+            | AssetEvent::Modified { id }
+            | AssetEvent::Removed { id }
+            | AssetEvent::Unused { id }
+            | AssetEvent::LoadedWithDependencies { id } => *id,
+        }
+    }
+    let mut touched: HashSet<_> = material_events.read().map(id).collect();
+    let images: HashSet<_> = image_events.read().map(id).collect();
+    if !images.is_empty() {
+        touched.extend(materials.iter().filter_map(|(material_id, material)| {
+            let texture = material.base_color_texture.as_ref()?;
+            images.contains(&texture.id()).then_some(material_id)
+        }));
+    }
+    touched
+}
+
+/// Keeps derived [`BakeAlbedo`]s in step with the materials of [`BakeStatic`] meshes. A material's
+/// albedo is worked out once and kept until that material or its texture changes.
 pub(super) fn sync_bake_albedos(
     mut commands: Commands,
     mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
@@ -61,22 +89,23 @@ pub(super) fn sync_bake_albedos(
     materials: Res<Assets<DynLitMaterial>>,
     images: Res<Assets<Image>>,
     meshes: Query<AlbedoMesh, With<BakeStatic>>,
+    mut known: Local<HashMap<AssetId<DynLitMaterial>, Vec3>>,
 ) {
-    let assets_changed = material_events.read().count() > 0 || image_events.read().count() > 0;
-    if !assets_changed && changed.is_empty() {
+    let touched = touched_materials(&mut material_events, &mut image_events, &materials);
+    if touched.is_empty() && changed.is_empty() {
         return;
     }
-    let mut cache = HashMap::new();
+    known.retain(|id, _| !touched.contains(id));
     for (entity, material, current, derived) in &meshes {
         if current.is_some() && !derived {
             continue;
         }
-        let wanted = *cache.entry(material.id()).or_insert_with(|| {
-            materials
-                .get(&material.0)
-                .and_then(|material| material_albedo(material, &images))
+        let wanted = known.get(&material.id()).copied().or_else(|| {
+            // Unknown until the material and its texture load; then it is kept.
+            let albedo = material_albedo(materials.get(&material.0)?, &images)?;
+            known.insert(material.id(), albedo);
+            Some(albedo)
         });
-        // Unknown until the material and its texture load; keep what we have.
         if let Some(albedo) = wanted
             && current.is_none_or(|current| current.0 != albedo)
         {
@@ -144,5 +173,58 @@ mod tests {
             ..default()
         };
         assert_eq!(material_albedo(&material, &images), None);
+    }
+
+    /// An image no material uses must not bring the albedos up for another look; a material's own texture must.
+    #[test]
+    fn only_a_materials_own_texture_touches_it() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<DynLitMaterial>();
+        let pixel = || {
+            Image::new_fill(
+                Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                TextureDimension::D2,
+                &[255, 255, 255, 255],
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::all(),
+            )
+        };
+        let (used, unused) = {
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            (images.add(pixel()), images.add(pixel()))
+        };
+        let material = app.world_mut().resource_mut::<Assets<DynLitMaterial>>().add(DynLitMaterial {
+            base_color_texture: Some(used.clone()),
+            ..default()
+        });
+        // One system with its own readers, as the sync systems have: (image events read, materials touched) of the last frame.
+        #[derive(Resource, Default)]
+        struct Seen(usize, HashSet<AssetId<DynLitMaterial>>);
+        app.init_resource::<Seen>().add_systems(
+            Last,
+            |mut m: MessageReader<AssetEvent<DynLitMaterial>>,
+             mut i: MessageReader<AssetEvent<Image>>,
+             materials: Res<Assets<DynLitMaterial>>,
+             mut last: ResMut<Seen>| {
+                let seen = i.len();
+                *last = Seen(seen, touched_materials(&mut m, &mut i, &materials));
+            },
+        );
+        app.update(); // the assets' own `Added` events are read here
+        let touched_by = |app: &mut App, image: &Handle<Image>| {
+            if let Some(mut image) = app.world_mut().resource_mut::<Assets<Image>>().get_mut(image) {
+                let _: &mut Image = &mut image; // the write is what marks it modified
+            }
+            app.update();
+            let last = app.world().resource::<Seen>();
+            (last.0, last.1.clone())
+        };
+        let (seen, touched) = touched_by(&mut app, &unused);
+        assert!(seen > 0, "control: the unused image did send an event");
+        assert!(!touched.contains(&material.id()), "an unrelated image touched the material");
+        let (_, touched) = touched_by(&mut app, &used);
+        assert!(touched.contains(&material.id()), "the material's own texture did not touch it");
     }
 }
