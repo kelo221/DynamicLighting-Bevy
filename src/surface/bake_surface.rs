@@ -3,7 +3,7 @@
 //! answers from its own fields; an external material answers through [`ExternalBakeMaterial`].
 //! The sync systems of `bake_albedo`, `alpha_mask` and `pending` are generic over this.
 
-use bevy::pbr::Material;
+use bevy::pbr::{ExtendedMaterial, Material, MaterialExtension};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
@@ -40,6 +40,49 @@ pub trait ExternalBakeMaterial: Asset {
     /// too). Default: false.
     fn blended(&self) -> bool {
         false
+    }
+}
+
+/// [`ExternalBakeMaterial`] for an extended material, whose type is not the caller's to implement
+/// a foreign trait for (Rust's orphan rule): implement this on the extension instead, given the
+/// base material it extends, and `ExtendedMaterial<B, Self>` is an [`ExternalBakeMaterial`]. Every
+/// method has a default, as there.
+///
+/// ```ignore
+/// impl ExternalBakeExtension<MyBase> for MyExtension {
+///     fn bake_albedo(&self, base: &MyBase) -> (LinearRgba, Option<Handle<Image>>) {
+///         (base.base_color.to_linear(), base.base_color_texture.clone())
+///     }
+/// }
+/// ```
+pub trait ExternalBakeExtension<B: Material>: MaterialExtension {
+    /// See [`ExternalBakeMaterial::bake_albedo`].
+    fn bake_albedo(&self, _base: &B) -> (LinearRgba, Option<Handle<Image>>) {
+        (LinearRgba::WHITE, None)
+    }
+
+    /// See [`ExternalBakeMaterial::alpha_mask`].
+    fn alpha_mask(&self, _base: &B) -> Option<(Handle<Image>, f32)> {
+        None
+    }
+
+    /// See [`ExternalBakeMaterial::blended`].
+    fn blended(&self, _base: &B) -> bool {
+        false
+    }
+}
+
+impl<B: Material, E: ExternalBakeExtension<B>> ExternalBakeMaterial for ExtendedMaterial<B, E> {
+    fn bake_albedo(&self) -> (LinearRgba, Option<Handle<Image>>) {
+        self.extension.bake_albedo(&self.base)
+    }
+
+    fn alpha_mask(&self) -> Option<(Handle<Image>, f32)> {
+        self.extension.alpha_mask(&self.base)
+    }
+
+    fn blended(&self) -> bool {
+        self.extension.blended(&self.base)
     }
 }
 
@@ -211,6 +254,40 @@ mod tests {
                 ),
             );
         app
+    }
+
+    /// An extension of `Custom`'s kind, answering from its base.
+    #[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
+    struct Extension {
+        #[uniform(100)]
+        unused: f32,
+    }
+
+    impl MaterialExtension for Extension {}
+
+    impl ExternalBakeExtension<Custom> for Extension {
+        fn bake_albedo(&self, base: &Custom) -> (LinearRgba, Option<Handle<Image>>) {
+            (base.tint.unwrap_or(LinearRgba::WHITE), None)
+        }
+        fn blended(&self, base: &Custom) -> bool {
+            base.glass
+        }
+    }
+
+    #[test]
+    fn an_extended_material_bakes_through_its_extension() {
+        let images = Assets::<Image>::default();
+        let material = ExtendedMaterial {
+            base: Custom {
+                tint: Some(LinearRgba::new(0.1, 0.2, 0.3, 1.0)),
+                glass: true,
+                ..default()
+            },
+            extension: Extension::default(),
+        };
+        assert_eq!(material.albedo(&images), Some(Vec3::new(0.1, 0.2, 0.3)));
+        assert!(BakeSurface::blends(&material));
+        assert_eq!(material.alpha(&images), None, "the default: opaque");
     }
 
     #[test]

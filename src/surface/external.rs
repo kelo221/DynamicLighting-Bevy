@@ -14,10 +14,15 @@
 //!    of an extended one uses the low numbers).
 //! 2. In `Material::specialize` call [`external_specialize`] (it adds [`external_shader_defs`] to
 //!    the fragment and, for meshes with triangle IDs, the vertex shader and attribute), and
-//!    return [`external_vertex_shader`] from `Material::vertex_shader`.
+//!    return [`external_vertex_shader`] from `Material::vertex_shader`. A `MaterialExtension` has
+//!    no `MaterialPipeline` to pass: it returns the same from its `vertex_shader` and calls
+//!    [`external_specialize_descriptor`] with `&pipeline.mesh_pipeline.shader` of the
+//!    `MaterialExtensionPipeline` it is given.
 //! 3. Add [`ExternalLightingPlugin<YourMaterial>`](ExternalLightingPlugin) after
 //!    `DynamicLightingPlugin`, and `impl ExternalBakeMaterial for YourMaterial` (an empty impl
-//!    bakes it as an opaque white surface).
+//!    bakes it as an opaque white surface). `ExtendedMaterial` is not yours to implement a trait
+//!    for: implement [`ExternalBakeExtension`](super::ExternalBakeExtension) on the extension,
+//!    which makes `ExtendedMaterial<Base, YourExtension>` an `ExternalBakeMaterial`.
 //! 4. Call `surface_light` from the fragment shader (WESL). It sets `SurfaceInput` exactly as
 //!    `dynlit.wesl` does: `lightmap_uv` is UV1 (`in.uv_b`, `VERTEX_UVS_B`) else UV0 (`in.uv`),
 //!    which is what the bake used; `tag` and `primitive` find the mesh's baked data. The tag is
@@ -106,7 +111,7 @@ use bevy::pbr::{Material, MaterialPipeline};
 use bevy::prelude::*;
 use bevy::render::render_resource::{RenderPipelineDescriptor, SpecializedMeshPipelineError};
 use bevy::render::storage::ShaderBuffer;
-use bevy::shader::{ShaderDefVal, ShaderRef};
+use bevy::shader::{Shader, ShaderDefVal, ShaderRef};
 
 use super::alpha_mask::sync_alpha_masks;
 use super::bake_albedo::sync_bake_albedos;
@@ -250,7 +255,30 @@ pub fn external_specialize(
     descriptor: &mut RenderPipelineDescriptor,
     layout: &MeshVertexBufferLayoutRef,
 ) -> Result<(), SpecializedMeshPipelineError> {
-    let triangle_ids = use_triangle_ids(pipeline, descriptor, layout)?;
+    external_specialize_descriptor(&pipeline.mesh_pipeline.shader, descriptor, layout)
+}
+
+/// [`external_specialize`] for a caller that has no `MaterialPipeline`, such as the
+/// `specialize` of a `MaterialExtension` (it is given a `MaterialExtensionPipeline`): the one
+/// thing it needs of the pipeline is Bevy's mesh vertex shader, `mesh_vertex_shader`, which is
+/// `pipeline.mesh_pipeline.shader` of either.
+///
+/// ```ignore
+/// fn specialize(
+///     pipeline: &MaterialExtensionPipeline,
+///     descriptor: &mut RenderPipelineDescriptor,
+///     layout: &MeshVertexBufferLayoutRef,
+///     _: MaterialExtensionKey<Self>,
+/// ) -> Result<(), SpecializedMeshPipelineError> {
+///     external_specialize_descriptor(&pipeline.mesh_pipeline.shader, descriptor, layout)
+/// }
+/// ```
+pub fn external_specialize_descriptor(
+    mesh_vertex_shader: &Handle<Shader>,
+    descriptor: &mut RenderPipelineDescriptor,
+    layout: &MeshVertexBufferLayoutRef,
+) -> Result<(), SpecializedMeshPipelineError> {
+    let triangle_ids = use_triangle_ids(mesh_vertex_shader, descriptor, layout)?;
     if let Some(fragment) = descriptor.fragment.as_mut() {
         fragment
             .shader_defs
@@ -263,7 +291,7 @@ pub fn external_specialize(
 /// otherwise gives the main pass Bevy's vertex shader. The prepass shares `specialize` but keeps
 /// Bevy's prepass vertex shader.
 pub(super) fn use_triangle_ids(
-    pipeline: &MaterialPipeline,
+    mesh_vertex_shader: &Handle<Shader>,
     descriptor: &mut RenderPipelineDescriptor,
     layout: &MeshVertexBufferLayoutRef,
 ) -> Result<bool, SpecializedMeshPipelineError> {
@@ -280,7 +308,7 @@ pub(super) fn use_triangle_ids(
             .attributes
             .extend(ids.attributes);
     } else if main_pass {
-        descriptor.vertex.shader = pipeline.mesh_pipeline.shader.clone();
+        descriptor.vertex.shader = mesh_vertex_shader.clone();
     }
     Ok(triangle_ids)
 }

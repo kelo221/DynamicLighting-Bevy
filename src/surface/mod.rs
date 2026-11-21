@@ -29,10 +29,11 @@ use bevy::shader::load_shader_library;
 
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
 pub use bake_albedo::{DerivedAlbedo, material_albedo};
-pub use bake_surface::ExternalBakeMaterial;
+pub use bake_surface::{ExternalBakeExtension, ExternalBakeMaterial};
 pub use external::{
     DynLightBindings, ExternalLightingPlugin, SCENE_BINDING_BASE, SCENE_BINDINGS,
-    external_shader_defs, external_specialize, external_vertex_shader,
+    external_shader_defs, external_specialize, external_specialize_descriptor,
+    external_vertex_shader,
 };
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
 pub use reflection::Reflection;

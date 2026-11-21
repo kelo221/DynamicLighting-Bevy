@@ -286,7 +286,7 @@ impl Material for DynLitMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
-        let triangle_ids = use_triangle_ids(pipeline, descriptor, layout)?;
+        let triangle_ids = use_triangle_ids(&pipeline.mesh_pipeline.shader, descriptor, layout)?;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.extend(lit_shader_defs(
                 triangle_ids,
