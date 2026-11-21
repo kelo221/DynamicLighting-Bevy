@@ -27,7 +27,8 @@ struct RealtimeClusters {
     words: array<u32>,
 }
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(29) var<storage, read> realtime_clusters: RealtimeClusters;
+@if(DYNLIGHT_EXTERNAL) @group(constants::MATERIAL_BIND_GROUP) @binding(129) var<storage, read> realtime_clusters: RealtimeClusters;
+@else @group(constants::MATERIAL_BIND_GROUP) @binding(29) var<storage, read> realtime_clusters: RealtimeClusters;
 
 // The realtime lights to visit: entries `first..first + count` of a cell, or, when not
 // `clustered`, realtime lights `0..count`.

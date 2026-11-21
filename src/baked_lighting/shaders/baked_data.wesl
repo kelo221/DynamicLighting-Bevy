@@ -3,8 +3,10 @@
 // Any material that wants baked shadows binds these two buffers at 23 and 24 of its bind group
 // (`DynLitMaterial` does by default).
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(23) var<storage, read> baked_triangles: array<u32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(24) var<storage, read> baked_aux: array<u32>;
+@if(DYNLIGHT_EXTERNAL) @group(constants::MATERIAL_BIND_GROUP) @binding(123) var<storage, read> baked_triangles: array<u32>;
+@else @group(constants::MATERIAL_BIND_GROUP) @binding(23) var<storage, read> baked_triangles: array<u32>;
+@if(DYNLIGHT_EXTERNAL) @group(constants::MATERIAL_BIND_GROUP) @binding(124) var<storage, read> baked_aux: array<u32>;
+@else @group(constants::MATERIAL_BIND_GROUP) @binding(24) var<storage, read> baked_aux: array<u32>;
 
 const AUX_RECEIVERS: u32 = 0u;
 const AUX_RECEIVER_COUNT: u32 = 1u;

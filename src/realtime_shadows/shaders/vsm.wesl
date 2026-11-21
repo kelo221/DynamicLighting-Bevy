@@ -6,8 +6,10 @@
 
 import dynlight::shared::shaders::types::{GpuLight, light_extent, light_has_shadow_cubemap};
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(25) var shadow_cubemaps: texture_cube_array<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(26) var shadow_sampler: sampler;
+@if(DYNLIGHT_EXTERNAL) @group(constants::MATERIAL_BIND_GROUP) @binding(125) var shadow_cubemaps: texture_cube_array<f32>;
+@else @group(constants::MATERIAL_BIND_GROUP) @binding(25) var shadow_cubemaps: texture_cube_array<f32>;
+@if(DYNLIGHT_EXTERNAL) @group(constants::MATERIAL_BIND_GROUP) @binding(126) var shadow_sampler: sampler;
+@else @group(constants::MATERIAL_BIND_GROUP) @binding(26) var shadow_sampler: sampler;
 
 // Depth bias, relative to the distance.
 const VSM_BIAS: f32 = 0.0075;

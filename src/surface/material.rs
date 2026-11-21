@@ -10,10 +10,10 @@ use bevy::render::render_resource::{
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
+use super::external::lit_shader_defs;
 use super::reflection::Reflection;
 use crate::baked_lighting::{
     ATTRIBUTE_TRIANGLE_ID, BAKED_AUX, BAKED_TRIANGLES, TRIANGLE_ID_LOCATION,
-    primitive_index_supported,
 };
 use crate::cookies::COOKIE_ARRAY;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
@@ -305,14 +305,11 @@ impl Material for DynLitMaterial {
             descriptor.vertex.shader = pipeline.mesh_pipeline.shader.clone();
         }
         if let Some(fragment) = descriptor.fragment.as_mut() {
-            if triangle_ids {
-                fragment.shader_defs.push("TRIANGLE_ID".into());
-            } else if primitive_index_supported() {
-                fragment.shader_defs.push("PRIMITIVE_INDEX".into());
-            }
-            if key.bind_group_data.metallic {
-                fragment.shader_defs.push("METALLIC_SHADING".into());
-            }
+            fragment.shader_defs.extend(lit_shader_defs(
+                triangle_ids,
+                key.bind_group_data.metallic,
+                false,
+            ));
         }
         Ok(())
     }

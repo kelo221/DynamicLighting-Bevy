@@ -2,12 +2,13 @@
 
 use bevy::prelude::*;
 
-use super::material::DynLitMaterial;
 use crate::baked_lighting::BakedReceiver;
 use crate::shared::ShaderFeaturesInUse;
+use bevy::pbr::Material;
 
-pub(super) fn note_unbaked_meshes(
-    unbaked: Query<(), (With<MeshMaterial3d<DynLitMaterial>>, Without<BakedReceiver>)>,
+/// `M` is `DynLitMaterial` or an external material (`surface/external.rs`).
+pub(super) fn note_unbaked_meshes<M: Material>(
+    unbaked: Query<(), (With<MeshMaterial3d<M>>, Without<BakedReceiver>)>,
     mut in_use: ResMut<ShaderFeaturesInUse>,
 ) {
     if !unbaked.is_empty() {

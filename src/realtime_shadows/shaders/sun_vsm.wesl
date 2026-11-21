@@ -9,7 +9,8 @@ import dynlight::realtime_shadows::shaders::vsm::{
     shadow_sampler, linstep, MIN_BLEEDING_CUT, TERMINATOR_START, TERMINATOR_END,
 };
 
-@group(constants::MATERIAL_BIND_GROUP) @binding(32) var sun_cascades: texture_2d_array<f32>;
+@if(DYNLIGHT_EXTERNAL) @group(constants::MATERIAL_BIND_GROUP) @binding(132) var sun_cascades: texture_2d_array<f32>;
+@else @group(constants::MATERIAL_BIND_GROUP) @binding(32) var sun_cascades: texture_2d_array<f32>;
 
 // Receivers are looked up this many texels off their surface along the normal.
 const SUN_NORMAL_OFFSET: f32 = 1.5;
