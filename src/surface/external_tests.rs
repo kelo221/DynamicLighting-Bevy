@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use super::external::{SCENE_BINDING_BASE, SCENE_BINDINGS, external_shader_defs, lit_shader_defs};
 use super::shader_tests::{LIGHT_PROCESSOR, LIGHTING, SKY_LIGHT, surface_modules};
-use crate::baked_lighting::shader_tests::BAKED_DATA;
+use crate::baked_lighting::shader_tests::{BAKED_DATA, TRIANGLES};
 use crate::light_clusters::shader_tests::CLUSTERS;
 use crate::realtime_shadows::shader_tests::{SUN_VSM, VSM};
 use crate::shared::wesl_check::compile;
@@ -147,4 +147,61 @@ fn external_defs_extend_the_dynlit_defs() {
     let mut without = external.clone();
     without.retain(|def| *def != "DYNLIGHT_EXTERNAL".into());
     assert_eq!(without, lit_shader_defs(false, false, false));
+}
+
+/// The baked path under the def: the triangle and aux buffers the fragment reads by tag and
+/// primitive are the ones at 123 and 124.
+#[test]
+fn the_baked_path_reads_buffers_123_and_124_under_the_def() {
+    for main in [BAKED_DATA, TRIANGLES] {
+        let module = compile(main.0, &surface_modules(), &[("DYNLIGHT_EXTERNAL", true)]);
+        for (name, group, binding) in bindings(&module) {
+            assert_eq!(group, MATERIAL_GROUP, "{name}");
+            let expected = SCENE_BINDINGS
+                .iter()
+                .find(|(own, _)| name.ends_with(own))
+                .unwrap_or_else(|| panic!("{name} is not in SCENE_BINDINGS"));
+            assert_eq!(expected.1, binding, "{name}");
+        }
+    }
+    let module = compile(
+        TRIANGLES.0,
+        &surface_modules(),
+        &[("DYNLIGHT_EXTERNAL", true)],
+    );
+    let names: Vec<_> = bindings(&module).into_iter().map(|(n, ..)| n).collect();
+    assert!(
+        names.iter().any(|n| n.ends_with("baked_triangles")),
+        "{names:?}"
+    );
+    assert!(names.iter().any(|n| n.ends_with("baked_aux")), "{names:?}");
+}
+
+/// The example's fragment sets `SurfaceInput` as `dynlit.wesl` does and as `external.rs`
+/// documents: lightmap UV1 else UV0, the mesh tag, and the primitive from the builtin or the
+/// triangle-ID input.
+#[test]
+fn the_example_fragment_sets_the_baked_inputs_like_dynlit() {
+    let example = include_str!("../../examples/external_material.wesl");
+    let dynlit = include_str!("shaders/dynlit.wesl");
+    for line in [
+        "input.lightmap_uv = in.uv_b;",
+        "input.lightmap_uv = in.uv;",
+        "input.tag = get_tag(in.instance_index);",
+        "input.primitive = primitive_index;",
+        "input.primitive = triangle_id;",
+        "@if(PRIMITIVE_INDEX) @builtin(primitive_index) primitive_index: u32,",
+        "@if(TRIANGLE_ID) @location(8) @interpolate(flat) triangle_id: u32,",
+        "enable primitive_index;",
+    ] {
+        assert!(dynlit.contains(line), "dynlit.wesl lost `{line}`");
+        assert!(
+            example.contains(line),
+            "the example's fragment lacks `{line}`"
+        );
+    }
+    assert!(
+        example.find("input.lightmap_uv = in.uv_b;") < example.find("input.lightmap_uv = in.uv;"),
+        "UV1 is preferred"
+    );
 }

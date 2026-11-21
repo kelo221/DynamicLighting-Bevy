@@ -20,6 +20,7 @@ use bevy::shader::load_shader_library;
 
 pub use apply::{ActiveBake, scene_buffers, scene_slots};
 pub use bake_features::bake_features;
+pub(crate) use features::primitive_index_missing;
 pub use features::primitive_index_supported;
 pub use layout::{BakedBuffers, Receiver, ReceiverInput, SceneInput};
 pub use systems::{AppliedBake, BAKED_AUX, BAKED_TRIANGLES, BakedReceiver};

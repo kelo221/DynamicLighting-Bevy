@@ -1,7 +1,8 @@
 //! Lighting for a material that is not a [`DynLitMaterial`](super::DynLitMaterial): the
 //! realtime `DynamicLight`s lighting your own `Material`, for example an
-//! `ExtendedMaterial` whose extension carries the bindings. Baking is not supported for such
-//! materials; realtime lights are, with their realtime shadows, cookies and effects.
+//! `ExtendedMaterial` whose extension carries the bindings: realtime lights with their realtime
+//! shadows, cookies and effects, and baked lighting (`BakeStatic` meshes bake like a
+//! `DynLitMaterial`'s, see [`ExternalBakeMaterial`]).
 //!
 //! What a material needs to do:
 //!
@@ -11,26 +12,61 @@
 //!    [`DynLightBindings::default()`]**; [`DynLightBindings`] holds the same fields under the
 //!    same names. The material's own bindings must stay out of 120–132 (a base material
 //!    of an extended one uses the low numbers).
-//! 2. Add [`external_shader_defs`] to the fragment's shader defs in `Material::specialize`.
+//! 2. In `Material::specialize` call [`external_specialize`] (it adds [`external_shader_defs`] to
+//!    the fragment and, for meshes with triangle IDs, the vertex shader and attribute), and
+//!    return [`external_vertex_shader`] from `Material::vertex_shader`.
 //! 3. Add [`ExternalLightingPlugin<YourMaterial>`](ExternalLightingPlugin) after
-//!    `DynamicLightingPlugin`.
-//! 4. Call `surface_light` from the fragment shader (WESL):
+//!    `DynamicLightingPlugin`, and `impl ExternalBakeMaterial for YourMaterial` (an empty impl
+//!    bakes it as an opaque white surface).
+//! 4. Call `surface_light` from the fragment shader (WESL). It sets `SurfaceInput` exactly as
+//!    `dynlit.wesl` does: `lightmap_uv` is UV1 (`in.uv_b`, `VERTEX_UVS_B`) else UV0 (`in.uv`),
+//!    which is what the bake used; `tag` and `primitive` find the mesh's baked data. The tag is
+//!    the `MeshTag` DynLight gives a baked mesh (`get_tag(in.instance_index)`, 0 without bake
+//!    data), the primitive `@builtin(primitive_index)` under `PRIMITIVE_INDEX`, or under
+//!    `TRIANGLE_ID` the flat `@location(8)` input the vertex shader passes on (GPUs without
+//!    primitive indices). With neither def the baked path is off: set both to 0.
 //!
 //! ```wesl
+//! import bevy_pbr::render::mesh_functions::get_tag;
 //! import dynlight::surface::shaders::light_processor::Shading;
 //! import dynlight::surface::shaders::lighting::{SurfaceInput, surface_light};
 //!
-//! var input: SurfaceInput;
-//! input.world = in.world_position.xyz;
-//! input.normal = normalize(in.world_normal); // flipped for back faces
-//! input.lightmap_uv = vec2(0.0);
-//! input.tag = 0u;       // no bake data: the dynamic path, lit by the realtime lights
-//! input.primitive = 0u;
-//! // view: unit vector to the camera; f0, roughness, metallic: your surface;
-//! // specular: false for Lambert diffuse only; sky_reflection: true.
-//! let lights = surface_light(input, Shading(view, vec3(0.04), 0.5, 0.0, false, true));
-//! let color = base * (ambient + lights.diffuse); // plus `lights.specular` with `specular`
+//! @if(PRIMITIVE_INDEX)
+//! enable primitive_index;
+//!
+//! @fragment
+//! fn fragment(
+//!     in: VertexOutput,
+//!     @builtin(front_facing) is_front: bool,
+//!     @if(PRIMITIVE_INDEX) @builtin(primitive_index) primitive_index: u32,
+//!     @if(TRIANGLE_ID) @location(8) @interpolate(flat) triangle_id: u32,
+//! ) -> @location(0) vec4<f32> {
+//!     var input: SurfaceInput;
+//!     input.world = in.world_position.xyz;
+//!     input.normal = normalize(in.world_normal); // flipped for back faces
+//!     input.lightmap_uv = vec2(0.0);
+//!     input.tag = 0u;       // no bake data: the dynamic path, lit by the realtime lights
+//!     input.primitive = 0u;
+//!     @if(VERTEX_UVS_B) { input.lightmap_uv = in.uv_b; }
+//!     @elif(VERTEX_UVS_A) { input.lightmap_uv = in.uv; }
+//!     @if(PRIMITIVE_INDEX) {
+//!         input.tag = get_tag(in.instance_index);
+//!         input.primitive = primitive_index;
+//!     }
+//!     @if(TRIANGLE_ID) {
+//!         input.tag = get_tag(in.instance_index);
+//!         input.primitive = triangle_id;
+//!     }
+//!     // view: unit vector to the camera; f0, roughness, metallic: your surface;
+//!     // specular: false for Lambert diffuse only; sky_reflection: true.
+//!     let lights = surface_light(input, Shading(view, vec3(0.04), 0.5, 0.0, false, true));
+//!     let color = base * (ambient + lights.diffuse); // plus `lights.specular` with `specular`
+//! }
 //! ```
+//!
+//! Baked lighting needs `PRIMITIVE_INDEX` or the triangle-ID fallback; a material whose
+//! `specialize` skips [`external_specialize`] and whose GPU has no primitive indices gets no
+//! baked shadows, and DynLight warns about it once at startup (see [`ExternalLightingPlugin`]).
 //!
 //! The field block (the doc of [`DynLightBindings`] explains each field):
 //!
@@ -65,14 +101,24 @@
 use core::marker::PhantomData;
 
 use bevy::asset::Handle;
-use bevy::pbr::Material;
+use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{Material, MaterialPipeline};
 use bevy::prelude::*;
+use bevy::render::render_resource::{RenderPipelineDescriptor, SpecializedMeshPipelineError};
 use bevy::render::storage::ShaderBuffer;
-use bevy::shader::ShaderDefVal;
+use bevy::shader::{ShaderDefVal, ShaderRef};
 
+use super::alpha_mask::sync_alpha_masks;
+use super::bake_albedo::sync_bake_albedos;
+use super::bake_surface::ExternalBakeMaterial;
+use super::material::VERTEX_SHADER;
+use super::pending::sync_surface_pending;
 use super::shared_arrays::rebind_shared_arrays;
 use super::unbaked::note_unbaked_meshes;
-use crate::baked_lighting::{BAKED_AUX, BAKED_TRIANGLES, primitive_index_supported};
+use crate::baked_lighting::{
+    ATTRIBUTE_TRIANGLE_ID, BAKED_AUX, BAKED_TRIANGLES, BakedReceiver, TRIANGLE_ID_LOCATION,
+    primitive_index_missing, primitive_index_supported,
+};
 use crate::cookies::COOKIE_ARRAY;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
@@ -172,27 +218,91 @@ pub(super) fn lit_shader_defs(
 /// The shader defs an external material adds to its fragment (`descriptor.fragment`, in
 /// `Material::specialize`): `DYNLIGHT_EXTERNAL`, which moves the scene-wide bindings to 120–132
 /// and drops `DynLitMaterial`'s own, and `PRIMITIVE_INDEX` where the GPU supports
-/// `@builtin(primitive_index)`, as for a `DynLitMaterial` (only your own fragment can use it:
-/// the lighting needs it for baked meshes, which external materials don't support).
-///
-/// ```ignore
-/// if let Some(fragment) = descriptor.fragment.as_mut() {
-///     fragment.shader_defs.extend(dynlight::surface::external_shader_defs());
-/// }
-/// ```
+/// `@builtin(primitive_index)`, as for a `DynLitMaterial`. Prefer [`external_specialize`], which
+/// also handles `TRIANGLE_ID`.
 pub fn external_shader_defs() -> Vec<ShaderDefVal> {
     lit_shader_defs(false, false, true)
 }
 
+/// The vertex shader of an external material (`Material::vertex_shader`): DynLit's, which only
+/// meshes with triangle IDs keep ([`external_specialize`] gives every other mesh Bevy's).
+pub fn external_vertex_shader() -> ShaderRef {
+    VERTEX_SHADER.into()
+}
+
+/// Everything an external material does in `Material::specialize` for DynLight: for meshes with
+/// triangle IDs (the fallback of GPUs without `@builtin(primitive_index)`) the vertex attribute
+/// and shader, and the fragment's [`external_shader_defs`] plus `TRIANGLE_ID`. Needs
+/// [`external_vertex_shader`] as the material's vertex shader.
+///
+/// ```ignore
+/// fn specialize(
+///     pipeline: &MaterialPipeline,
+///     descriptor: &mut RenderPipelineDescriptor,
+///     layout: &MeshVertexBufferLayoutRef,
+///     _: MaterialPipelineKey<Self>,
+/// ) -> Result<(), SpecializedMeshPipelineError> {
+///     dynlight::surface::external_specialize(pipeline, descriptor, layout)
+/// }
+/// ```
+pub fn external_specialize(
+    pipeline: &MaterialPipeline,
+    descriptor: &mut RenderPipelineDescriptor,
+    layout: &MeshVertexBufferLayoutRef,
+) -> Result<(), SpecializedMeshPipelineError> {
+    let triangle_ids = use_triangle_ids(pipeline, descriptor, layout)?;
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        fragment
+            .shader_defs
+            .extend(lit_shader_defs(triangle_ids, false, true));
+    }
+    Ok(())
+}
+
+/// Whether the mesh draws with triangle IDs: adds the attribute to the vertex buffer then, and
+/// otherwise gives the main pass Bevy's vertex shader. The prepass shares `specialize` but keeps
+/// Bevy's prepass vertex shader.
+pub(super) fn use_triangle_ids(
+    pipeline: &MaterialPipeline,
+    descriptor: &mut RenderPipelineDescriptor,
+    layout: &MeshVertexBufferLayoutRef,
+) -> Result<bool, SpecializedMeshPipelineError> {
+    let main_pass = descriptor
+        .vertex
+        .shader_defs
+        .contains(&"MESH_PIPELINE".into());
+    let triangle_ids = main_pass && layout.0.contains(ATTRIBUTE_TRIANGLE_ID);
+    if triangle_ids {
+        let ids = layout
+            .0
+            .get_layout(&[ATTRIBUTE_TRIANGLE_ID.at_shader_location(TRIANGLE_ID_LOCATION)])?;
+        descriptor.vertex.buffers[0]
+            .attributes
+            .extend(ids.attributes);
+    } else if main_pass {
+        descriptor.vertex.shader = pipeline.mesh_pipeline.shader.clone();
+    }
+    Ok(triangle_ids)
+}
+
 /// Does for a material `M` what `SurfacePlugin` does for `DynLitMaterial`, so DynLight sees it:
 /// reports its meshes (which have no bake data) for the `unbaked_meshes` shader feature that
-/// `FeatureSelection::Automatic` compiles, and marks its materials modified when a shared
-/// array (shadow cubemaps, cookies, reflection cubes) is replaced so their bind groups are
-/// prepared again. Add it after `DynamicLightingPlugin`.
+/// `FeatureSelection::Automatic` compiles, marks its materials modified when a shared array
+/// (shadow cubemaps, cookies, reflection cubes) is replaced so their bind groups are prepared
+/// again, and bakes them: [`BakeStatic`](crate::bake::BakeStatic) meshes with an `M` get a
+/// `BakeAlbedo` and `BakeAlphaMask` from [`ExternalBakeMaterial`], a `BlendedSurface` when `M`
+/// blends, and a `SurfacePending` while the material's textures load. Triangles, UVs, shadow
+/// bits and bounce need nothing else: the bake and the baked-lighting slice only look at
+/// `Mesh3d`, `BakeStatic` and the mesh tag. Add it after `DynamicLightingPlugin`.
 ///
-/// Not done for external materials: baking (`BakeStatic`, albedo and alpha-mask derivation) and
-/// a material's own reflection cube. For realtime shadows to follow a caster whose material
-/// changes, also add `CasterMaterialPlugin::<M>` (`M: CasterMaterial`).
+/// On a GPU without `@builtin(primitive_index)` baked meshes carry triangle IDs and draw with
+/// [`external_vertex_shader`]; a material that doesn't call [`external_specialize`] then can't
+/// find its baked data, and the plugin logs a warning at startup (once the device is known) if
+/// a mesh with this material is baked.
+///
+/// Not done for external materials: a material's own reflection cube. For realtime shadows to
+/// follow a caster whose material changes, also add `CasterMaterialPlugin::<M>`
+/// (`M: CasterMaterial`).
 pub struct ExternalLightingPlugin<M>(PhantomData<M>);
 
 impl<M> Default for ExternalLightingPlugin<M> {
@@ -201,14 +311,45 @@ impl<M> Default for ExternalLightingPlugin<M> {
     }
 }
 
-impl<M: Material> Plugin for ExternalLightingPlugin<M> {
+impl<M: Material + ExternalBakeMaterial> Plugin for ExternalLightingPlugin<M> {
     fn build(&self, _: &mut App) {}
 
     fn finish(&self, app: &mut App) {
         let world = app.world();
         if world.contains_resource::<Assets<M>>() && world.contains_resource::<Assets<Image>>() {
-            app.add_systems(Update, rebind_shared_arrays::<M>)
-                .add_systems(PostUpdate, note_unbaked_meshes::<M>);
+            // Before the bake snapshots the scene in `PostUpdate`.
+            app.add_systems(
+                Update,
+                (
+                    sync_alpha_masks::<M>,
+                    sync_bake_albedos::<M>,
+                    sync_surface_pending::<M>,
+                    rebind_shared_arrays::<M>,
+                ),
+            )
+            .add_systems(
+                PostUpdate,
+                (note_unbaked_meshes::<M>, warn_without_triangle_ids::<M>),
+            );
         }
     }
+}
+
+/// Once, when a baked mesh with an `M` draws on a GPU without primitive indices: such a mesh
+/// only finds its baked data if `M::specialize` calls [`external_specialize`].
+fn warn_without_triangle_ids<M: Material>(
+    baked: Query<(), (With<MeshMaterial3d<M>>, With<BakedReceiver>)>,
+    mut warned: Local<bool>,
+) {
+    if *warned || primitive_index_supported() || !primitive_index_missing() || baked.is_empty() {
+        return;
+    }
+    *warned = true;
+    warn!(
+        "baked meshes use the external material {}, and this GPU has no `PRIMITIVE_INDEX`: \
+         they carry triangle IDs, which only a material that calls `external_specialize` and \
+         `external_vertex_shader` and reads `@location(8)` in its fragment can use (see \
+         `dynlight::surface::external`); otherwise they are lit without baked shadows",
+        core::any::type_name::<M>()
+    );
 }

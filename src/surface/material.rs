@@ -10,18 +10,16 @@ use bevy::render::render_resource::{
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
-use super::external::lit_shader_defs;
+use super::external::{lit_shader_defs, use_triangle_ids};
 use super::reflection::Reflection;
-use crate::baked_lighting::{
-    ATTRIBUTE_TRIANGLE_ID, BAKED_AUX, BAKED_TRIANGLES, TRIANGLE_ID_LOCATION,
-};
+use crate::baked_lighting::{BAKED_AUX, BAKED_TRIANGLES};
 use crate::cookies::COOKIE_ARRAY;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
 use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS, SUN_CASCADES};
 
 const SHADER: &str = "embedded://dynlight/surface/shaders/dynlit.wesl";
-const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
+pub(super) const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
 const PREPASS_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_prepass.wesl";
 
 /// How a [`DynLitMaterial`] reflects light.
@@ -288,22 +286,7 @@ impl Material for DynLitMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
-        // The prepass shares this function but keeps Bevy's prepass vertex shader.
-        let main_pass = descriptor
-            .vertex
-            .shader_defs
-            .contains(&"MESH_PIPELINE".into());
-        let triangle_ids = main_pass && layout.0.contains(ATTRIBUTE_TRIANGLE_ID);
-        if triangle_ids {
-            let ids = layout
-                .0
-                .get_layout(&[ATTRIBUTE_TRIANGLE_ID.at_shader_location(TRIANGLE_ID_LOCATION)])?;
-            descriptor.vertex.buffers[0]
-                .attributes
-                .extend(ids.attributes);
-        } else if main_pass {
-            descriptor.vertex.shader = pipeline.mesh_pipeline.shader.clone();
-        }
+        let triangle_ids = use_triangle_ids(pipeline, descriptor, layout)?;
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.extend(lit_shader_defs(
                 triangle_ids,

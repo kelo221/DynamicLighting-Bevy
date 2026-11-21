@@ -24,7 +24,7 @@ pub fn primitive_index_supported() -> bool {
 }
 
 /// Whether a render device has started without `@builtin(primitive_index)`.
-pub(super) fn primitive_index_missing() -> bool {
+pub(crate) fn primitive_index_missing() -> bool {
     PRIMITIVE_INDEX.load(Ordering::Relaxed) == MISSING
 }
 

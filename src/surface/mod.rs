@@ -9,6 +9,7 @@
 
 mod alpha_mask;
 mod bake_albedo;
+mod bake_surface;
 mod external;
 #[cfg(test)]
 mod external_tests;
@@ -28,9 +29,10 @@ use bevy::shader::load_shader_library;
 
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
 pub use bake_albedo::{DerivedAlbedo, material_albedo};
+pub use bake_surface::ExternalBakeMaterial;
 pub use external::{
     DynLightBindings, ExternalLightingPlugin, SCENE_BINDING_BASE, SCENE_BINDINGS,
-    external_shader_defs,
+    external_shader_defs, external_specialize, external_vertex_shader,
 };
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
 pub use reflection::Reflection;
@@ -64,9 +66,9 @@ impl Plugin for SurfacePlugin {
             app.add_systems(
                 Update,
                 (
-                    alpha_mask::sync_alpha_masks,
-                    bake_albedo::sync_bake_albedos,
-                    pending::sync_surface_pending,
+                    alpha_mask::sync_alpha_masks::<DynLitMaterial>,
+                    bake_albedo::sync_bake_albedos::<DynLitMaterial>,
+                    pending::sync_surface_pending::<DynLitMaterial>,
                     shared_arrays::rebind_shared_arrays::<DynLitMaterial>,
                 ),
             )

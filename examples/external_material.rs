@@ -5,8 +5,13 @@
 //! (`external_material.wesl`). A point light and a tube light shine on a floor and a cube.
 //!
 //! `cargo run --example external_material -- --frames 120 --screenshot /tmp/external.png` exits
-//! after 120 frames and saves the last ones as an image.
+//! after 120 frames and saves the last ones as an image. With `--bake` the lights are baked
+//! (`BakeStatic` meshes, in memory, `Preview`) and the material reads the baked shadows: it
+//! implements `ExternalBakeMaterial` for its albedo, calls `external_specialize` and sets the
+//! tag, primitive and lightmap UV in its fragment.
 
+#[path = "support/lightmap_uvs.rs"]
+mod lightmap_uvs;
 #[path = "support/mod.rs"]
 mod support;
 
@@ -20,8 +25,11 @@ use bevy::render::render_resource::{
 use bevy::render::storage::ShaderBuffer;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::shader::{Shader, ShaderRef};
+use dynlight::bake::{BakeFinished, BakePreset, BakeRequest};
+use dynlight::baked_lighting::ActiveBake;
 use dynlight::prelude::*;
-use support::argument;
+use dynlight::surface::{ExternalBakeMaterial, external_specialize, external_vertex_shader};
+use support::{argument, flag};
 
 const SHADER: Handle<Shader> = uuid_handle!("7a1c3e55-0d42-4b8e-9f26-5c8e1a4d7b90");
 
@@ -77,7 +85,18 @@ impl ExternalMaterial {
     }
 }
 
+impl ExternalBakeMaterial for ExternalMaterial {
+    /// Bounce light takes on the surface color.
+    fn bake_albedo(&self) -> (LinearRgba, Option<Handle<Image>>) {
+        (self.base_color, None)
+    }
+}
+
 impl Material for ExternalMaterial {
+    fn vertex_shader() -> ShaderRef {
+        external_vertex_shader()
+    }
+
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
     }
@@ -87,15 +106,12 @@ impl Material for ExternalMaterial {
     }
 
     fn specialize(
-        _: &MaterialPipeline,
+        pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         _: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.extend(external_shader_defs());
-        }
-        Ok(())
+        external_specialize(pipeline, descriptor, layout)
     }
 }
 
@@ -103,12 +119,14 @@ impl Material for ExternalMaterial {
 struct Options {
     frames: Option<u32>,
     screenshot: Option<String>,
+    bake: bool,
 }
 
 fn main() -> AppExit {
     let options = Options {
         frames: argument("--frames").and_then(|value| value.parse().ok()),
         screenshot: argument("--screenshot"),
+        bake: flag("--bake"),
     };
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -123,6 +141,7 @@ fn main() -> AppExit {
         .insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.03)))
         .insert_resource(options)
         .add_systems(Startup, spawn_scene)
+        .add_systems(Update, (request_bake, apply_bake))
         .add_systems(Last, finish)
         .run()
 }
@@ -132,7 +151,9 @@ fn spawn_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ExternalMaterial>>,
     mut shaders: ResMut<Assets<Shader>>,
+    options: Res<Options>,
 ) {
+    let realtime = !options.bake;
     let source = include_str!("external_material.wesl");
     let path = "embedded://external_material/external_material.wesl";
     shaders
@@ -144,11 +165,19 @@ fn spawn_scene(
         Transform::from_xyz(0.0, 4.5, 7.5).looking_at(Vec3::new(0.0, 0.4, 0.0), Vec3::Y),
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(16.0, 16.0))),
+        Name::new("Floor"),
+        BakeStatic,
+        Mesh3d(meshes.add(lightmap_uvs::with_uv0_as_uv1(
+            Plane3d::default().mesh().size(16.0, 16.0).build(),
+        ))),
         MeshMaterial3d(materials.add(ExternalMaterial::new(Color::srgb(0.8, 0.8, 0.8)))),
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.4, 1.4, 1.4))),
+        Name::new("Cube"),
+        BakeStatic,
+        Mesh3d(meshes.add(lightmap_uvs::box_with_lightmap_uvs(Cuboid::new(
+            1.4, 1.4, 1.4,
+        )))),
         MeshMaterial3d(materials.add(ExternalMaterial::new(Color::srgb(0.85, 0.6, 0.35)))),
         Transform::from_xyz(0.0, 0.7, 0.0).with_rotation(Quat::from_rotation_y(0.5)),
     ));
@@ -158,7 +187,7 @@ fn spawn_scene(
             color: Color::srgb(1.0, 0.7, 0.4),
             radius: 8.0,
             intensity: 2.0,
-            realtime: true,
+            realtime,
             ..default()
         },
         Transform::from_xyz(-3.0, 2.0, 1.5),
@@ -169,12 +198,44 @@ fn spawn_scene(
             color: Color::srgb(0.6, 0.8, 1.0),
             radius: 8.0,
             intensity: 2.0,
-            realtime: true,
+            realtime,
             ..DynamicLight::tube(1.2)
         },
         Transform::from_xyz(3.0, 2.0, 1.0),
     ));
     support::status("A custom material lit by a realtime point light and a tube light");
+}
+
+/// With `--bake`: bakes once the scene's transforms and derived albedos are up to date.
+fn request_bake(
+    options: Res<Options>,
+    mut frames: Local<u32>,
+    mut requests: MessageWriter<BakeRequest>,
+) {
+    *frames += 1;
+    if options.bake && *frames == 3 {
+        requests.write(BakeRequest {
+            output: None,
+            preset: BakePreset::Preview,
+        });
+    }
+}
+
+/// Applies the finished bake; the meshes get their tags and the fragments read the shadows.
+fn apply_bake(
+    mut finished: MessageReader<BakeFinished>,
+    mut active: ResMut<ActiveBake>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    for bake in finished.read() {
+        match &bake.result {
+            Ok(report) => active.0 = Some(report.handle.clone()),
+            Err(failure) => {
+                error!("bake failed: {failure}");
+                exit.write(AppExit::error());
+            }
+        }
+    }
 }
 
 /// With `--frames N`: requests the screenshot five frames before the end and exits at N.
