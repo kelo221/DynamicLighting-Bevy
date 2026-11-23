@@ -7,12 +7,19 @@ use bevy::asset::{AssetLoader, LoadContext, io::Reader};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::AsyncReadExt};
 
+use crate::baked_lighting::{BakedBuffers, take_scene_buffers};
+
 use super::format::{BakedScene, FormatError, decode_stream};
 
 /// A loaded `.dynlight` file.
 #[derive(Asset, TypePath, Clone, Debug, PartialEq)]
 pub struct DynLightBake {
     pub scene: BakedScene,
+    /// The GPU buffers for [`Self::scene`], built by the loader off the main thread. `Some` for
+    /// a bake loaded from a file; its scene has given up the meshes' triangle words (they live
+    /// on in these buffers). `None` for a bake made in this app, whose buffers are built when
+    /// it is applied.
+    pub buffers: Option<BakedBuffers>,
 }
 
 /// Loads `.dynlight` files into [`DynLightBake`] assets.
@@ -66,9 +73,12 @@ impl AssetLoader for DynLightBakeLoader {
     ) -> Result<Self::Asset, Self::Error> {
         // Inflated and parsed as it is read: the packed file and the unpacked payload are never
         // held whole next to the parsed scene.
-        let scene =
+        let mut scene =
             decode_stream(BlockingReader(reader)).map_err(DynLightBakeLoaderError::Format)?;
-        Ok(DynLightBake { scene })
+        // The GPU words are made here, on the loader thread; the scene's copy is released as it
+        // goes, so one copy of the triangles remains.
+        let buffers = Some(take_scene_buffers(&mut scene));
+        Ok(DynLightBake { scene, buffers })
     }
 
     fn extensions(&self) -> &[&str] {
@@ -126,6 +136,7 @@ mod tests {
         let world = app.world_mut();
         let bake = DynLightBake {
             scene: BakedScene::default(),
+            buffers: None,
         };
         let handle = world.resource_mut::<Assets<DynLightBake>>().add(bake);
         world.resource_mut::<HeadlessBakes>().hold(&handle);

@@ -54,12 +54,12 @@ pub(super) fn create_buffers(app: &mut App) {
     for (handle, words, label) in [
         (
             &BAKED_TRIANGLES,
-            &empty.triangles,
+            &*empty.triangles,
             "dynlight baked triangles",
         ),
-        (&BAKED_AUX, &empty.aux, "dynlight baked aux"),
+        (&BAKED_AUX, &*empty.aux, "dynlight baked aux"),
     ] {
-        let mut buffer = ShaderBuffer::from(words.clone());
+        let mut buffer = ShaderBuffer::from(words.to_vec());
         buffer.label = label.into();
         assets
             .insert(handle, buffer)

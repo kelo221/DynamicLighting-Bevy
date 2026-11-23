@@ -3,11 +3,11 @@
 
 use bevy::prelude::*;
 
-use crate::bake::{BakedScene, DynLightBake};
+use crate::bake::{BakedMesh, BakedScene, DynLightBake};
 use crate::light::{BakedLightSlots, BakedSlot};
 use crate::shared::{DynamicGeometryMode, SceneLoading};
 
-use super::layout::{BakedBuffers, ReceiverInput, SceneInput, flags};
+use super::layout::{BakedBuffers, BufferBuilder, ReceiverInput, SceneInput, flags};
 use super::systems::AppliedBake;
 
 /// Bounce bits per pixel for lights without baked bounce; their bounce offsets are all 0.
@@ -20,6 +20,37 @@ pub struct ActiveBake(pub Option<Handle<DynLightBake>>);
 
 /// The GPU buffers for `scene`.
 pub fn scene_buffers(scene: &BakedScene) -> BakedBuffers {
+    let mut builder = BufferBuilder::default();
+    for mesh in &scene.meshes {
+        builder.push(receiver_input(mesh));
+    }
+    builder.finish(scene_input(scene))
+}
+
+/// The GPU buffers for `scene`, taking each mesh's triangle words out of it as they are
+/// copied, so the scene and the buffers are never both whole in memory. The meshes keep their
+/// ids, hashes and resolutions; `scene` must not be passed to [`scene_buffers`] afterwards.
+pub fn take_scene_buffers(scene: &mut BakedScene) -> BakedBuffers {
+    let words = scene.meshes.iter().map(|mesh| mesh.triangles.len()).sum();
+    let mut builder = BufferBuilder::with_triangle_capacity(words);
+    for mesh in &mut scene.meshes {
+        builder.push(receiver_input(mesh));
+        mesh.triangles = Vec::new();
+    }
+    builder.finish(scene_input(scene))
+}
+
+fn receiver_input(mesh: &BakedMesh) -> ReceiverInput<'_> {
+    ReceiverInput {
+        id: mesh.id,
+        content_hash: mesh.content_hash,
+        resolution: mesh.resolution,
+        triangles: &mesh.triangles,
+        occludes: mesh.occludes,
+    }
+}
+
+fn scene_input(scene: &BakedScene) -> SceneInput<'_> {
     let mut flag_bits = 0;
     if scene.settings.bounce {
         flag_bits |= flags::BOUNCE_LAYOUT;
@@ -34,25 +65,15 @@ pub fn scene_buffers(scene: &BakedScene) -> BakedBuffers {
     } else {
         scene.local_light_count() as u32
     };
-    let meshes = scene.meshes.iter().map(|mesh| ReceiverInput {
-        id: mesh.id,
-        content_hash: mesh.content_hash,
-        resolution: mesh.resolution,
-        triangles: &mesh.triangles,
-        occludes: mesh.occludes,
-    });
-    BakedBuffers::build(
-        meshes,
-        SceneInput {
-            baked_lights: scene.lights.len() as u32,
-            bvh: bytemuck::cast_slice(&scene.light_bvh),
-            cubes: &scene.distance_cubes,
-            cube_count,
-            sun_maps: &scene.sun_maps,
-            sky_probes: scene.sky_probes.as_ref(),
-            flags: flag_bits,
-        },
-    )
+    SceneInput {
+        baked_lights: scene.lights.len() as u32,
+        bvh: bytemuck::cast_slice(&scene.light_bvh),
+        cubes: &scene.distance_cubes,
+        cube_count,
+        sun_maps: &scene.sun_maps,
+        sky_probes: scene.sky_probes.as_ref(),
+        flags: flag_bits,
+    }
 }
 
 /// The light buffer slots for `scene`: one per baked light, in BVH order, then the suns and the
@@ -112,7 +133,11 @@ pub(super) fn apply_bake(
     }
     match wanted.and_then(|id| bakes.get(id)) {
         Some(bake) => {
-            applied.buffers = scene_buffers(&bake.scene);
+            // A loaded bake brings its buffers; one baked in this app builds them now.
+            applied.buffers = bake
+                .buffers
+                .clone()
+                .unwrap_or_else(|| scene_buffers(&bake.scene));
             slots.slots = scene_slots(&bake.scene);
             info!(
                 "dynlight: applied bake with {} meshes and {} lights",
@@ -227,6 +252,17 @@ mod tests {
         let receiver = buffers.receivers[&BakeId(9)];
         assert_eq!((receiver.tag, receiver.content_hash), (1, 77));
         assert_eq!(receiver.triangle_count, 1);
+    }
+
+    #[test]
+    fn taking_the_buffers_matches_building_them_and_frees_the_triangles() {
+        let mut scene = scene();
+        let built = scene_buffers(&scene);
+        let taken = take_scene_buffers(&mut scene);
+        assert_eq!(taken, built);
+        assert_eq!(taken.triangles.len(), 5);
+        assert!(scene.meshes.iter().all(|mesh| mesh.triangles.is_empty()));
+        assert_eq!(scene.meshes.len(), 1, "the mesh itself stays");
     }
 
     #[test]

@@ -254,6 +254,7 @@ pub(super) fn finish_bakes(
         stats: output.scene.stats,
         handle: assets.add(DynLightBake {
             scene: output.scene,
+            buffers: None,
         }),
         milliseconds: output.milliseconds,
         bytes: output.bytes,

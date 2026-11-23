@@ -12,7 +12,7 @@ use dynlight::bake::{
     BakeFailure, BakeFinished, BakePreset, BakeRequest, BakeStatus, BakedScene, DynLightBake,
     SnapshotError, SurfacePending, decode, encode,
 };
-use dynlight::baked_lighting::{ActiveBake, AppliedBake, has_triangle_ids};
+use dynlight::baked_lighting::{ActiveBake, AppliedBake, has_triangle_ids, scene_buffers};
 use dynlight::light::{BakedLightSlots, PackedLights};
 use dynlight::prelude::*;
 use dynlight::shared::{ResolvedBakeId, TriangleIdSource};
@@ -182,7 +182,14 @@ fn bake_request_writes_a_loadable_file() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let loaded = app.world().resource::<Assets<DynLightBake>>().get(&handle);
-    assert_eq!(loaded.expect("asset loads").scene, scene);
+    let loaded = loaded.expect("asset loads");
+    // The loader prepares the GPU words and lets go of the scene's triangles.
+    let mut shed = scene.clone();
+    shed.meshes
+        .iter_mut()
+        .for_each(|mesh| mesh.triangles.clear());
+    assert_eq!(loaded.scene, shed);
+    assert_eq!(loaded.buffers, Some(scene_buffers(&scene)));
 
     app.insert_resource(ActiveBake(Some(handle)));
     app.update();
