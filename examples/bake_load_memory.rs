@@ -74,6 +74,19 @@ fn generate(path: &Path, megabytes: usize) {
     );
 }
 
+/// Current resident memory in MB, from `ps` (Unix).
+fn rss_mb() -> u64 {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .expect("run ps");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0)
+        / 1024
+}
+
 fn load(path: &Path) {
     let dir = path
         .parent()
@@ -116,10 +129,11 @@ fn load(path: &Path) {
         app.update();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    println!("loaded in {:?}", start.elapsed());
+    println!("loaded in {:?}, rss {} MB", start.elapsed(), rss_mb());
     app.insert_resource(ActiveBake(Some(handle)));
     let applying = std::time::Instant::now();
     app.update();
     println!("apply + upload frame took {:?}", applying.elapsed());
     app.update();
+    println!("rss after apply {} MB", rss_mb());
 }
