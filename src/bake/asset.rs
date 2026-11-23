@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use bevy::asset::{AssetLoader, LoadContext, io::Reader};
 use bevy::prelude::*;
+use bevy::tasks::{block_on, futures_lite::AsyncReadExt};
 
-use super::format::{BakedScene, FormatError, decode};
+use super::format::{BakedScene, FormatError, decode_stream};
 
 /// A loaded `.dynlight` file.
 #[derive(Asset, TypePath, Clone, Debug, PartialEq)]
@@ -43,6 +44,15 @@ impl std::error::Error for DynLightBakeLoaderError {
     }
 }
 
+/// Lets the parser pull from the asset reader. The loader task is the only thing waiting on it.
+struct BlockingReader<'a>(&'a mut dyn Reader);
+
+impl std::io::Read for BlockingReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        block_on(self.0.read(buf))
+    }
+}
+
 impl AssetLoader for DynLightBakeLoader {
     type Asset = DynLightBake;
     type Settings = ();
@@ -54,12 +64,10 @@ impl AssetLoader for DynLightBakeLoader {
         _settings: &Self::Settings,
         _load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
-        let mut bytes = Vec::new();
-        reader
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(DynLightBakeLoaderError::Io)?;
-        let scene = decode(&bytes).map_err(DynLightBakeLoaderError::Format)?;
+        // Inflated and parsed as it is read: the packed file and the unpacked payload are never
+        // held whole next to the parsed scene.
+        let scene =
+            decode_stream(BlockingReader(reader)).map_err(DynLightBakeLoaderError::Format)?;
         Ok(DynLightBake { scene })
     }
 

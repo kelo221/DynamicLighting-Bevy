@@ -1,6 +1,8 @@
 //! The sun maps and sky probes sections of a `.dynlight` payload: what moving meshes read for
 //! the static scene's shadows of baked suns and skies.
 
+use std::io::Read;
+
 use bevy::math::{UVec3, Vec3, Vec4};
 
 use super::super::sky_probes::MAX_SKY_PROBES;
@@ -35,8 +37,8 @@ pub(super) fn encode(w: &mut Writer, sun_maps: &[SunMap], sky_probes: Option<&Sk
 }
 
 /// Reads the sun maps (none, or one per sun) and the sky probes (only with a sky).
-pub(super) fn decode(
-    r: &mut Reader,
+pub(super) fn decode<R: Read>(
+    r: &mut Reader<R>,
     suns: usize,
     skies: usize,
 ) -> Result<(Vec<SunMap>, Option<SkyProbes>), FormatError> {

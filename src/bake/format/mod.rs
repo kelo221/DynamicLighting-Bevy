@@ -23,6 +23,7 @@
 mod codec;
 mod lights;
 mod maps;
+mod stream;
 mod types;
 
 use std::fmt;
@@ -35,6 +36,7 @@ use crate::shared::{BakeId, DynamicGeometryMode};
 
 use super::light_bvh::LightBvhNode;
 use codec::{Reader, Writer};
+pub use stream::decode_stream;
 pub use types::{BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, SkyProbes, SunMap};
 
 pub const MAGIC: [u8; 8] = *b"DYNLIGHT";
@@ -94,8 +96,15 @@ pub fn encode(scene: &BakedScene) -> Vec<u8> {
         .expect("writing to a Vec cannot fail")
 }
 
-/// Parses a `.dynlight` file, checking magic, version, length and checksum.
-pub fn decode(bytes: &[u8]) -> Result<BakedScene, FormatError> {
+/// The uncompressed header of a `.dynlight` file.
+struct Header {
+    length: u64,
+    checksum: u32,
+}
+
+/// Checks magic and version of the first [`HEADER_BYTES`] bytes of a file (fewer if it is
+/// shorter).
+fn parse_header(bytes: &[u8]) -> Result<Header, FormatError> {
     if bytes.len() < HEADER_BYTES || bytes[..8] != MAGIC {
         return Err(if bytes.len() >= 8 && bytes[..8] != MAGIC {
             FormatError::NotDynlight
@@ -111,8 +120,17 @@ pub fn decode(bytes: &[u8]) -> Result<BakedScene, FormatError> {
             supported: FORMAT_VERSION,
         });
     }
-    let length = header.u64()?;
-    let checksum = header.u32()?;
+    Ok(Header {
+        length: header.u64()?,
+        checksum: header.u32()?,
+    })
+}
+
+/// Parses a `.dynlight` file held in memory, checking magic, version, length and checksum
+/// before parsing. [`decode_stream`] gives the same scene without holding the file or the
+/// unpacked payload whole.
+pub fn decode(bytes: &[u8]) -> Result<BakedScene, FormatError> {
+    let Header { length, checksum } = parse_header(bytes)?;
     let mut payload = Vec::new();
     GzDecoder::new(&bytes[HEADER_BYTES..])
         .take(length.saturating_add(1))
@@ -173,7 +191,12 @@ fn encode_payload(scene: &BakedScene) -> Vec<u8> {
 }
 
 fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
-    let mut r = Reader::new(payload);
+    parse_payload(&mut Reader::new(payload))
+}
+
+/// Parses the payload sections in order from `r`, which can be a stream: nothing is looked at
+/// twice, and only the parsed scene is held.
+fn parse_payload<R: Read>(r: &mut Reader<R>) -> Result<BakedScene, FormatError> {
     let flags = r.u32()?;
     if flags > 3 {
         return Err(FormatError::Invalid("settings flag"));
@@ -193,7 +216,7 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
         distance_cube_resolution: r.u32()?,
     };
 
-    let lights = lights::decode(&mut r)?;
+    let lights = lights::decode(r)?;
 
     let bvh_words = r.words()?;
     if !bvh_words.len().is_multiple_of(8) {
@@ -228,7 +251,7 @@ fn decode_payload(payload: &[u8]) -> Result<BakedScene, FormatError> {
 
     let suns = lights.iter().filter(|light| light.shape.sun().is_some());
     let skies = lights.iter().filter(|light| light.shape == LightShape::Sky);
-    let (sun_maps, sky_probes) = maps::decode(&mut r, suns.count(), skies.count())?;
+    let (sun_maps, sky_probes) = maps::decode(r, suns.count(), skies.count())?;
 
     let stats = BakeStats {
         meshes: r.u32()?,

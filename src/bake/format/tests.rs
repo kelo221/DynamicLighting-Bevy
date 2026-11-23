@@ -293,3 +293,66 @@ fn invalid_payload_values_are_rejected() {
         Err(FormatError::Invalid("trailing payload"))
     );
 }
+
+/// A reader that hands out at most 7 bytes per call, like a slow network or disk.
+struct Dribble<'a>(&'a [u8]);
+
+impl std::io::Read for Dribble<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(7).min(self.0.len());
+        buf[..n].copy_from_slice(&self.0[..n]);
+        self.0 = &self.0[n..];
+        Ok(n)
+    }
+}
+
+#[test]
+fn streamed_and_whole_buffer_reads_agree() {
+    let mut big = sample();
+    // Several chunks of words per mesh, so reads straddle the reader's chunk size.
+    big.meshes = (0..5u32)
+        .map(|i| BakedMesh {
+            id: crate::shared::BakeId(u64::from(i) + 1),
+            content_hash: u64::from(i),
+            resolution: 8,
+            triangles: (0..10_000 + i)
+                .map(|w| w.wrapping_mul(2_654_435_761))
+                .collect(),
+            occludes: i % 2 == 0,
+        })
+        .collect();
+    for scene in [sample(), BakedScene::default(), big] {
+        let bytes = encode(&scene);
+        let whole = decode(&bytes);
+        assert_eq!(whole, Ok(scene));
+        assert_eq!(decode_stream(&bytes[..]), whole);
+        assert_eq!(decode_stream(Dribble(&bytes)), whole);
+    }
+}
+
+#[test]
+fn streamed_reads_report_the_same_errors() {
+    let bytes = encode(&sample());
+    let mut wrong_checksum = bytes.clone();
+    wrong_checksum[20] ^= 1;
+    let mut wrong_length = bytes.clone();
+    wrong_length[12] ^= 1;
+    let mut flipped = bytes.clone();
+    let last = flipped.len() - 12;
+    flipped[last] ^= 0x55;
+    let mut old_version = bytes.clone();
+    old_version[8..12].copy_from_slice(&5u32.to_le_bytes());
+    for broken in [
+        wrong_checksum,
+        wrong_length,
+        flipped,
+        old_version,
+        bytes[..10].to_vec(),
+        bytes[..bytes.len() - 3].to_vec(),
+        b"PNG\0\0\0\0\0garbage-garbage-garbage".to_vec(),
+    ] {
+        let whole = decode(&broken);
+        assert!(whole.is_err());
+        assert_eq!(decode_stream(&broken[..]), whole);
+    }
+}
