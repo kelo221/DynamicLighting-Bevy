@@ -25,6 +25,7 @@ mod mesh_builder;
 mod mesh_texels;
 pub mod mirror;
 mod occluder;
+mod prepared;
 mod progress;
 mod random;
 mod seams;
@@ -48,15 +49,16 @@ mod triangle_words;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-pub use asset::{DynLightBake, DynLightBakeLoader, DynLightBakeLoaderError};
+pub use asset::DynLightBake;
 pub use baker::bake;
 pub use distance_cubes::DISTANCE_CUBE_RESOLUTION;
 pub use format::{
     BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, FORMAT_VERSION, FormatError,
-    MAX_SUN_MAP_RESOLUTION, SkyProbes, SunMap, decode, encode,
+    MAX_SUN_MAP_RESOLUTION, SkyProbes, SunMap, decode, decode_stream, encode,
 };
 pub use input::{AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
 pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
+pub use prepared::{BakedBuffers, Receiver};
 pub use progress::{BakeProgress, BakeStage};
 pub use settings::{
     BakeSettings, BakeStatic, BlendedSurface, PREVIEW_AREA_LIGHT_SAMPLES, PREVIEW_SKY_SAMPLES,
