@@ -1,11 +1,10 @@
-//! The `.dynlight` asset loader: streams the file through the format reader and builds the GPU
-//! buffers on the loader thread.
+//! The `.dynlight` asset loader: reads the packed file, inflates and parses it as a stream and
+//! builds the GPU buffers on the loader thread.
 
 use std::fmt;
 
 use bevy::asset::{AssetLoader, LoadContext, io::Reader};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::AsyncReadExt};
 
 use crate::bake::{DynLightBake, FormatError, decode_stream};
 
@@ -40,15 +39,6 @@ impl std::error::Error for DynLightBakeLoaderError {
     }
 }
 
-/// Lets the parser pull from the asset reader. The loader task is the only thing waiting on it.
-struct BlockingReader<'a>(&'a mut dyn Reader);
-
-impl std::io::Read for BlockingReader<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        block_on(self.0.read(buf))
-    }
-}
-
 impl AssetLoader for DynLightBakeLoader {
     type Asset = DynLightBake;
     type Settings = ();
@@ -60,10 +50,17 @@ impl AssetLoader for DynLightBakeLoader {
         _settings: &Self::Settings,
         _load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
-        // Inflated and parsed as it is read: the packed file and the unpacked payload are never
-        // held whole next to the parsed scene.
-        let mut scene =
-            decode_stream(BlockingReader(reader)).map_err(DynLightBakeLoaderError::Format)?;
+        // The packed file is read whole with the asset reader's own async reads; blocking on
+        // them inside the parser could deadlock a reader that needs this executor. Only the
+        // inflate is streamed, so the unpacked payload, the big copy, is never held whole next
+        // to the parsed scene.
+        let mut packed = Vec::new();
+        reader
+            .read_to_end(&mut packed)
+            .await
+            .map_err(DynLightBakeLoaderError::Io)?;
+        let mut scene = decode_stream(&packed[..]).map_err(DynLightBakeLoaderError::Format)?;
+        drop(packed);
         // The GPU words are made here, on the loader thread; the scene's copy is released as it
         // goes, so one copy of the triangles remains.
         let buffers = Some(take_scene_buffers(&mut scene));
