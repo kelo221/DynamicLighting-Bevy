@@ -10,6 +10,9 @@ dynlight is its own lighting system: it never uses Bevy's lights, shadow maps, e
 
 ## Updates
 
+- **2026-11-24**
+  - Big bakes load in about a third less memory: `.dynlight` is inflated as a stream, the GPU buffers are built on the loader thread, and the main world keeps no copy after upload.
+  - API: `DynLightBake` gained `buffers` (literals need `buffers: None`); `BakedBuffers.triangles` / `.aux` are `Arc<Vec<u32>>`; the loader moved to `dynlight::baked_lighting::DynLightBakeLoader{,Error}`; `encode` returns `Result` and refuses a loaded bake's scene (`BakedScene::triangles_taken`); new `bake::decode_stream` and `baked_lighting::take_scene_buffers`.
 - **2026-10-20**
   - Suns bake one bounce, and `BakeSettings::colored_bounce` tints bounce light by the surfaces it comes off. Bakes wait for materials and textures to load.
   - Reflection probes: `ReflectionProbe` boxes captured at runtime, with box-projected reflections and irradiance for meshes without bake data.

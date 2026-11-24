@@ -145,8 +145,9 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
-| `src/bake/mod.rs` | none | none | New; wiring: `BakePlugin`, `BakeSystems`, re-exports, `.dynlight` loader registration |
-| `src/bake/asset.rs` | `C/Lighting/RaycastedScene.cs:15-159` (the Unity asset holding the bake) | none | Replaced; Bevy `AssetLoader` for `.dynlight` |
+| `src/bake/mod.rs` | none | none | New; wiring: `BakePlugin`, `BakeSystems`, re-exports, `DynLightBake` asset registration (the loader is in `baked_lighting/loader.rs`) |
+| `src/bake/asset.rs` | `C/Lighting/RaycastedScene.cs:15-159` (the Unity asset holding the bake) | none | Replaced; the `DynLightBake` asset: the scene plus, for a loaded bake, its prepared GPU buffers (Henry keeps one gzip block per mesh and inflates each into its own `ComputeBuffer`, `C/Core/DynamicLightManager.cs:657-662`) |
+| `src/bake/prepared.rs` | none | none | New; plain data of a bake's prepared GPU buffers (`BakedBuffers`, `Receiver`), kept in `bake` so the asset can hold them without a slice cycle; their impls are in `baked_lighting/layout.rs` |
 | `src/bake/baker.rs` | `C/Core/DynamicLightingTracer.cs:133-352` (`CreateDynamicLightsBvh`, `StartRaytracing`) | none | Ported; one pure function on rayon, Henry's step order; channel assignment (`DynamicLightingTracer.Channels.cs`) skipped (PLAN §8); an area light's points are ordered together for the light BVH; distant lights go last, suns then skies, and a sky adds the probe grid (M21) |
 | `src/bake/bits.rs` | `C/Utilities/BitArray2.cs` (bit layout) | none | Ported; adds an OR-only atomic grid so results don't depend on thread order |
 | `src/bake/area.rs` | none | none | New; soft visibility of a texel to a rectangle or tube light: probe rays and a minimum of spread samples, then the rest of the samples where they disagree, weighted like Henry's NdotL margin (PLAN §12, Beyond Henry) |
@@ -160,7 +161,8 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/bake/format/lights.rs` | none | none | New; the 60-byte light records, their kinds (point-like, rectangle, tube, sun, sky) and order checks (M21, split out of `mod.rs`) |
 | `src/bake/format/maps.rs` | none | none | New; the sun-map and sky-probe sections and their validation (M21, split out of `mod.rs`) |
 | `src/bake/format/codec.rs` | none | `BO/baker.rs:668-716` (`put_*`, `ByteReader`) | Lifted; u64 counts, rejects lengths the data can't hold |
-| `src/bake/format/tests.rs` | none | none | New; round trip, unknown versions, corruption, light order, sun-map and sky-probe validation |
+| `src/bake/format/stream.rs` | none | none | New; `decode_stream`: inflates and parses a `.dynlight` section by section, checksum and length checked at the end, same result and errors as `decode` |
+| `src/bake/format/tests.rs` | none | none | New; round trip, unknown versions, corruption, light order, sun-map and sky-probe validation, streamed against whole-buffer reads |
 | `src/bake/format/types.rs` | `C/Lighting/RaycastedScene.cs:108-120`, `C/Lighting/RaycastedMeshRenderer.cs`, `C/Lighting/RaycastedDynamicLight.cs` | none | Replaced; plain structs keyed by `BakeId`; `SkyProbes` and its unorm8 packing are New (M21) |
 | `src/bake/geometry.rs` | `C/Utilities/MathEx.cs:15-35,59-197,327-348` | none | Ported; map size clamped to ≥ 2; `approx_eq` fixes `ApproximatelyEquals` comparing absolute values |
 | `src/bake/identity.rs` | (Unity InstanceID ordering and object references) | none | Replaced; `BakeId` from entity `Name` paths (+ mesh asset path), collisions resolved deterministically |
@@ -202,10 +204,11 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
-| `src/baked_lighting/mod.rs` | none | none | New; wiring: `BakedLightingPlugin`, `PostUpdate` set, loads `baked_data` / `triangles` WESL |
-| `src/baked_lighting/apply.rs` | `C/Core/DynamicLightManager.cs:550-749` (`Initialize`: buffers per renderer, BVH, distance cubes, baked light slots) | none | Replaced; `ActiveBake` resource, applied again when the asset reloads |
+| `src/baked_lighting/mod.rs` | none | none | New; wiring: `BakedLightingPlugin`, `PostUpdate` set, `.dynlight` loader registration, loads `baked_data` / `triangles` WESL |
+| `src/baked_lighting/apply.rs` | `C/Core/DynamicLightManager.cs:550-749` (`Initialize`: buffers per renderer, BVH, distance cubes, baked light slots) | none | Replaced; `ActiveBake` resource, applied again when the asset reloads; `take_scene_buffers` moves a loaded scene's triangle words into the buffers and marks it `triangles_taken` |
 | `src/baked_lighting/features.rs` | none | none | New; detects wgpu `PRIMITIVE_INDEX` (Henry relies on `SV_PrimitiveID`) |
 | `src/baked_lighting/layout.rs` | buffers `S/DynamicLighting.cginc:343-382,589-606,1003` | none | New; one triangles buffer and one aux buffer (header, receivers, BVH nodes, distance cubes, sun maps, sky probes); per-mesh offsets stay relative as in Henry |
+| `src/baked_lighting/loader.rs` | `C/Lighting/RaycastedScene.cs:19-159` (gzip blocks inflated on load) | none | Replaced; `AssetLoader` for `.dynlight`: reads the packed file, streams the inflate and builds the GPU buffers on the loader thread |
 | `src/baked_lighting/mirror.rs` | `S/DynamicLighting.cginc:608-962` (`shadow_sample_*`) | none | New; CPU mirror of the four shadow filter tiers at 1, 2, 4 and 8 bits per texel; its tests, against texel-by-texel reads, are in `mirror_tests.rs` |
 | `src/baked_lighting/mirror_tests.rs` | none | none | New; every filter tier against texel reads at 1, 2, 4 and 8 bits, split out of `mirror.rs` (M21) |
 | `src/baked_lighting/shader_tests.rs` | none | none | New; naga validation and constants against `layout.rs` and the mirror |
@@ -367,6 +370,7 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
+| `examples/bake_load_memory.rs` | none | none | New; writes a synthetic bake of a chosen size and loads and applies it headless, for peak-RSS measurement |
 | `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light, with the light grid forced on; `--many` reads 200 small lights back through a perspective camera, so most samples take their lights from cell lists; `--webgpu-limits` caps the device at WebGPU's default limits |
 | `examples/gpu_check_area.rs` | none | none | New; a baked and an unbaked floor under a panel and a tube, read back and compared with `baked_lighting::mirror` and `dynamic_geometry::mirror` at every quality tier |
 | `examples/gpu_check_bounce.rs` | none | none | New (M31); a red wall on a baked floor under a bouncing sun and point light, colored bounce read back against `baked_lighting::mirror::BounceTexels` |
