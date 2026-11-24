@@ -3,11 +3,16 @@
 //!
 //! Shader modules: `dynlight::surface::shaders::{bindings, light_processor, sky_light, lighting,
 //! dynlit}`;
-//! `dynlit_vertex` is the vertex shader of meshes with triangle IDs. [`mirror`] is a CPU
+//! `dynlit_vertex` is the vertex shader of meshes with triangle IDs. [`external`](DynLightBindings)
+//! lets a material that is not a `DynLitMaterial` use the same lighting. [`mirror`] is a CPU
 //! reference of Metallic shading's per-light specular term.
 
 mod alpha_mask;
 mod bake_albedo;
+mod bake_surface;
+mod external;
+#[cfg(test)]
+mod external_tests;
 mod material;
 pub mod mirror;
 mod pending;
@@ -24,6 +29,12 @@ use bevy::shader::load_shader_library;
 
 pub use alpha_mask::{DerivedAlphaMask, material_alpha};
 pub use bake_albedo::{DerivedAlbedo, material_albedo};
+pub use bake_surface::{ExternalBakeExtension, ExternalBakeMaterial};
+pub use external::{
+    DynLightBindings, ExternalLightingPlugin, SCENE_BINDING_BASE, SCENE_BINDINGS,
+    external_shader_defs, external_specialize, external_specialize_descriptor,
+    external_vertex_shader,
+};
 pub use material::{DynLitKey, DynLitMaterial, DynLitUniform, ShadingModel, flags};
 pub use reflection::Reflection;
 
@@ -56,16 +67,16 @@ impl Plugin for SurfacePlugin {
             app.add_systems(
                 Update,
                 (
-                    alpha_mask::sync_alpha_masks,
-                    bake_albedo::sync_bake_albedos,
-                    pending::sync_surface_pending,
-                    shared_arrays::rebind_shared_arrays,
+                    alpha_mask::sync_alpha_masks::<DynLitMaterial>,
+                    bake_albedo::sync_bake_albedos::<DynLitMaterial>,
+                    pending::sync_surface_pending::<DynLitMaterial>,
+                    shared_arrays::rebind_shared_arrays::<DynLitMaterial>,
                 ),
             )
             .add_systems(
                 PostUpdate,
                 (
-                    unbaked::note_unbaked_meshes,
+                    unbaked::note_unbaked_meshes::<DynLitMaterial>,
                     reflection::give_cubes_array_views.after(AssetEventSystems),
                 ),
             );

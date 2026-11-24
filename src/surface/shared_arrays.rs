@@ -9,6 +9,7 @@
 use bevy::asset::AssetEvent;
 use bevy::prelude::*;
 
+#[cfg(test)]
 use super::material::DynLitMaterial;
 use crate::cookies::COOKIE_ARRAY;
 use crate::realtime_shadows::{SHADOW_CUBEMAPS, SUN_CASCADES};
@@ -28,9 +29,11 @@ fn replaces_shared_array(event: &AssetEvent<Image>) -> bool {
     }
 }
 
-pub(super) fn rebind_shared_arrays(
+/// Marks every material of type `M` modified when a shared array was replaced; `M` is
+/// [`DynLitMaterial`] or an external material (`surface/external.rs`).
+pub(super) fn rebind_shared_arrays<M: Asset>(
     mut events: MessageReader<AssetEvent<Image>>,
-    mut materials: ResMut<Assets<DynLitMaterial>>,
+    mut materials: ResMut<Assets<M>>,
 ) {
     // Read every event so none is left for the next frame.
     let replaced = events.read().fold(false, |replaced, event| {
@@ -78,7 +81,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Image>()
             .init_asset::<DynLitMaterial>()
-            .add_systems(Update, rebind_shared_arrays);
+            .add_systems(Update, rebind_shared_arrays::<DynLitMaterial>);
         let material = app
             .world_mut()
             .resource_mut::<Assets<DynLitMaterial>>()

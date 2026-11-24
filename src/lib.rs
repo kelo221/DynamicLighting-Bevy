@@ -56,7 +56,10 @@ pub mod prelude {
         BakeId, DynamicLightingSettings, FeatureSelection, NoShadowCasting, RuntimeQuality,
         ShaderFeatures, TriangleIdSource,
     };
-    pub use crate::surface::{DynLitMaterial, ShadingModel};
+    pub use crate::surface::{
+        DynLightBindings, DynLitMaterial, ExternalLightingPlugin, ShadingModel,
+        external_shader_defs,
+    };
 }
 
 /// Adds every DynLight slice.

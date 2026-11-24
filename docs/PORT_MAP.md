@@ -125,6 +125,9 @@ Notable deviations from Henry follow the status word. `mod.rs` rows hold only wi
 | `src/surface/bake_albedo.rs` | none | none | New (M31): `BakeAlbedo` from the material's base color and texture |
 | `src/surface/pending.rs` | none | none | New (M31): `SurfacePending` while a baked mesh's material or texture loads |
 | `src/surface/alpha_mask.rs` | `S/Generators/PhotonCubeTransparent.cginc:55-71` (0.5 alpha cutoff) | none | New; derives `BakeAlphaMask` from `DynLitMaterial`; `Mask(c)` materials bake with their own cutoff |
+| `src/surface/bake_surface.rs` | none | none | New; what the bake reads from a material (albedo, alpha mask, blending, textures) for `DynLitMaterial` and `ExternalBakeMaterial`, so the `bake_albedo`, `alpha_mask` and `pending` systems are generic over it |
+| `src/surface/external.rs` | none | none | New; lighting and baking for materials that are not `DynLitMaterial`: `DynLightBindings`, `SCENE_BINDINGS` (120–132 under `DYNLIGHT_EXTERNAL`), `external_shader_defs`, `ExternalLightingPlugin<M>`, `ExternalBakeMaterial` / `ExternalBakeExtension`, `external_specialize{,_descriptor}` |
+| `src/surface/external_tests.rs` | none | none | New; the lighting WESL compiles with and without `DYNLIGHT_EXTERNAL`, bindings match `SCENE_BINDINGS` and the example's field block |
 | `src/surface/material.rs` | properties of `S/DynamicLightingDiffuse.shader:3-16`, `S/DynamicLightingMetallic.shader:5-25`, `S/DynamicLightingUnlit.shader:3-14` | none (bevyout's patched `pbr_fragment.wgsl` hook is not used) | New; `Material` on Bevy's mesh pipeline, feature flags in a uniform instead of keywords, `enable_shadows() = false`; the realtime light clusters at binding 29, the reflection cube array at 30–31 (the sky's specular cube, then the probes', M30) and the sun's cascades at 32 (New) |
 | `src/surface/shader_tests.rs` | none | none | New |
 | `src/surface/mirror.rs` | none | none | New; CPU reference of `brdf.wesl` and Metallic shading's per-light specular term in `light_processor.wesl` |
@@ -367,6 +370,7 @@ Henry's package has no rooms or portals; the whole slice is New (M27, PLAN §12,
 
 | Our file | Henry | bevyout | Status |
 |---|---|---|---|
+| `examples/external_material.rs`, `external_material.wesl` | none | none | New; a material that is not `DynLitMaterial` carrying the bindings at 120–132 and calling `surface_light`, lit by a point and a tube light; `--bake` bakes them |
 | `examples/gpu_check.rs` | none | none | New; GPU readback compared with `light::mirror` (PLAN §15), including a rectangle and a tube light, with the light grid forced on; `--many` reads 200 small lights back through a perspective camera, so most samples take their lights from cell lists; `--webgpu-limits` caps the device at WebGPU's default limits |
 | `examples/gpu_check_area.rs` | none | none | New; a baked and an unbaked floor under a panel and a tube, read back and compared with `baked_lighting::mirror` and `dynamic_geometry::mirror` at every quality tier |
 | `examples/gpu_check_bounce.rs` | none | none | New (M31); a red wall on a baked floor under a bouncing sun and point light, colored bounce read back against `baked_lighting::mirror::BounceTexels` |

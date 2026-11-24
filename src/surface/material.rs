@@ -10,18 +10,16 @@ use bevy::render::render_resource::{
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
+use super::external::{lit_shader_defs, use_triangle_ids};
 use super::reflection::Reflection;
-use crate::baked_lighting::{
-    ATTRIBUTE_TRIANGLE_ID, BAKED_AUX, BAKED_TRIANGLES, TRIANGLE_ID_LOCATION,
-    primitive_index_supported,
-};
+use crate::baked_lighting::{BAKED_AUX, BAKED_TRIANGLES};
 use crate::cookies::COOKIE_ARRAY;
 use crate::light::{AREA_LIGHT_LUT, LIGHT_BUFFER};
 use crate::light_clusters::REALTIME_CLUSTERS;
 use crate::realtime_shadows::{CasterMaterial, SHADOW_CUBEMAPS, SUN_CASCADES};
 
 const SHADER: &str = "embedded://dynlight/surface/shaders/dynlit.wesl";
-const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
+pub(super) const VERTEX_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_vertex.wesl";
 const PREPASS_SHADER: &str = "embedded://dynlight/surface/shaders/dynlit_prepass.wesl";
 
 /// How a [`DynLitMaterial`] reflects light.
@@ -288,31 +286,13 @@ impl Material for DynLitMaterial {
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = key.bind_group_data.cull_mode;
-        // The prepass shares this function but keeps Bevy's prepass vertex shader.
-        let main_pass = descriptor
-            .vertex
-            .shader_defs
-            .contains(&"MESH_PIPELINE".into());
-        let triangle_ids = main_pass && layout.0.contains(ATTRIBUTE_TRIANGLE_ID);
-        if triangle_ids {
-            let ids = layout
-                .0
-                .get_layout(&[ATTRIBUTE_TRIANGLE_ID.at_shader_location(TRIANGLE_ID_LOCATION)])?;
-            descriptor.vertex.buffers[0]
-                .attributes
-                .extend(ids.attributes);
-        } else if main_pass {
-            descriptor.vertex.shader = pipeline.mesh_pipeline.shader.clone();
-        }
+        let triangle_ids = use_triangle_ids(&pipeline.mesh_pipeline.shader, descriptor, layout)?;
         if let Some(fragment) = descriptor.fragment.as_mut() {
-            if triangle_ids {
-                fragment.shader_defs.push("TRIANGLE_ID".into());
-            } else if primitive_index_supported() {
-                fragment.shader_defs.push("PRIMITIVE_INDEX".into());
-            }
-            if key.bind_group_data.metallic {
-                fragment.shader_defs.push("METALLIC_SHADING".into());
-            }
+            fragment.shader_defs.extend(lit_shader_defs(
+                triangle_ids,
+                key.bind_group_data.metallic,
+                false,
+            ));
         }
         Ok(())
     }

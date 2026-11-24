@@ -1,12 +1,13 @@
 //! Baked meshes with a [`DynLitMaterial`] get a [`BakeAlbedo`]: the material's mean linear base
 //! color, the color bounce light takes on where it leaves them (colored bounce only).
 
-use bevy::platform::collections::{HashMap, HashSet};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::bake::{BakeAlbedo, BakeStatic};
 
 use super::alpha_mask::rgba8;
+use super::bake_surface::BakeSurface;
 use super::material::DynLitMaterial;
 
 /// Marks a [`BakeAlbedo`] this slice derived from the material, so it follows the material.
@@ -18,8 +19,20 @@ pub struct DerivedAlbedo;
 /// texture isn't readable yet.
 pub fn material_albedo(material: &DynLitMaterial, images: &Assets<Image>) -> Option<Vec3> {
     let base = material.base_color.to_linear();
-    let factor = Vec3::new(base.red, base.green, base.blue);
-    let Some(handle) = &material.base_color_texture else {
+    albedo_of(
+        Vec3::new(base.red, base.green, base.blue),
+        material.base_color_texture.as_ref(),
+        images,
+    )
+}
+
+/// `factor` times the mean linear color of `texture`; `None` while the texture isn't readable.
+pub(super) fn albedo_of(
+    factor: Vec3,
+    texture: Option<&Handle<Image>>,
+    images: &Assets<Image>,
+) -> Option<Vec3> {
+    let Some(handle) = texture else {
         return Some(factor);
     };
     let image = images.get(handle)?;
@@ -44,55 +57,29 @@ pub fn material_albedo(material: &DynLitMaterial, images: &Assets<Image>) -> Opt
     Some(factor * sum / pixels.len().max(1) as f32)
 }
 
-type AlbedoMesh<'a> = (
+type AlbedoMesh<'a, M> = (
     Entity,
-    &'a MeshMaterial3d<DynLitMaterial>,
+    &'a MeshMaterial3d<M>,
     Option<&'a BakeAlbedo>,
     Has<DerivedAlbedo>,
 );
-type AlbedoChanges = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<DynLitMaterial>>)>;
-
-/// The materials an asset event batch can have changed: every material with an event of its own, and every material whose base
-/// color texture has one. An image no material uses (a render target, a fog map rewritten every few seconds) touches none.
-pub(super) fn touched_materials(
-    material_events: &mut MessageReader<AssetEvent<DynLitMaterial>>,
-    image_events: &mut MessageReader<AssetEvent<Image>>,
-    materials: &Assets<DynLitMaterial>,
-) -> HashSet<AssetId<DynLitMaterial>> {
-    fn id<A: Asset>(event: &AssetEvent<A>) -> AssetId<A> {
-        match event {
-            AssetEvent::Added { id }
-            | AssetEvent::Modified { id }
-            | AssetEvent::Removed { id }
-            | AssetEvent::Unused { id }
-            | AssetEvent::LoadedWithDependencies { id } => *id,
-        }
-    }
-    let mut touched: HashSet<_> = material_events.read().map(id).collect();
-    let images: HashSet<_> = image_events.read().map(id).collect();
-    if !images.is_empty() {
-        touched.extend(materials.iter().filter_map(|(material_id, material)| {
-            let texture = material.base_color_texture.as_ref()?;
-            images.contains(&texture.id()).then_some(material_id)
-        }));
-    }
-    touched
-}
+type AlbedoChanges<M> = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<M>>)>;
 
 /// Keeps derived [`BakeAlbedo`]s in step with the materials of [`BakeStatic`] meshes. A material's
 /// albedo is worked out once and kept until that material or its texture changes.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn sync_bake_albedos(
+pub(super) fn sync_bake_albedos<M: BakeSurface>(
     mut commands: Commands,
-    mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
+    mut material_events: MessageReader<AssetEvent<M>>,
     mut image_events: MessageReader<AssetEvent<Image>>,
-    changed: Query<(), (AlbedoChanges, With<BakeStatic>)>,
-    materials: Res<Assets<DynLitMaterial>>,
+    changed: Query<(), (AlbedoChanges<M>, With<BakeStatic>)>,
+    materials: Res<Assets<M>>,
     images: Res<Assets<Image>>,
-    meshes: Query<AlbedoMesh, With<BakeStatic>>,
-    mut known: Local<HashMap<AssetId<DynLitMaterial>, Vec3>>,
+    meshes: Query<AlbedoMesh<M>, With<BakeStatic>>,
+    mut known: Local<HashMap<AssetId<M>, Vec3>>,
 ) {
-    let touched = touched_materials(&mut material_events, &mut image_events, &materials);
+    let touched =
+        super::bake_surface::touched_materials(&mut material_events, &mut image_events, &materials);
     if touched.is_empty() && changed.is_empty() {
         return;
     }
@@ -103,7 +90,7 @@ pub(super) fn sync_bake_albedos(
         }
         let wanted = known.get(&material.id()).copied().or_else(|| {
             // Unknown until the material and its texture load; then it is kept.
-            let albedo = material_albedo(materials.get(&material.0)?, &images)?;
+            let albedo = materials.get(&material.0)?.albedo(&images)?;
             known.insert(material.id(), albedo);
             Some(albedo)
         });
@@ -120,6 +107,7 @@ pub(super) fn sync_bake_albedos(
 #[cfg(test)]
 mod tests {
     use bevy::asset::RenderAssetUsages;
+    use bevy::platform::collections::HashSet;
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
     use super::*;
@@ -217,7 +205,10 @@ mod tests {
              materials: Res<Assets<DynLitMaterial>>,
              mut last: ResMut<Seen>| {
                 let seen = i.len();
-                *last = Seen(seen, touched_materials(&mut m, &mut i, &materials));
+                *last = Seen(
+                    seen,
+                    super::super::bake_surface::touched_materials(&mut m, &mut i, &materials),
+                );
             },
         );
         app.update(); // the assets' own `Added` events are read here

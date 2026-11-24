@@ -9,6 +9,7 @@ use bevy::render::render_resource::TextureFormat;
 
 use crate::bake::{AlphaTexture, BakeAlphaMask, BakeStatic, BlendedSurface};
 
+use super::bake_surface::BakeSurface;
 use super::material::DynLitMaterial;
 
 /// Marks a [`BakeAlphaMask`] this slice derived from the material, so it can be replaced or
@@ -30,28 +31,42 @@ pub fn material_alpha(
         }
         AlphaMode::Opaque | AlphaMode::Add | AlphaMode::Multiply => return None,
     };
-    let factor = material.base_color.alpha();
-    let Some(handle) = &material.base_color_texture else {
+    Some(alpha_texture(
+        material.base_color_texture.as_ref(),
+        material.base_color.alpha(),
+        cutoff,
+        images,
+    ))
+}
+
+/// The alpha texture of `texture` (or of a solid color when there is none) scaled by `factor`
+/// and tested against `cutoff`. `None` while the texture isn't readable yet.
+pub(super) fn alpha_texture(
+    texture: Option<&Handle<Image>>,
+    factor: f32,
+    cutoff: f32,
+    images: &Assets<Image>,
+) -> Option<AlphaTexture> {
+    let Some(handle) = texture else {
         let alpha = (factor.clamp(0.0, 1.0) * 255.0).round() as u8;
-        return Some(Some(AlphaTexture {
+        return Some(AlphaTexture {
             width: 1,
             height: 1,
             rgba8: vec![255, 255, 255, alpha],
             cutoff,
-        }));
+        });
     };
-    Some(images.get(handle).and_then(|image| {
-        let mut rgba8 = rgba8(image)?;
-        for texel in rgba8.as_chunks_mut::<4>().0 {
-            texel[3] = (f32::from(texel[3]) * factor).round().clamp(0.0, 255.0) as u8;
-        }
-        Some(AlphaTexture {
-            width: image.width(),
-            height: image.height(),
-            rgba8,
-            cutoff,
-        })
-    }))
+    let image = images.get(handle)?;
+    let mut rgba8 = rgba8(image)?;
+    for texel in rgba8.as_chunks_mut::<4>().0 {
+        texel[3] = (f32::from(texel[3]) * factor).round().clamp(0.0, 255.0) as u8;
+    }
+    Some(AlphaTexture {
+        width: image.width(),
+        height: image.height(),
+        rgba8,
+        cutoff,
+    })
 }
 
 /// Whether `mode` blends, so the mesh casts no shadows: the alpha modes realtime shadows skip.
@@ -83,31 +98,31 @@ pub(super) fn rgba8(image: &Image) -> Option<Vec<u8>> {
     }
 }
 
-type MaskedMesh<'a> = (
+type MaskedMesh<'a, M> = (
     Entity,
-    &'a MeshMaterial3d<DynLitMaterial>,
+    &'a MeshMaterial3d<M>,
     Option<&'a BakeAlphaMask>,
     Has<DerivedAlphaMask>,
     Has<BlendedSurface>,
 );
-type MaskChanges = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<DynLitMaterial>>)>;
+type MaskChanges<M> = Or<(Added<BakeStatic>, Changed<MeshMaterial3d<M>>)>;
 
 /// Keeps derived [`BakeAlphaMask`]s and [`BlendedSurface`]s in step with the materials of
 /// [`BakeStatic`] meshes. A material's mask is worked out once and kept until that material or
 /// its texture changes.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn sync_alpha_masks(
+pub(super) fn sync_alpha_masks<M: BakeSurface>(
     mut commands: Commands,
-    mut material_events: MessageReader<AssetEvent<DynLitMaterial>>,
+    mut material_events: MessageReader<AssetEvent<M>>,
     mut image_events: MessageReader<AssetEvent<Image>>,
-    changed: Query<(), (MaskChanges, With<BakeStatic>)>,
-    materials: Res<Assets<DynLitMaterial>>,
+    changed: Query<(), (MaskChanges<M>, With<BakeStatic>)>,
+    materials: Res<Assets<M>>,
     images: Res<Assets<Image>>,
-    meshes: Query<MaskedMesh, With<BakeStatic>>,
-    mut known: Local<HashMap<AssetId<DynLitMaterial>, Option<AlphaTexture>>>,
+    meshes: Query<MaskedMesh<M>, With<BakeStatic>>,
+    mut known: Local<HashMap<AssetId<M>, Option<AlphaTexture>>>,
 ) {
     let touched =
-        super::bake_albedo::touched_materials(&mut material_events, &mut image_events, &materials);
+        super::bake_surface::touched_materials(&mut material_events, &mut image_events, &materials);
     if touched.is_empty() && changed.is_empty() {
         return;
     }
@@ -115,7 +130,7 @@ pub(super) fn sync_alpha_masks(
     for (entity, material, current, derived, blended) in &meshes {
         // Unknown until the material loads.
         if let Some(material) = materials.get(&material.0) {
-            let wanted = blends(material.alpha_mode);
+            let wanted = material.blends();
             if wanted && !blended {
                 commands.entity(entity).insert(BlendedSurface);
             } else if !wanted && blended {
@@ -132,7 +147,7 @@ pub(super) fn sync_alpha_masks(
         } else {
             match materials
                 .get(&material.0)
-                .map(|material| material_alpha(material, &images))
+                .map(|material| material.alpha(&images))
             {
                 None => None,
                 Some(Some(None)) => Some(None),
@@ -230,7 +245,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
             .init_asset::<Image>()
             .init_asset::<DynLitMaterial>()
-            .add_systems(Update, sync_alpha_masks);
+            .add_systems(Update, sync_alpha_masks::<DynLitMaterial>);
         let glass = DynLitMaterial {
             alpha_mode: AlphaMode::Blend,
             ..default()
