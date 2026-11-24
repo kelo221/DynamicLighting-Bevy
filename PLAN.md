@@ -839,7 +839,8 @@ Sizes: S ≈ days, M ≈ 1–2 weeks, L ≈ 2–4 weeks.
 - **External materials, 2026-11-21:** a material that is not a `DynLitMaterial` (Cart Crashers' `ExtendedMaterial<StandardMaterial, Stylized>`, whose extension uses bindings 100–110) can be lit by realtime `DynamicLight`s.
   - Shader def `DYNLIGHT_EXTERNAL` moves every scene-wide binding n (20–32) to 100 + n (120–132) in `bindings.wesl`, `baked_data.wesl`, `clusters.wesl`, `vsm.wesl` and `sun_vsm.wesl`, and drops the material's own bindings 0–10 and the `material` uniform. Without it nothing changes. `surface_light` takes what it needs (`SurfaceInput`, `Shading`) as arguments, so a fragment calls it with no DynLit state.
   - `surface/external.rs`: `DynLightBindings` (the default handles) and a documented field block to copy, because `#[derive(AsBindGroup)]` can't nest a struct; `SCENE_BINDINGS`; `external_shader_defs()`, built by the same `lit_shader_defs` as `DynLitMaterial::specialize`; `ExternalLightingPlugin<M>`, which runs the unbaked-mesh feature report and the shared-array rebind for `M`.
-  - Not supported: baking for external materials, a material's own reflection cube.
+  - Baking (5b30545, 6c617db): `surface/bake_surface.rs` is what the bake reads from a material (albedo, alpha mask, blending, their textures); `DynLitMaterial` answers from its fields and an external material through `ExternalBakeMaterial`, so `BakeStatic` meshes with either bake alike. An `ExtendedMaterial` can't implement it outside this crate (orphan rule), so its extension implements `ExternalBakeExtension<B>`; `external_specialize` / `external_specialize_descriptor` add the triangle-ID path. The example's `--bake` bakes its lights.
+  - Not supported: a material's own reflection cube.
   - Tests: the lighting modules compile with and without the def, the bindings sit at 120–132 (20–32 without) and match `SCENE_BINDINGS` and the example's field block. Example: `external_material`.
 
 ## 15. Testing
