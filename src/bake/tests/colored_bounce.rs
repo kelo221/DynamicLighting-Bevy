@@ -159,9 +159,11 @@ fn photons_carry_the_color_of_what_they_hit() {
 
 #[test]
 fn white_bounce_ignores_colors() {
-    let red = encode(&bake(&sun_input(RED), &options(false), &BakeProgress::new()).unwrap());
+    let red =
+        encode(&bake(&sun_input(RED), &options(false), &BakeProgress::new()).unwrap()).unwrap();
     let white =
-        encode(&bake(&sun_input(Vec3::ONE), &options(false), &BakeProgress::new()).unwrap());
+        encode(&bake(&sun_input(Vec3::ONE), &options(false), &BakeProgress::new()).unwrap())
+            .unwrap();
     assert_eq!(red, white);
 }
 
@@ -173,7 +175,9 @@ fn colored_bakes_are_byte_identical_on_any_thread_count() {
             .num_threads(threads)
             .build()
             .unwrap();
-        pool.install(|| encode(&bake(&input, &options(true), &BakeProgress::new()).unwrap()))
+        pool.install(|| {
+            encode(&bake(&input, &options(true), &BakeProgress::new()).unwrap()).unwrap()
+        })
     };
     let single = run(1);
     assert_eq!(single, run(3));

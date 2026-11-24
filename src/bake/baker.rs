@@ -196,6 +196,7 @@ pub fn bake(
         sun_maps,
         sky_probes,
         stats,
+        triangles_taken: false,
     };
     progress.begin(BakeStage::Done, 0);
     Ok(baked)

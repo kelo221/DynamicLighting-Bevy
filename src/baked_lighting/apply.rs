@@ -19,7 +19,17 @@ const NO_BOUNCE_BITS: u32 = 8;
 pub struct ActiveBake(pub Option<Handle<DynLightBake>>);
 
 /// The GPU buffers for `scene`.
+///
+/// # Panics
+///
+/// If the scene's triangle words were already taken ([`BakedScene::triangles_taken`]): its
+/// buffers would have no shadow data. A loaded [`DynLightBake`] carries its buffers instead.
 pub fn scene_buffers(scene: &BakedScene) -> BakedBuffers {
+    assert!(
+        !scene.triangles_taken(),
+        "dynlight: scene_buffers needs a full scene, but this one's triangle words were taken; \
+         use the buffers the DynLightBake carries"
+    );
     let mut builder = BufferBuilder::default();
     for mesh in &scene.meshes {
         builder.push(receiver_input(mesh));
@@ -29,14 +39,24 @@ pub fn scene_buffers(scene: &BakedScene) -> BakedBuffers {
 
 /// The GPU buffers for `scene`, taking each mesh's triangle words out of it as they are
 /// copied, so the scene and the buffers are never both whole in memory. The meshes keep their
-/// ids, hashes and resolutions; `scene` must not be passed to [`scene_buffers`] afterwards.
+/// ids, hashes and resolutions, and the scene is marked [`BakedScene::triangles_taken`], so
+/// [`scene_buffers`] and [`encode`](crate::bake::encode) refuse it afterwards.
+///
+/// # Panics
+///
+/// If the triangle words were already taken.
 pub fn take_scene_buffers(scene: &mut BakedScene) -> BakedBuffers {
+    assert!(
+        !scene.triangles_taken(),
+        "dynlight: the scene's triangle words were already taken"
+    );
     let words = scene.meshes.iter().map(|mesh| mesh.triangles.len()).sum();
     let mut builder = BufferBuilder::with_triangle_capacity(words);
     for mesh in &mut scene.meshes {
         builder.push(receiver_input(mesh));
         mesh.triangles = Vec::new();
     }
+    scene.triangles_taken = true;
     builder.finish(scene_input(scene))
 }
 
@@ -133,11 +153,21 @@ pub(super) fn apply_bake(
     }
     match wanted.and_then(|id| bakes.get(id)) {
         Some(bake) => {
-            // A loaded bake brings its buffers; one baked in this app builds them now.
-            applied.buffers = bake
-                .buffers
-                .clone()
-                .unwrap_or_else(|| scene_buffers(&bake.scene));
+            // A loaded bake brings its buffers; one baked in this app builds them now. A scene
+            // whose triangles were taken has nothing to build them from.
+            applied.buffers = match &bake.buffers {
+                Some(buffers) => buffers.clone(),
+                None if bake.scene.triangles_taken() => {
+                    error!(
+                        "dynlight: the active bake's triangle words were taken and it carries no \
+                         buffers; lighting everything dynamically"
+                    );
+                    applied.buffers = BakedBuffers::empty();
+                    slots.slots.clear();
+                    return;
+                }
+                None => scene_buffers(&bake.scene),
+            };
             slots.slots = scene_slots(&bake.scene);
             info!(
                 "dynlight: applied bake with {} meshes and {} lights",
@@ -263,6 +293,26 @@ mod tests {
         assert_eq!(taken.triangles.len(), 5);
         assert!(scene.meshes.iter().all(|mesh| mesh.triangles.is_empty()));
         assert_eq!(scene.meshes.len(), 1, "the mesh itself stays");
+        assert!(scene.triangles_taken());
+    }
+
+    #[test]
+    fn a_taken_scene_cannot_be_written() {
+        let mut scene = scene();
+        assert!(crate::bake::encode(&scene).is_ok());
+        take_scene_buffers(&mut scene);
+        assert_eq!(
+            crate::bake::encode(&scene),
+            Err(crate::bake::TrianglesTaken)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "triangle words were taken")]
+    fn a_taken_scene_has_no_buffers_to_build() {
+        let mut scene = scene();
+        take_scene_buffers(&mut scene);
+        scene_buffers(&scene);
     }
 
     #[test]

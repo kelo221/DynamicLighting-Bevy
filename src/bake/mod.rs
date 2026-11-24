@@ -54,7 +54,7 @@ pub use baker::bake;
 pub use distance_cubes::DISTANCE_CUBE_RESOLUTION;
 pub use format::{
     BakeStats, BakedLight, BakedMesh, BakedScene, BakedSettings, FORMAT_VERSION, FormatError,
-    MAX_SUN_MAP_RESOLUTION, SkyProbes, SunMap, decode, decode_stream, encode,
+    MAX_SUN_MAP_RESOLUTION, SkyProbes, SunMap, TrianglesTaken, decode, decode_stream, encode,
 };
 pub use input::{AlphaTexture, BakeBounce, BakeError, BakeInput, BakeLight, BakeMesh, BakeOptions};
 pub use light_bvh::{LIGHT_BVH_NODE_SIZE, LightBvhNode};
@@ -80,8 +80,8 @@ pub enum BakeSystems {
     ResolveIds,
 }
 
-/// Bake settings, [`BakeRequest`] handling and the `.dynlight` asset loader (when the app has an
-/// `AssetPlugin`).
+/// Bake settings, [`BakeRequest`] handling and the [`DynLightBake`] asset (its `.dynlight` loader
+/// is registered by `baked_lighting`).
 pub struct BakePlugin;
 
 impl Plugin for BakePlugin {

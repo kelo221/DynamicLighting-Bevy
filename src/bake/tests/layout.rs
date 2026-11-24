@@ -98,7 +98,7 @@ fn baked_words_are_well_formed() {
     };
     let baked = bake(&input, &options, &BakeProgress::new()).unwrap();
     assert_eq!(
-        decode(&encode(&baked)),
+        decode(&encode(&baked).unwrap()),
         Ok(baked.clone()),
         "file round trip"
     );

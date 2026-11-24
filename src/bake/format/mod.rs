@@ -78,8 +78,30 @@ impl fmt::Display for FormatError {
 
 impl std::error::Error for FormatError {}
 
+/// [`encode`] was given a scene whose triangle words were moved into GPU buffers
+/// ([`BakedScene::triangles_taken`]); writing it would give a valid file with no shadows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrianglesTaken;
+
+impl fmt::Display for TrianglesTaken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the scene's triangle words were moved into its GPU buffers, so it can't be written"
+        )
+    }
+}
+
+impl std::error::Error for TrianglesTaken {}
+
 /// Serializes a baked scene. The same scene always gives the same bytes.
-pub fn encode(scene: &BakedScene) -> Vec<u8> {
+///
+/// Fails for a scene whose triangle words were taken, such as the scene of a loaded
+/// [`DynLightBake`](crate::bake::DynLightBake).
+pub fn encode(scene: &BakedScene) -> Result<Vec<u8>, TrianglesTaken> {
+    if scene.triangles_taken {
+        return Err(TrianglesTaken);
+    }
     let payload = encode_payload(scene);
     let mut out = Vec::with_capacity(HEADER_BYTES + payload.len() / 4);
     out.extend_from_slice(&MAGIC);
@@ -90,10 +112,10 @@ pub fn encode(scene: &BakedScene) -> Vec<u8> {
         .mtime(0)
         .operating_system(255)
         .write(out, Compression::default());
-    encoder
+    Ok(encoder
         .write_all(&payload)
         .and_then(|_| encoder.finish())
-        .expect("writing to a Vec cannot fail")
+        .expect("writing to a Vec cannot fail"))
 }
 
 /// The uncompressed header of a `.dynlight` file.
@@ -274,6 +296,7 @@ fn parse_payload<R: Read>(r: &mut Reader<R>) -> Result<BakedScene, FormatError> 
         sun_maps,
         sky_probes,
         stats,
+        triangles_taken: false,
     })
 }
 

@@ -117,18 +117,19 @@ fn sample() -> BakedScene {
             bounce_rays: 0,
             triangle_words: 5,
         },
+        triangles_taken: false,
     }
 }
 
 #[test]
 fn scenes_round_trip() {
     let scene = sample();
-    let bytes = encode(&scene);
+    let bytes = encode(&scene).unwrap();
     assert_eq!(&bytes[..8], b"DYNLIGHT");
     assert_eq!(decode(&bytes), Ok(scene.clone()));
-    assert_eq!(encode(&scene), bytes, "encoding is deterministic");
+    assert_eq!(encode(&scene).unwrap(), bytes, "encoding is deterministic");
     let empty = BakedScene::default();
-    assert_eq!(decode(&encode(&empty)), Ok(empty));
+    assert_eq!(decode(&encode(&empty).unwrap()), Ok(empty));
     assert_eq!(
         (
             scene.local_light_count(),
@@ -198,7 +199,7 @@ fn sky_probes_need_a_sky_and_whole_probes() {
 
 #[test]
 fn unknown_versions_are_rejected_clearly() {
-    let mut bytes = encode(&sample());
+    let mut bytes = encode(&sample()).unwrap();
     bytes[8..12].copy_from_slice(&(FORMAT_VERSION + 1).to_le_bytes());
     let error = decode(&bytes).unwrap_err();
     assert_eq!(
@@ -237,7 +238,7 @@ fn unknown_versions_are_rejected_clearly() {
 
 #[test]
 fn corruption_is_detected() {
-    let bytes = encode(&sample());
+    let bytes = encode(&sample()).unwrap();
     assert_eq!(
         decode(b"PNG\0\0\0\0\0garbage-garbage-garbage"),
         Err(FormatError::NotDynlight)
@@ -322,7 +323,7 @@ fn streamed_and_whole_buffer_reads_agree() {
         })
         .collect();
     for scene in [sample(), BakedScene::default(), big] {
-        let bytes = encode(&scene);
+        let bytes = encode(&scene).unwrap();
         let whole = decode(&bytes);
         assert_eq!(whole, Ok(scene));
         assert_eq!(decode_stream(&bytes[..]), whole);
@@ -332,7 +333,7 @@ fn streamed_and_whole_buffer_reads_agree() {
 
 #[test]
 fn streamed_reads_report_the_same_errors() {
-    let bytes = encode(&sample());
+    let bytes = encode(&sample()).unwrap();
     let mut wrong_checksum = bytes.clone();
     wrong_checksum[20] ^= 1;
     let mut wrong_length = bytes.clone();

@@ -117,7 +117,9 @@ fn bounce_bakes_are_byte_identical_on_any_thread_count() {
             .num_threads(threads)
             .build()
             .unwrap();
-        pool.install(|| encode(&bake(&input, &options(false), &BakeProgress::new()).unwrap()))
+        pool.install(|| {
+            encode(&bake(&input, &options(false), &BakeProgress::new()).unwrap()).unwrap()
+        })
     };
     let single = run(1);
     assert_eq!(single, run(3));

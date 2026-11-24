@@ -60,11 +60,9 @@ fn generate(path: &Path, megabytes: usize) {
             occludes: true,
         })
         .collect();
-    let scene = BakedScene {
-        meshes,
-        ..default()
-    };
-    let bytes = encode(&scene);
+    let mut scene = BakedScene::default();
+    scene.meshes = meshes;
+    let bytes = encode(&scene).expect("a full scene");
     std::fs::write(path, &bytes).expect("write the synthetic bake");
     println!(
         "wrote {} meshes, {} MB unpacked, {} MB on disk",

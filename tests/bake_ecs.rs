@@ -12,7 +12,9 @@ use dynlight::bake::{
     BakeFailure, BakeFinished, BakePreset, BakeRequest, BakeStatus, BakedScene, DynLightBake,
     SnapshotError, SurfacePending, decode, encode,
 };
-use dynlight::baked_lighting::{ActiveBake, AppliedBake, has_triangle_ids, scene_buffers};
+use dynlight::baked_lighting::{
+    ActiveBake, AppliedBake, has_triangle_ids, scene_buffers, take_scene_buffers,
+};
 use dynlight::light::{BakedLightSlots, PackedLights};
 use dynlight::prelude::*;
 use dynlight::shared::{ResolvedBakeId, TriangleIdSource};
@@ -148,7 +150,7 @@ fn bake_request_writes_a_loadable_file() {
         .expect("successful bake returns an asset");
     assert_eq!(baked.scene, scene);
     assert_eq!(
-        encode(&baked.scene),
+        encode(&baked.scene).unwrap(),
         bytes,
         "asset and file are byte-identical"
     );
@@ -185,11 +187,16 @@ fn bake_request_writes_a_loadable_file() {
     let loaded = loaded.expect("asset loads");
     // The loader prepares the GPU words and lets go of the scene's triangles.
     let mut shed = scene.clone();
-    shed.meshes
-        .iter_mut()
-        .for_each(|mesh| mesh.triangles.clear());
+    let taken = take_scene_buffers(&mut shed);
+    assert_eq!(taken, scene_buffers(&scene));
+    assert!(shed.meshes.iter().all(|mesh| mesh.triangles.is_empty()));
+    assert!(loaded.scene.triangles_taken());
     assert_eq!(loaded.scene, shed);
-    assert_eq!(loaded.buffers, Some(scene_buffers(&scene)));
+    assert_eq!(loaded.buffers, Some(taken));
+    assert!(
+        encode(&loaded.scene).is_err(),
+        "a loaded scene can't be written"
+    );
 
     app.insert_resource(ActiveBake(Some(handle)));
     app.update();
@@ -241,7 +248,7 @@ fn bake_request_without_output_returns_an_applicable_asset_and_writes_nothing() 
     assert_eq!(report.stats, scene.stats);
     assert_eq!(report.stats.meshes, 2);
     assert!(report.stats.texels > 0 && report.stats.rays > 0);
-    assert_eq!(report.bytes, encode(&scene).len() as u64);
+    assert_eq!(report.bytes, encode(&scene).unwrap().len() as u64);
     assert!(!app.world().resource::<BakeStatus>().is_running());
     assert_eq!(app.world().resource::<BakeStatus>().output(), None);
     assert!(std::fs::read_dir(&dir).unwrap().next().is_none());

@@ -285,7 +285,7 @@ fn bake_output(
 ) -> Result<BakeOutput, BakeFailure> {
     let start = Instant::now();
     let scene = super::bake(input, options, progress).map_err(BakeFailure::Bake)?;
-    let bytes = encode(&scene);
+    let bytes = encode(&scene).expect("a fresh bake has its triangle words");
     if let Some(output) = output {
         write_output(output, &bytes)?;
     }
