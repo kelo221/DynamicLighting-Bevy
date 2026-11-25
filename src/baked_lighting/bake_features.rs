@@ -38,7 +38,7 @@ mod tests {
 
     /// An empty bake's aux buffer with `words` set in its header.
     fn aux(words: &[(usize, u32)]) -> Vec<u32> {
-        let mut aux = BakedBuffers::empty().aux;
+        let mut aux = BakedBuffers::empty().aux.to_vec();
         for &(index, value) in words {
             aux[index] = value;
         }
@@ -105,7 +105,7 @@ mod tests {
             app.update();
         }
         app.world_mut().resource_mut::<AppliedBake>().buffers.aux =
-            aux(&[(header::BVH_NODE_COUNT, 1)]);
+            aux(&[(header::BVH_NODE_COUNT, 1)]).into();
         let light_bvh = ShaderFeatures {
             light_bvh: true,
             ..ShaderFeatures::NONE

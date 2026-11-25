@@ -1,6 +1,6 @@
 //! Uploads the applied bake and points baked meshes at their receiver records.
 
-use bevy::asset::uuid_handle;
+use bevy::asset::{RenderAssetUsages, uuid_handle};
 use bevy::mesh::MeshTag;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
@@ -46,27 +46,33 @@ pub(super) struct MeshHashes {
     reported_shadows: HashSet<BakeId>,
 }
 
+/// A bake buffer holding `words`, kept only in the render world: Bevy takes the CPU data when it
+/// uploads the buffer, so the main world doesn't hold a second copy of a big bake.
+fn bake_buffer(words: &[u32], label: &'static str) -> ShaderBuffer {
+    let mut buffer = ShaderBuffer::new(words.to_vec(), RenderAssetUsages::RENDER_WORLD);
+    buffer.label = label.into();
+    buffer
+}
+
+const BUFFERS: [(&Handle<ShaderBuffer>, &str); 2] = [
+    (&BAKED_TRIANGLES, "dynlight baked triangles"),
+    (&BAKED_AUX, "dynlight baked aux"),
+];
+
 pub(super) fn create_buffers(app: &mut App) {
     let Some(mut assets) = app.world_mut().get_resource_mut::<Assets<ShaderBuffer>>() else {
         return;
     };
     let empty = BakedBuffers::empty();
-    for (handle, words, label) in [
-        (
-            &BAKED_TRIANGLES,
-            &empty.triangles,
-            "dynlight baked triangles",
-        ),
-        (&BAKED_AUX, &empty.aux, "dynlight baked aux"),
-    ] {
-        let mut buffer = ShaderBuffer::from(words.clone());
-        buffer.label = label.into();
+    for ((handle, label), words) in BUFFERS.into_iter().zip([&empty.triangles, &empty.aux]) {
         assets
-            .insert(handle, buffer)
+            .insert(handle, bake_buffer(words, label))
             .expect("the baked buffer handles are fixed UUIDs");
     }
 }
 
+/// Replaces both buffers when the applied bake changes. The assets are replaced, not edited:
+/// once uploaded they have no CPU data left to extend.
 pub(super) fn upload_bake(applied: Res<AppliedBake>, assets: Option<ResMut<Assets<ShaderBuffer>>>) {
     if !applied.is_changed() {
         return;
@@ -74,13 +80,10 @@ pub(super) fn upload_bake(applied: Res<AppliedBake>, assets: Option<ResMut<Asset
     let Some(mut assets) = assets else {
         return;
     };
-    for (handle, words) in [
-        (&BAKED_TRIANGLES, &applied.buffers.triangles),
-        (&BAKED_AUX, &applied.buffers.aux),
-    ] {
-        if let Some(mut buffer) = assets.get_mut(handle) {
-            buffer.clear();
-            buffer.extend_from_slice(words.as_slice());
+    let words = [&applied.buffers.triangles, &applied.buffers.aux];
+    for ((handle, label), words) in BUFFERS.into_iter().zip(words) {
+        if let Err(error) = assets.insert(handle, bake_buffer(words, label)) {
+            error!("couldn't upload {label}: {error}");
         }
     }
 }
@@ -185,6 +188,54 @@ pub(super) fn tag_receivers(
                 commands.entity(entity).remove::<(MeshTag, BakedReceiver)>();
             }
             _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use bevy::asset::AssetPlugin;
+    use bevy::render::storage::ShaderBufferData;
+
+    use super::*;
+
+    fn buffers(words: &[u32]) -> BakedBuffers {
+        BakedBuffers {
+            triangles: Arc::new(words.to_vec()),
+            aux: Arc::new(words.iter().rev().copied().collect()),
+            ..default()
+        }
+    }
+
+    /// What Bevy does to a `RENDER_WORLD`-only buffer when it uploads it.
+    fn extract(assets: &mut Assets<ShaderBuffer>, handle: &Handle<ShaderBuffer>) {
+        let mut buffer = assets.get_mut(handle).unwrap();
+        let len = buffer.buffer_size();
+        buffer.data = ShaderBufferData::Uninitialized(len);
+    }
+
+    #[test]
+    fn a_bake_can_be_applied_again_after_the_buffers_were_uploaded() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<ShaderBuffer>()
+            .init_resource::<AppliedBake>()
+            .add_systems(Update, upload_bake);
+        for words in [&[1, 2, 3][..], &[4, 5], &[4, 5]] {
+            app.world_mut().resource_mut::<AppliedBake>().buffers = buffers(words);
+            app.update();
+            let mut assets = app.world_mut().resource_mut::<Assets<ShaderBuffer>>();
+            for (handle, expected) in [
+                (&BAKED_TRIANGLES, words.to_vec()),
+                (&BAKED_AUX, words.iter().rev().copied().collect()),
+            ] {
+                let buffer = assets.get(handle).unwrap();
+                assert_eq!(buffer.asset_usage, RenderAssetUsages::RENDER_WORLD);
+                assert_eq!(buffer.cast_slice::<u32>().unwrap(), expected);
+                extract(&mut assets, handle);
+            }
         }
     }
 }

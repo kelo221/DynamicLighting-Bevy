@@ -30,9 +30,20 @@ pub struct BakedScene {
     /// geometry, or in `LightingOnly`.
     pub sky_probes: Option<SkyProbes>,
     pub stats: BakeStats,
+    /// Set once the meshes' triangle words have been moved into GPU buffers
+    /// ([`take_scene_buffers`](crate::baked_lighting::take_scene_buffers)): the scene can no
+    /// longer be written or have its buffers built again.
+    pub(crate) triangles_taken: bool,
 }
 
 impl BakedScene {
+    /// Whether the meshes' triangle words have been moved into GPU buffers, as in every bake
+    /// loaded from a file. Such a scene is not a full scene: [`encode`](super::encode) refuses
+    /// it and [`scene_buffers`](crate::baked_lighting::scene_buffers) panics on it.
+    pub fn triangles_taken(&self) -> bool {
+        self.triangles_taken
+    }
+
     /// Lights in the light BVH; the suns and skies follow them.
     pub fn local_light_count(&self) -> usize {
         self.lights.len() - self.distant_count()

@@ -59,7 +59,7 @@ fn bake_bytes(input: &BakeInput, threads: usize) -> Vec<u8> {
         .num_threads(threads)
         .build()
         .unwrap();
-    pool.install(|| encode(&bake(input, &options(), &BakeProgress::new()).unwrap()))
+    pool.install(|| encode(&bake(input, &options(), &BakeProgress::new()).unwrap()).unwrap())
 }
 
 #[test]

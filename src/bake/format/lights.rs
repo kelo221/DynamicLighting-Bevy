@@ -1,6 +1,8 @@
 //! The lights section of a `.dynlight` payload: one [`LIGHT_BYTES`] record per baked light, in
 //! light buffer order (the BVH's lights, then the suns, then the skies).
 
+use std::io::Read;
+
 use bevy::math::{Quat, Vec2, Vec3};
 
 use crate::light::{AreaLightShape, BounceCompression, LightShape, LightType, SunDisk};
@@ -49,7 +51,7 @@ pub(super) fn encode(w: &mut Writer, lights: &[BakedLight]) {
     }
 }
 
-pub(super) fn decode(r: &mut Reader) -> Result<Vec<BakedLight>, FormatError> {
+pub(super) fn decode<R: Read>(r: &mut Reader<R>) -> Result<Vec<BakedLight>, FormatError> {
     let light_count = r.count(LIGHT_BYTES)?;
     let mut lights: Vec<BakedLight> = Vec::with_capacity(light_count);
     for _ in 0..light_count {

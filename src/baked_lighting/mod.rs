@@ -8,6 +8,7 @@ mod apply;
 mod bake_features;
 mod features;
 pub mod layout;
+mod loader;
 pub mod mirror;
 #[cfg(test)]
 pub(crate) mod shader_tests;
@@ -18,10 +19,11 @@ use bevy::prelude::*;
 use bevy::render::{RenderApp, RenderStartup};
 use bevy::shader::load_shader_library;
 
-pub use apply::{ActiveBake, scene_buffers, scene_slots};
+pub use apply::{ActiveBake, scene_buffers, scene_slots, take_scene_buffers};
 pub use bake_features::bake_features;
 pub use features::primitive_index_supported;
-pub use layout::{BakedBuffers, Receiver, ReceiverInput, SceneInput};
+pub use layout::{BakedBuffers, BufferBuilder, Receiver, ReceiverInput, SceneInput};
+pub use loader::{DynLightBakeLoader, DynLightBakeLoaderError};
 pub use systems::{AppliedBake, BAKED_AUX, BAKED_TRIANGLES, BakedReceiver};
 pub use triangle_ids::{
     ATTRIBUTE_TRIANGLE_ID, TRIANGLE_ID_LOCATION, accepts_triangle_ids, add_triangle_ids,
@@ -67,6 +69,9 @@ impl Plugin for BakedLightingPlugin {
         }
         // Registered by the bake slice's `finish`, which runs first, when there is an asset server.
         if app.world().contains_resource::<Assets<DynLightBake>>() {
+            if app.is_plugin_added::<AssetPlugin>() {
+                app.register_asset_loader(DynLightBakeLoader);
+            }
             app.add_systems(
                 PostUpdate,
                 (

@@ -18,8 +18,11 @@
 //! still holds; the shader adds the receiver's `triangles_base`.
 //! `baked_lighting/shaders/baked_data.wesl` mirrors every constant here.
 
+use std::sync::Arc;
+
 use bevy::platform::collections::HashMap;
 
+pub use crate::bake::{BakedBuffers, Receiver};
 use crate::bake::{SkyProbes, SunMap};
 use crate::shared::BakeId;
 
@@ -82,24 +85,6 @@ pub struct ReceiverInput<'a> {
     pub occludes: bool,
 }
 
-/// Where a baked mesh's data went, for tagging its entity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Receiver {
-    /// The `MeshTag` value that selects this record.
-    pub tag: u32,
-    pub content_hash: u64,
-    pub triangle_count: u32,
-    pub occludes: bool,
-}
-
-/// Contents of both buffers plus the receiver lookup.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct BakedBuffers {
-    pub triangles: Vec<u32>,
-    pub aux: Vec<u32>,
-    pub receivers: HashMap<BakeId, Receiver>,
-}
-
 /// Scene-wide inputs besides the meshes.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SceneInput<'a> {
@@ -125,25 +110,70 @@ impl BakedBuffers {
         meshes: impl IntoIterator<Item = ReceiverInput<'a>>,
         scene: SceneInput<'_>,
     ) -> Self {
-        debug_assert_eq!(scene.bvh.len() % BVH_NODE_WORDS, 0);
-        let mut triangles = Vec::new();
-        let mut records = Vec::new();
-        let mut receivers = HashMap::default();
+        let mut builder = BufferBuilder::default();
         for mesh in meshes {
-            let triangle_count = mesh.triangles.first().map_or(0, |&offset| offset / 4);
-            let tag = records.len() as u32 / RECEIVER_WORDS as u32 + 1;
-            records.extend([triangles.len() as u32, mesh.resolution, triangle_count, 0]);
-            triangles.extend_from_slice(mesh.triangles);
-            receivers.insert(
-                mesh.id,
-                Receiver {
-                    tag,
-                    content_hash: mesh.content_hash,
-                    triangle_count,
-                    occludes: mesh.occludes,
-                },
-            );
+            builder.push(mesh);
         }
+        builder.finish(scene)
+    }
+
+    /// The receiver record for `tag`, as `[triangles_base, resolution, triangle_count, flags]`.
+    pub fn record(&self, tag: u32) -> Option<&[u32]> {
+        let index = tag.checked_sub(1)? as usize;
+        if index >= self.aux[header::RECEIVER_COUNT] as usize {
+            return None;
+        }
+        let start = self.aux[header::RECEIVERS] as usize + index * RECEIVER_WORDS;
+        Some(&self.aux[start..start + RECEIVER_WORDS])
+    }
+}
+
+/// Collects meshes one at a time, so a caller can free each mesh's triangle words as soon as
+/// they are copied.
+#[derive(Default)]
+pub struct BufferBuilder {
+    triangles: Vec<u32>,
+    records: Vec<u32>,
+    receivers: HashMap<BakeId, Receiver>,
+}
+
+impl BufferBuilder {
+    /// A builder whose triangle buffer won't reallocate for `words` words.
+    pub fn with_triangle_capacity(words: usize) -> Self {
+        Self {
+            triangles: Vec::with_capacity(words),
+            ..Self::default()
+        }
+    }
+
+    pub fn push(&mut self, mesh: ReceiverInput) {
+        let triangle_count = mesh.triangles.first().map_or(0, |&offset| offset / 4);
+        let tag = self.records.len() as u32 / RECEIVER_WORDS as u32 + 1;
+        self.records.extend([
+            self.triangles.len() as u32,
+            mesh.resolution,
+            triangle_count,
+            0,
+        ]);
+        self.triangles.extend_from_slice(mesh.triangles);
+        self.receivers.insert(
+            mesh.id,
+            Receiver {
+                tag,
+                content_hash: mesh.content_hash,
+                triangle_count,
+                occludes: mesh.occludes,
+            },
+        );
+    }
+
+    pub fn finish(self, scene: SceneInput<'_>) -> BakedBuffers {
+        debug_assert_eq!(scene.bvh.len() % BVH_NODE_WORDS, 0);
+        let Self {
+            mut triangles,
+            records,
+            receivers,
+        } = self;
         // Storage buffers can't be empty.
         if triangles.is_empty() {
             triangles.push(0);
@@ -184,21 +214,11 @@ impl BakedBuffers {
             aux.extend_from_slice(&probes.words);
         }
 
-        Self {
-            triangles,
-            aux,
+        BakedBuffers {
+            triangles: Arc::new(triangles),
+            aux: Arc::new(aux),
             receivers,
         }
-    }
-
-    /// The receiver record for `tag`, as `[triangles_base, resolution, triangle_count, flags]`.
-    pub fn record(&self, tag: u32) -> Option<&[u32]> {
-        let index = tag.checked_sub(1)? as usize;
-        if index >= self.aux[header::RECEIVER_COUNT] as usize {
-            return None;
-        }
-        let start = self.aux[header::RECEIVERS] as usize + index * RECEIVER_WORDS;
-        Some(&self.aux[start..start + RECEIVER_WORDS])
     }
 }
 
@@ -209,7 +229,7 @@ mod tests {
     #[test]
     fn empty_buffers_are_valid_storage() {
         let buffers = BakedBuffers::empty();
-        assert_eq!(buffers.triangles, [0]);
+        assert_eq!(*buffers.triangles, [0]);
         assert_eq!(buffers.aux.len(), AUX_HEADER_WORDS);
         assert_eq!(buffers.aux[header::RECEIVER_COUNT], 0);
         assert_eq!(buffers.aux[header::SKY_PROBES], 0);

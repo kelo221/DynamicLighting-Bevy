@@ -69,12 +69,12 @@ fn bake_encode_decode_round_trip() {
     assert_eq!(progress.stage(), BakeStage::Done);
     assert_eq!(progress.fraction(), 1.0);
 
-    let bytes = encode(&scene);
+    let bytes = encode(&scene).unwrap();
     assert_eq!(&bytes[..8], b"DYNLIGHT");
     assert_eq!(bytes[8..12], FORMAT_VERSION.to_le_bytes());
     assert_eq!(decode(&bytes).unwrap(), scene);
     assert_eq!(
-        encode(&decode(&bytes).unwrap()),
+        encode(&decode(&bytes).unwrap()).unwrap(),
         bytes,
         "encoding is canonical"
     );

@@ -1,5 +1,7 @@
 //! Little-endian byte writer and bounds-checked reader for the `.dynlight` payload.
 
+use std::io::{ErrorKind, Read};
+
 use super::FormatError;
 
 #[derive(Default)]
@@ -34,38 +36,68 @@ impl Writer {
     }
 }
 
-pub struct Reader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
+/// Words read per `read_exact` call in [`Reader::words`].
+const CHUNK_WORDS: usize = 4096;
+/// The most words [`Reader::words`] reserves up front, so a corrupt length can't allocate more
+/// than this before the data runs out.
+const PREALLOCATED_WORDS: usize = 1 << 26;
+
+/// Bounds-checked little-endian reader over any byte source: a slice, or a decompressor
+/// streaming the payload. `remaining` is the payload length still to come.
+pub struct Reader<R> {
+    inner: R,
+    remaining: u64,
 }
 
-impl<'a> Reader<'a> {
+impl<'a> Reader<&'a [u8]> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
+        Self::with_len(bytes, bytes.len() as u64)
+    }
+}
+
+impl<R: Read> Reader<R> {
+    /// Reads at most `len` bytes from `inner`.
+    pub fn with_len(inner: R, len: u64) -> Self {
+        Self {
+            inner,
+            remaining: len,
+        }
     }
 
-    pub fn remaining(&self) -> usize {
-        self.bytes.len() - self.offset
+    pub fn remaining(&self) -> u64 {
+        self.remaining
     }
 
-    fn take(&mut self, count: usize) -> Result<&'a [u8], FormatError> {
-        if count > self.remaining() {
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+
+    fn fill(&mut self, buf: &mut [u8]) -> Result<(), FormatError> {
+        if buf.len() as u64 > self.remaining {
             return Err(FormatError::Truncated);
         }
-        let bytes = &self.bytes[self.offset..self.offset + count];
-        self.offset += count;
+        self.inner
+            .read_exact(buf)
+            .map_err(|error| match error.kind() {
+                ErrorKind::UnexpectedEof => FormatError::Truncated,
+                _ => FormatError::Decompress(error.to_string()),
+            })?;
+        self.remaining -= buf.len() as u64;
+        Ok(())
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], FormatError> {
+        let mut bytes = [0; N];
+        self.fill(&mut bytes)?;
         Ok(bytes)
     }
 
     pub fn u32(&mut self) -> Result<u32, FormatError> {
-        let bytes = self.take(4)?;
-        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        Ok(u32::from_le_bytes(self.array()?))
     }
 
     pub fn u64(&mut self) -> Result<u64, FormatError> {
-        let low = u64::from(self.u32()?);
-        let high = u64::from(self.u32()?);
-        Ok(low | high << 32)
+        Ok(u64::from_le_bytes(self.array()?))
     }
 
     pub fn f32(&mut self) -> Result<f32, FormatError> {
@@ -77,21 +109,30 @@ impl<'a> Reader<'a> {
     pub fn count(&mut self, item_bytes: usize) -> Result<usize, FormatError> {
         let len = self.u64()?;
         let fits = usize::try_from(len).ok().filter(|&len| {
-            len.checked_mul(item_bytes.max(1))
-                .is_some_and(|b| b <= self.remaining())
+            (len as u64)
+                .checked_mul(item_bytes.max(1) as u64)
+                .is_some_and(|b| b <= self.remaining)
         });
         fits.ok_or(FormatError::Truncated)
     }
 
     pub fn words(&mut self) -> Result<Vec<u32>, FormatError> {
         let len = self.count(4)?;
-        let bytes = self.take(len * 4)?;
-        Ok(bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|&b| u32::from_le_bytes(b))
-            .collect())
+        let mut words = Vec::with_capacity(len.min(PREALLOCATED_WORDS));
+        let mut chunk = [0u8; CHUNK_WORDS * 4];
+        while words.len() < len {
+            let take = (len - words.len()).min(CHUNK_WORDS);
+            let bytes = &mut chunk[..take * 4];
+            self.fill(bytes)?;
+            words.extend(
+                bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&b| u32::from_le_bytes(b)),
+            );
+        }
+        Ok(words)
     }
 }
 
